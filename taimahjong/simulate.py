@@ -23,6 +23,15 @@ class SimResult:
     p_win: float
 
 
+@dataclass(frozen=True)
+class WinningTrial:
+    """One self-draw win observed by :func:`winning_trials`."""
+
+    hand: tuple[int, ...]
+    winning_tile: int
+    turn: int
+
+
 def _validate_positive_int(value: int, name: str) -> None:
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise ValueError(f"{name} must be an integer greater than or equal to 1")
@@ -143,3 +152,77 @@ def win_probability(
         p_tenpai=tenpai_by_turn[-1],
         p_win=win_by_turn[-1],
     )
+
+
+def winning_trials(
+    counts: tuple[int, ...] | list[int],
+    turns: int,
+    melds_declared: int = 0,
+    visible: tuple[int, ...] | list[int] | None = None,
+    sims: int = 5000,
+    seed: int | None = None,
+) -> tuple[WinningTrial, ...]:
+    """Return final winning hands and draw turns for deterministic trials.
+
+    This additive companion to :func:`win_probability` uses its same greedy
+    self-draw policy.  A discarded tile is not returned to the wall.
+    """
+    _validate_positive_int(turns, "turns")
+    _validate_positive_int(sims, "sims")
+    hand = validate_counts(counts)
+    ukeire(hand, melds_declared, visible)
+    seen = (0,) * 34 if visible is None else validate_counts(visible)
+    pool = [tile for tile in range(34) for _ in range(4 - hand[tile] - seen[tile])]
+    if len(pool) < turns:
+        raise ValueError(f"unseen pool has {len(pool)} tiles; expected at least {turns}")
+
+    @lru_cache(maxsize=None)
+    def cached_shanten(current: tuple[int, ...]) -> int:
+        return shanten(current, melds_declared)
+
+    @lru_cache(maxsize=None)
+    def greedy_discard(current: tuple[int, ...]) -> int:
+        candidates: list[tuple[int, tuple[int, ...]]] = []
+        best_shanten = 11
+        for tile, count in enumerate(current):
+            if not count:
+                continue
+            reduced = list(current)
+            reduced[tile] -= 1
+            after = tuple(reduced)
+            after_shanten = cached_shanten(after)
+            if after_shanten < best_shanten:
+                best_shanten, candidates = after_shanten, [(tile, after)]
+            elif after_shanten == best_shanten:
+                candidates.append((tile, after))
+        best_tile, best_total = -1, -1
+        for tile, after in candidates:
+            total = 0
+            for draw, count in enumerate(after):
+                if count == 4:
+                    continue
+                next_hand = list(after)
+                next_hand[draw] += 1
+                if cached_shanten(tuple(next_hand)) < best_shanten:
+                    total += 4 - after[draw] - seen[draw]
+            if total > best_total or (total == best_total and (best_tile == -1 or tile < best_tile)):
+                best_tile, best_total = tile, total
+        return best_tile
+
+    rng = random.Random(seed)
+    wins: list[WinningTrial] = []
+    for _ in range(sims):
+        draws = pool[:]
+        rng.shuffle(draws)
+        current = hand
+        for turn, tile in enumerate(draws[:turns], start=1):
+            drawn = list(current)
+            drawn[tile] += 1
+            current = tuple(drawn)
+            if cached_shanten(current) == -1:
+                wins.append(WinningTrial(current, tile, turn))
+                break
+            reduced = list(current)
+            reduced[greedy_discard(current)] -= 1
+            current = tuple(reduced)
+    return tuple(wins)

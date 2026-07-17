@@ -91,11 +91,11 @@ def test_big_dragons_half_flush():
     result = score_hand(hand, (), WinContext(winning_tile=_tile("2z")))
     names = _names(result)
     assert "big three dragons (大三元)" in names
-    assert "dragon triplets x3 (三元牌刻)" in names
+    assert "dragon triplets x3 (三元牌刻)" not in names
     assert "half flush (混一色)" in names
     assert "four concealed triplets (四暗刻)" in names
-    # 8+3+4+5+1(門清)+1(獨聽); pair completed by ron keeps triplets concealed
-    assert result.total_tai == 22
+    # 8+4+5+1(門清)+1(獨聽); 大三元 replaces its component dragon triplets.
+    assert result.total_tai == 19
 
 
 def test_round_and_seat_wind_tai():
@@ -105,7 +105,8 @@ def test_round_and_seat_wind_tai():
     names = _names(result)
     assert "round wind (圈風)" in names
     assert "seat wind (門風)" in names
-    assert result.total_tai == 24
+    assert "dragon triplets x3 (三元牌刻)" not in names
+    assert result.total_tai == 21
 
 
 def test_validation_errors():

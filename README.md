@@ -203,16 +203,18 @@ rule, and these simplifications—not against human Taiwanese-mahjong play.
 `BASE_UNITS` (3) tai; the standard Taiwanese tai table (莊 1, 連N拉N 2N,
 門清/自摸/獨聽 1, 平胡/全求人/三暗刻 2, 碰碰胡/混一色/小三元 4, 四暗刻 5,
 清一色/大三元/小四喜/五暗刻 8, 字一色/大四喜 16, 圈風/門風/三元牌刻 1);
-the migi declaration adds `DECLARED_TAI` (8); heavenly/earthly hands default
-to 24/16 tai (common values, adjust if the house differs). Flowers and kongs
+the migi declaration adds `DECLARED_TAI` (8); the confirmed house values for
+heavenly/earthly hands are 16/8 tai. Flowers and kongs
 are not modelled — `WinContext.extra` is the reserved pass-through slot.
 
-Documented stacking choices: individual dragon/wind triplet tai stack with
-小三元/大三元/小四喜/大四喜; 字一色 stacks with 碰碰胡 and concealed-triplet
-tai; only the highest 暗刻 tier counts; 平胡 requires all runs, a non-honor
-pair and a multi-kind wait (self-draw allowed). All winning decompositions
-are enumerated and the highest-tai reading is used. A triplet completed by
-ron is not concealed; single wait (獨聽) means exactly one winning kind.
+Documented stacking choices: 小三元/大三元 replace their component 三元牌刻;
+小四喜/大四喜 suppress 圈風/門風. A lone dragon triplet, and winds outside a
+wind composite, still score normally. 字一色 stacks with 碰碰胡 and
+concealed-triplet tai; only the highest 暗刻 tier counts; 平胡 requires all
+runs, a non-honor pair and a multi-kind wait (self-draw allowed). All winning
+decompositions are enumerated and the highest-tai reading is used. A triplet
+completed by ron is not concealed; single wait (獨聽) means exactly one winning
+kind.
 
 ```bash
 python3 -m taimahjong "123m111555666777z22z" --score --win-tile 2z
@@ -222,3 +224,42 @@ python3 -m taimahjong "22z" --score --my-melds "123m;456p;789s;111z;555z" \
 
 Optional context flags: `--self-draw --dealer --streak N --migi --heavenly
 --earthly --round-wind 1z --seat-wind 2z`.
+
+## M5b tai-unit EV
+
+`taimahjong.ev` ranks a small M2-efficient discard set with an approximate
+tai-unit EV. A win value is `BASE_UNITS + M5a tai`, so the win and loss sides
+share the same unit:
+
+```
+attack_ev = P(self-draw win) * E[value_units | self-draw win]
+net_ev    = attack_ev - sum(E[deal-in loss per opponent])
+E[loss]  = P(deal-in | danger) * opponent-state factor * visible-state value
+```
+
+The attack side is self-draw-only and does not include a draw (流局) term.
+Deal-in calibration is a marginal probability over deterministic bot states,
+not a conditional human-game model. Opponent value is likewise an
+**UNCALIBRATED** visible-state heuristic: base, migi, visible dragon triplets,
+flush-read, and all-triplets tendency. Without a usable calibration cell,
+the fallback is 0.02 scaled by M4a danger; migi hard-excluded tiles remain
+exactly zero.
+
+`--ev` accepts a 17-tile-equivalent hand and one optional opponent, reusing
+`--opp-river`, `--opp-melds`, `--opp-declared`, and `--visible`. It displays
+discard, net EV, self-draw win probability, conditional win value, and loss.
+The default is 400 simulations per candidate (normally under ten seconds):
+
+```bash
+python3 -m taimahjong "123m123p123s11122233z" --ev --opp-river "1m2m" \
+  --opp-declared 0 --turns 3 --sims 400 --seed 7
+```
+
+`--declare` accepts a 16-tile tenpai hand. Its declared branch locks the
+current waits and calculates the exact hypergeometric probability of drawing
+one within `--turns`; its other branch simulates the normal greedy policy,
+where upgrades remain possible. The declared score includes migi's 8 tai.
+
+```bash
+python3 -m taimahjong "123m123p123s1112223z" --declare --turns 3 --sims 400 --seed 7
+```

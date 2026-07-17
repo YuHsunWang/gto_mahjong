@@ -7,11 +7,11 @@ House rules encoded (2026-07-17):
 - Flowers and kongs are not modelled by the engine; ``WinContext.extra``
   is the reserved slot for such externally-supplied tai items.
 - The migi declaration bonus reuses ``danger.DECLARED_TAI``.
-- Heavenly/earthly hand defaults (24/16 tai) are common values, not a
-  confirmed house rule.
+- Heavenly/earthly hands use the confirmed house values (16/8 tai).
 
 Documented stacking choices (adjust constants if the house disagrees):
-- Individual dragon/wind triplet tai stack with 小三元/大三元/小四喜/大四喜.
+- Individual dragon triplet tai does not stack with 小三元/大三元; round/seat
+  wind tai does not stack with 小四喜/大四喜.
 - 字一色 stacks with 碰碰胡 and concealed-triplet tai.
 - 平胡 requires all runs, a non-honor pair and a multi-kind wait; it may
   stack with self-draw.
@@ -49,8 +49,8 @@ ROUND_WIND_TAI = 1
 SEAT_WIND_TAI = 1
 SMALL_WINDS_TAI = 8
 BIG_WINDS_TAI = 16
-HEAVENLY_TAI = 24
-EARTHLY_TAI = 16
+HEAVENLY_TAI = 16
+EARTHLY_TAI = 8
 MIGI_TAI = DECLARED_TAI
 
 WIND_TILES = frozenset(range(27, 31))
@@ -225,23 +225,24 @@ def _score_decomposition(
             items.append(("full flush (清一色)", FULL_FLUSH_TAI))
 
     dragon_triplets = sum(1 for kind, tile in all_sets if kind == "tri" and tile in DRAGON_TILES)
-    if dragon_triplets:
-        items.append((f"dragon triplets x{dragon_triplets} (三元牌刻)", DRAGON_TRIPLET_TAI * dragon_triplets))
     if dragon_triplets == 3:
         items.append(("big three dragons (大三元)", BIG_DRAGONS_TAI))
     elif dragon_triplets == 2 and pair in DRAGON_TILES:
         items.append(("small three dragons (小三元)", SMALL_DRAGONS_TAI))
+    elif dragon_triplets:
+        items.append((f"dragon triplets x{dragon_triplets} (三元牌刻)", DRAGON_TRIPLET_TAI * dragon_triplets))
 
     wind_triplets = sum(1 for kind, tile in all_sets if kind == "tri" and tile in WIND_TILES)
     wind_kinds = {tile for kind, tile in all_sets if kind == "tri" and tile in WIND_TILES}
-    if context.round_wind in wind_kinds:
-        items.append(("round wind (圈風)", ROUND_WIND_TAI))
-    if context.seat_wind in wind_kinds:
-        items.append(("seat wind (門風)", SEAT_WIND_TAI))
     if wind_triplets == 4:
         items.append(("big four winds (大四喜)", BIG_WINDS_TAI))
     elif wind_triplets == 3 and pair in WIND_TILES:
         items.append(("small four winds (小四喜)", SMALL_WINDS_TAI))
+    else:
+        if context.round_wind in wind_kinds:
+            items.append(("round wind (圈風)", ROUND_WIND_TAI))
+        if context.seat_wind in wind_kinds:
+            items.append(("seat wind (門風)", SEAT_WIND_TAI))
 
     items.extend(context.extra)
     return ScoreResult(tuple(items), sum(tai for _, tai in items))
