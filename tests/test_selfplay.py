@@ -1,8 +1,12 @@
+from math import sqrt
 from pathlib import Path
 
 from taimahjong.calibration import (
     Calibration,
     DANGER_BUCKETS,
+    DANGER_MODIFIERS,
+    DANGER_REFERENCE,
+    MIN_CELL_COUNT,
     counts_from_games,
     load_table,
     merge_counts,
@@ -43,6 +47,16 @@ def test_chunked_counts_merge_like_the_same_seeded_chunks(tmp_path):
     assert load_table(path)["counts"] == combined
 
 
+def test_per_opponent_danger_exposure_matches_the_actual_winner():
+    games = play_games(8, 731)
+    counts = counts_from_games(games)
+    observations = sum(cell["observations"] for cell in counts["deal_in"].values())
+    deal_ins = sum(cell["deal_ins"] for cell in counts["deal_in"].values())
+    events = [event for game in games for event in game.events]
+    assert observations == 3 * len(events)
+    assert deal_ins == sum(event["dealt_in"] for event in events)
+
+
 def test_calibration_lookup_interpolates_and_falls_back_for_small_cells():
     counts = {
         "games": 0,
@@ -66,6 +80,8 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
     document_path = Path(__file__).parents[1] / "data" / "calibration.json"
     calibration = Calibration.from_path(document_path)
     assert calibration.document["counts"]["games"] >= 2000
+    assert calibration.document["metadata"]["danger_reference"] == DANGER_REFERENCE
+    assert calibration.document["metadata"]["danger_modifiers"] == DANGER_MODIFIERS
     table = calibration.tables["tenpai"]
     for turn in ("1-6", "7-12", "13+"):
         for run in ("0", "1-2", "3+"):
@@ -76,3 +92,17 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
     danger = calibration.tables["deal_in"]
     values = [danger[bucket]["probability"] for bucket in DANGER_BUCKETS]
     assert values == sorted(values)
+    raw = [danger[bucket] for bucket in DANGER_BUCKETS]
+    inversions = [
+        (left, right)
+        for left, right in zip(raw, raw[1:])
+        if left["observations"] >= MIN_CELL_COUNT
+        and right["observations"] >= MIN_CELL_COUNT
+        and left["empirical_probability"] > right["empirical_probability"]
+    ]
+    assert len(inversions) <= 1
+    if inversions:
+        left, right = inversions[0]
+        pooled = (left["deal_ins"] + right["deal_ins"]) / (left["observations"] + right["observations"])
+        standard_error = sqrt(pooled * (1 - pooled) * (1 / left["observations"] + 1 / right["observations"]))
+        assert left["empirical_probability"] - right["empirical_probability"] <= 1.5 * standard_error

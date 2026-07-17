@@ -298,6 +298,8 @@ def play_game(
             "true_tenpai": true_tenpai,
             "dealt_in": False,
             "danger_score": max(dangers.values()),
+            "danger_by_opponent": dangers,
+            "deal_in_winner": None,
             "fold_window": False,
             "fold_score": 0.0,
         }
@@ -329,6 +331,7 @@ def play_game(
         if winner is not None:
             event["dealt_in"] = True
             event["danger_score"] = dangers[winner]
+            event["deal_in_winner"] = winner
             winning_hand = list(players[winner].hand)
             winning_hand[tile] += 1
             assert _cached_shanten(tuple(winning_hand), len(players[winner].melds)) == -1

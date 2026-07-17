@@ -5,12 +5,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .danger import MELD_FLUSH, MELD_FLUSH_HONOR, SUIT_SCARCE, SUIT_VOID
+
 
 MIN_CELL_COUNT = 30
 TURN_BUCKETS = ("1-6", "7-12", "13+")
 RUN_BUCKETS = ("0", "1-2", "3+")
 DANGER_EDGES = (0.0, 1.0, 2.0, 4.0, 6.0, 9.0, 13.0)
 DANGER_BUCKETS = ("0-1", "1-2", "2-4", "4-6", "6-9", "9-13", "13+")
+DANGER_REFERENCE = "per_opponent"
+DANGER_MODIFIERS = {
+    "SUIT_VOID": SUIT_VOID,
+    "SUIT_SCARCE": SUIT_SCARCE,
+    "MELD_FLUSH": MELD_FLUSH,
+    "MELD_FLUSH_HONOR": MELD_FLUSH_HONOR,
+}
 
 
 def turn_bucket(turn: int) -> str:
@@ -41,14 +50,28 @@ def empty_counts() -> dict:
 
 
 def add_observation(counts: dict, event: dict) -> None:
-    """Add one simulator discard event to mergeable raw counts."""
+    """Add one simulator discard event to mergeable raw counts.
+
+    Danger exposure is measured against each live opponent separately.  A ron
+    credits only the actual winner's row, so the numerator and denominator
+    use the same opponent-specific score.  The scalar fallback retains
+    compatibility with pre-M8 in-memory events only; those data must not be
+    merged with a per-opponent calibration table.
+    """
     key = f"{event['melds']}|{turn_bucket(event['turn'])}|{run_bucket(event['tsumogiri_run'])}"
     cell = counts["tenpai"].setdefault(key, {"observations": 0, "tenpai": 0})
     cell["observations"] += 1
     cell["tenpai"] += int(event["true_tenpai"])
-    bucket = danger_bucket(event["danger_score"])
-    counts["deal_in"][bucket]["observations"] += 1
-    counts["deal_in"][bucket]["deal_ins"] += int(event["dealt_in"])
+    dangers = event.get("danger_by_opponent")
+    if dangers is None:
+        danger_rows = ((event["danger_score"], bool(event["dealt_in"])),)
+    else:
+        winner = event.get("deal_in_winner")
+        danger_rows = ((score, bool(event["dealt_in"]) and opponent == winner) for opponent, score in dangers.items())
+    for score, dealt_in in danger_rows:
+        bucket = danger_bucket(score)
+        counts["deal_in"][bucket]["observations"] += 1
+        counts["deal_in"][bucket]["deal_ins"] += int(dealt_in)
     if event.get("fold_window"):
         policy = event["policy"]
         fold = counts["fold"][policy]
@@ -149,7 +172,7 @@ def derive_tables(counts: dict) -> dict:
 
 
 def table_document(counts: dict, metadata: dict | None = None) -> dict:
-    return {"version": 1, "metadata": metadata or {}, "counts": counts, "tables": derive_tables(counts)}
+    return {"version": 2, "metadata": metadata or {}, "counts": counts, "tables": derive_tables(counts)}
 
 
 def load_table(path: str | Path) -> dict:
@@ -161,6 +184,8 @@ def write_merged_table(path: str | Path, new_counts: dict, metadata: dict | None
     destination = Path(path)
     if destination.exists():
         old = load_table(destination)
+        if old.get("metadata", {}).get("danger_reference") != DANGER_REFERENCE:
+            raise ValueError("existing calibration uses incompatible danger-reference semantics; rebuild from scratch")
         counts = merge_counts(old["counts"], new_counts)
         merged_metadata = dict(old.get("metadata", {}))
     else:
@@ -173,6 +198,7 @@ def write_merged_table(path: str | Path, new_counts: dict, metadata: dict | None
             if seed not in old_seeds:
                 old_seeds.append(seed)
         merged_metadata["seeds"] = old_seeds
+    merged_metadata.update({"danger_reference": DANGER_REFERENCE, "danger_modifiers": DANGER_MODIFIERS})
     merged_metadata["games"] = counts["games"]
     document = table_document(counts, merged_metadata)
     destination.parent.mkdir(parents=True, exist_ok=True)

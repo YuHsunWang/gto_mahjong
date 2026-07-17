@@ -175,12 +175,54 @@ discard. Cautious uses that same choice, except at shanten 2+ against a
 declared or four-meld opponent, where it picks the M2 candidate with the
 lowest M4a danger. This deliberately produces observable folding windows.
 
-Generate calibration data in bounded chunks; repeated commands append and
-merge counts rather than raw game logs:
+M8 changed the deal-in exposure reference after diagnosing a top-bucket
+failure.  The old committed 3,751-game table used the maximum score across
+the three opponents for a non-deal-in discard, but the actual winner's score
+for a deal-in.  Its raw bucket rates were 0.0000, 0.0013, 0.0043, 0.0166,
+0.0322, 0.0306, and 0.0228, so its top buckets inverted.  A fresh 400-game
+diagnostic (seeds 9001--9004) kept the current suit/flush modifiers
+(`SUIT_VOID=2.0`, `SUIT_SCARCE=1.5`, `MELD_FLUSH=2.0`) and compared both
+references:
+
+| bucket | max-across-opponents | per-opponent |
+| --- | ---: | ---: |
+| [0,1) | 0/549 (0.0000) | 0/3,832 (0.0000) |
+| [1,2) | 2/941 (0.0021) | 2/2,126 (0.0009) |
+| [2,4) | 16/2,657 (0.0060) | 16/9,793 (0.0016) |
+| [4,6) | 28/1,938 (0.0144) | 28/4,967 (0.0056) |
+| [6,9) | 73/2,708 (0.0270) | 73/9,616 (0.0076) |
+| [9,13) | 104/3,136 (0.0332) | 104/8,972 (0.0116) |
+| [13,+) | 69/3,167 (0.0218) | 69/5,982 (0.0115) |
+
+The per-opponent reference restores weak monotonicity without changing any
+modifier: every discard contributes one exposure row per live opponent, and
+a ron is credited only to its actual winner's row.  This keeps numerator and
+denominator on the same score definition.  A raw curve matters because
+danger is useful as a ranking only when a higher score means more deal-in,
+before the isotonic fit smooths sampling noise.
+
+The committed rebuild contains 2,000 games (seeds 10001--10008) and has:
+
+| danger bucket | raw deal-ins / observations | raw P(deal-in) |
+| --- | ---: | ---: |
+| [0,1) | 1 / 19,061 | 0.0001 |
+| [1,2) | 3 / 10,321 | 0.0003 |
+| [2,4) | 90 / 48,783 | 0.0018 |
+| [4,6) | 142 / 24,533 | 0.0058 |
+| [6,9) | 398 / 47,615 | 0.0084 |
+| [9,13) | 514 / 43,952 | 0.0117 |
+| [13,+) | 347 / 30,117 | 0.0115 |
+
+The final 9--13 to 13+ decrease is one adjacent inversion smaller than 1.5
+standard errors of the pooled rate, so it meets the committed weak-monotonic
+test.  The JSON metadata records the seeds, per-opponent semantics, and
+modifier constants.  Rebuild from scratch before appending chunks; never
+merge a pre-M8 max-reference table:
 
 ```bash
-python3 -m taimahjong --selfplay --games 250 --seed 1 --out data/calibration.json
-python3 -m taimahjong --selfplay --games 250 --seed 2 --out data/calibration.json
+rm data/calibration.json
+python3 -m taimahjong --selfplay --games 250 --seed 10001 --out data/calibration.json
+python3 -m taimahjong --selfplay --games 250 --seed 10002 --out data/calibration.json
 python3 -m taimahjong --selfplay-report data/calibration.json
 ```
 
