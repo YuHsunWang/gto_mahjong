@@ -1,0 +1,335 @@
+"""Four-player, 136-tile Taiwanese-mahjong self-play simulator.
+
+This deliberately models ordinary tiles only: 136 tiles, no flowers, no
+kang, no temporary ``guo shui`` rule, and no flower replacement.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from functools import lru_cache
+from random import Random
+
+from .danger import OpponentView, RiverEntry, danger_score, fold_score
+from .shanten import shanten
+from .ukeire import DiscardAnalysis
+
+
+POLICIES = ("attack", "cautious")
+
+
+@lru_cache(maxsize=200_000)
+def _cached_shanten(hand: tuple[int, ...], melds: int) -> int:
+    return shanten(hand, melds)
+
+
+@lru_cache(maxsize=100_000)
+def _cached_ukeire(hand: tuple[int, ...], melds: int, visible: tuple[int, ...]) -> tuple[tuple[int, int], ...]:
+    current = _cached_shanten(hand, melds)
+    accepted: list[tuple[int, int]] = []
+    for tile, count in enumerate(hand):
+        if count == 4:
+            continue
+        drawn = list(hand)
+        drawn[tile] += 1
+        if _cached_shanten(tuple(drawn), melds) < current:
+            accepted.append((tile, 4 - hand[tile] - visible[tile]))
+    return tuple(accepted)
+
+
+@lru_cache(maxsize=100_000)
+def _cached_analysis(hand: tuple[int, ...], melds: int, visible: tuple[int, ...]) -> tuple[DiscardAnalysis, ...]:
+    """M2-equivalent cached discard analysis used only by self-play bots."""
+    results: list[DiscardAnalysis] = []
+    for tile, count in enumerate(hand):
+        if not count:
+            continue
+        post = list(hand)
+        post[tile] -= 1
+        after = tuple(post)
+        accepted = dict(_cached_ukeire(after, melds, visible))
+        results.append(DiscardAnalysis(tile, _cached_shanten(after, melds), accepted, sum(accepted.values())))
+    return tuple(sorted(results, key=lambda item: (item.shanten_after, -item.total, item.discard)))
+
+
+@dataclass
+class Player:
+    policy: str
+    hand: list[int] = field(default_factory=lambda: [0] * 34)
+    river: list[RiverEntry] = field(default_factory=list)
+    melds: list[tuple[int, int, int]] = field(default_factory=list)
+    declared_at: int | None = None
+    discards: int = 0
+
+    @property
+    def declared(self) -> bool:
+        return self.declared_at is not None
+
+
+@dataclass(frozen=True)
+class GameResult:
+    events: list[dict]
+    outcome: str
+    winner: int | None
+    discarder: int | None
+    turns: int
+    winning_hand: tuple[int, ...] | None = None
+    winning_melds: int = 0
+
+    def summary(self) -> tuple:
+        return (self.outcome, self.winner, self.discarder, self.turns, tuple(tuple(sorted(event.items())) for event in self.events))
+
+
+def _public_counts(players: list[Player]) -> tuple[int, ...]:
+    counts = [0] * 34
+    for player in players:
+        for entry in player.river:
+            counts[entry.tile] += 1
+        for meld in player.melds:
+            for tile in meld:
+                counts[tile] += 1
+    return tuple(counts)
+
+
+def _view(player: Player) -> OpponentView:
+    return OpponentView(list(player.river), list(player.melds), player.declared_at)
+
+
+def _trailing_tsumogiri_run(river: list[RiverEntry]) -> int:
+    run = 0
+    for entry in reversed(river):
+        if entry.origin == "tedashi":
+            break
+        if entry.origin == "tsumogiri":
+            run += 1
+    return run
+
+
+def _assert_conservation(players: list[Player], wall: list[int], dead: list[int]) -> None:
+    total = len(wall) + len(dead)
+    for player in players:
+        total += sum(player.hand) + len(player.river) + sum(len(meld) for meld in player.melds)
+    assert total == 136, f"tile conservation failed: {total} != 136"
+    all_counts = [0] * 34
+    for tile in wall + dead:
+        all_counts[tile] += 1
+    for player in players:
+        for tile, count in enumerate(player.hand):
+            all_counts[tile] += count
+        for entry in player.river:
+            all_counts[entry.tile] += 1
+        for meld in player.melds:
+            for tile in meld:
+                all_counts[tile] += 1
+    assert all(count == 4 for count in all_counts), "individual tile copies were not conserved"
+
+
+def _danger_for(player_index: int, tile: int, post_hand: list[int], players: list[Player]) -> float:
+    visible = _public_counts(players)
+    return danger_score(tile, _view(players[player_index]), visible, tuple(post_hand)).score
+
+
+def _choose_discard(player_index: int, drawn_tile: int | None, players: list[Player]) -> tuple[int, bool]:
+    player = players[player_index]
+    if player.declared:
+        assert drawn_tile is not None
+        return drawn_tile, False
+    visible = _public_counts(players)
+    analyses = _cached_analysis(tuple(player.hand), len(player.melds), visible)
+    assert analyses
+    fold_active = (
+        player.policy == "cautious"
+        and _cached_shanten(tuple(player.hand), len(player.melds)) >= 2
+        and any(other.declared or len(other.melds) >= 4 for index, other in enumerate(players) if index != player_index)
+    )
+    if not fold_active:
+        return analyses[0].discard, False
+    threats = [index for index, other in enumerate(players) if index != player_index and (other.declared or len(other.melds) >= 4)]
+    ranked: list[tuple[float, int, int]] = []
+    for order, analysis in enumerate(analyses):
+        post = list(player.hand)
+        post[analysis.discard] -= 1
+        ranked.append((max(_danger_for(opponent, analysis.discard, post, players) for opponent in threats), order, analysis.discard))
+    return min(ranked)[2], True
+
+
+def _post_call_choice(player: Player, removed: tuple[int, int]) -> tuple[int, int] | None:
+    """Return (resulting shanten, discard) if this two-tile call improves it."""
+    before = _cached_shanten(tuple(player.hand), len(player.melds))
+    candidate = list(player.hand)
+    candidate[removed[0]] -= 1
+    candidate[removed[1]] -= 1
+    analyses = _cached_analysis(tuple(candidate), len(player.melds) + 1, (0,) * 34)
+    if not analyses or analyses[0].shanten_after >= before:
+        return None
+    return analyses[0].shanten_after, analyses[0].discard
+
+
+def _call_options(player: Player, tile: int, chi: bool) -> list[tuple[tuple[int, int], tuple[int, int, int], int]]:
+    options: list[tuple[tuple[int, int], tuple[int, int, int], int]] = []
+    if not chi:
+        if player.hand[tile] >= 2:
+            choice = _post_call_choice(player, (tile, tile))
+            if choice:
+                options.append(((tile, tile), (tile, tile, tile), choice[0]))
+        return options
+    if tile >= 27:
+        return options
+    suit, rank = divmod(tile, 9)
+    offset = suit * 9
+    for pair in ((rank - 2, rank - 1), (rank - 1, rank + 1), (rank + 1, rank + 2)):
+        if not all(0 <= value < 9 for value in pair):
+            continue
+        first, second = offset + pair[0], offset + pair[1]
+        if player.hand[first] and player.hand[second]:
+            choice = _post_call_choice(player, (first, second))
+            if choice:
+                options.append(((first, second), tuple(sorted((tile, first, second))), choice[0]))
+    return options
+
+
+def _best_call(player: Player, tile: int, chi: bool) -> tuple[tuple[int, int], tuple[int, int, int]] | None:
+    options = _call_options(player, tile, chi)
+    if not options:
+        return None
+    removed, meld, _ = min(options, key=lambda option: (option[2], option[1]))
+    return removed, meld
+
+
+def play_game(seed: int | None = None, policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious")) -> GameResult:
+    """Play one deterministic-seeded game and retain every discard event in memory."""
+    if len(policies) != 4 or any(policy not in POLICIES for policy in policies):
+        raise ValueError("policies must name four entries of 'attack' or 'cautious'")
+    rng = Random(seed)
+    tiles = [tile for tile in range(34) for _ in range(4)]
+    rng.shuffle(tiles)
+    players = [Player(policy) for policy in policies]
+    for _ in range(16):
+        for player in players:
+            player.hand[tiles.pop()] += 1
+    dead = [tiles.pop() for _ in range(16)]
+    wall = tiles
+    events: list[dict] = []
+    any_call = False
+    current = 0
+    needs_draw = True
+    actions = 0
+    _assert_conservation(players, wall, dead)
+
+    while True:
+        actions += 1
+        assert actions < 1000, "game did not terminate"
+        player = players[current]
+        drawn_tile: int | None = None
+        if needs_draw:
+            if not wall:
+                return GameResult(events, "draw", None, None, actions)
+            drawn_tile = wall.pop()
+            player.hand[drawn_tile] += 1
+            _assert_conservation(players, wall, dead)
+            if _cached_shanten(tuple(player.hand), len(player.melds)) == -1:
+                assert _cached_shanten(tuple(player.hand), len(player.melds)) == -1
+                return GameResult(events, "tsumo", current, None, actions, tuple(player.hand), len(player.melds))
+
+        tile, fold_active = _choose_discard(current, drawn_tile, players)
+        assert player.hand[tile] > 0
+        origin = "tsumogiri" if drawn_tile == tile else "tedashi"
+        player.hand[tile] -= 1
+        turn = player.discards + 1
+        true_tenpai = _cached_shanten(tuple(player.hand), len(player.melds)) == 0
+        dangers = {
+            index: _danger_for(index, tile, player.hand, players)
+            for index in range(4)
+            if index != current
+        }
+        player.river.append(RiverEntry(tile, origin))
+        player.discards += 1
+        if not any_call and not player.declared and turn <= 2 and true_tenpai:
+            player.declared_at = len(player.river) - 1
+        event = {
+            "seat": current,
+            "policy": player.policy,
+            "turn": turn,
+            "melds": len(player.melds),
+            "tsumogiri_run": _trailing_tsumogiri_run(player.river),
+            "declared": player.declared,
+            "fold_policy_active": fold_active,
+            "true_tenpai": true_tenpai,
+            "dealt_in": False,
+            "danger_score": max(dangers.values()),
+            "fold_window": False,
+            "fold_score": 0.0,
+        }
+        other_counts = [0] * 34
+        for index, other in enumerate(players):
+            if index != current:
+                for entry in other.river:
+                    other_counts[entry.tile] += 1
+        score = fold_score(_view(player), other_counts)
+        if len(player.river) >= 3:
+            event["fold_window"] = True
+            event["fold_score"] = score
+        events.append(event)
+        _assert_conservation(players, wall, dead)
+
+        winner = next(
+            (
+                index
+                for offset in range(1, 4)
+                for index in [(current + offset) % 4]
+                if _cached_shanten(
+                    tuple(players[index].hand[:tile] + [players[index].hand[tile] + 1] + players[index].hand[tile + 1 :]),
+                    len(players[index].melds),
+                )
+                == -1
+            ),
+            None,
+        )
+        if winner is not None:
+            event["dealt_in"] = True
+            event["danger_score"] = dangers[winner]
+            winning_hand = list(players[winner].hand)
+            winning_hand[tile] += 1
+            assert _cached_shanten(tuple(winning_hand), len(players[winner].melds)) == -1
+            return GameResult(events, "ron", winner, current, actions, tuple(winning_hand), len(players[winner].melds))
+
+        # Pon takes priority; ties use closest player downstream. Chi is next-seat only.
+        caller: int | None = None
+        selected: tuple[tuple[int, int], tuple[int, int, int]] | None = None
+        # A migi discard remains in the declared player's observable river;
+        # calls on it are not modeled because its river index anchors the
+        # declaration and later hard-safety read.
+        if not player.declared:
+            for offset in range(1, 4):
+                index = (current + offset) % 4
+                if not players[index].declared:
+                    selected = _best_call(players[index], tile, False)
+                    if selected:
+                        caller = index
+                        break
+            if caller is None:
+                index = (current + 1) % 4
+                if not players[index].declared:
+                    selected = _best_call(players[index], tile, True)
+                    if selected:
+                        caller = index
+        if caller is not None and selected is not None:
+            removed, meld = selected
+            players[current].river.pop()
+            players[caller].hand[removed[0]] -= 1
+            players[caller].hand[removed[1]] -= 1
+            players[caller].melds.append(meld)
+            any_call = True
+            _assert_conservation(players, wall, dead)
+            current = caller
+            needs_draw = False
+        else:
+            current = (current + 1) % 4
+            needs_draw = True
+
+
+def play_games(games: int, seed: int | None = None, policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious")) -> list[GameResult]:
+    if not isinstance(games, int) or isinstance(games, bool) or games < 0:
+        raise ValueError("games must be a non-negative integer")
+    rng = Random(seed)
+    return [play_game(rng.randrange(2**63), policies) for _ in range(games)]

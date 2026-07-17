@@ -150,3 +150,48 @@ The opponent-state estimates in `taimahjong.danger` are deterministic and **UNCA
 The only declaration form in these rules is the house-rule **migi**. It may be declared only on the player's first or second discard (the table's first eight discards) and only before any chi, pon, or kang. `OpponentView` stores the declaration river index as `declared_at`, which must be 0 or 1. `DECLARED_TAI = 8` is reserved for a future scoring milestone. A declared opponent is certain tenpai (`1.0`), cannot fold (`0.0`), and has a locked hand: any tile kind discarded after `declared_at` is hard excluded from their wins and reports `declared_safe` with danger exactly zero. This is an absolute rule, unlike pre-declaration river evidence, which remains only a statistical discount because Taiwanese rules do not have permanent Japanese-riichi furiten.
 
 In `--danger` mode, use `--opp-declared 0` or `--opp-declared 1` for migi and `--others "..."` as the fold safety reference. The output includes opponent tenpai and fold headers plus an `ExpDanger` column; a hard-excluded kind prints `SAFE(declared)`.
+
+## M4b self-play calibration
+
+`taimahjong.selfplay` runs four deterministic-policy players against the same
+136 ordinary-tile universe used elsewhere in this package. It deals 16 tiles
+to each player, lets the dealer draw first, checks self-draw and discard wins
+with M1, and ends when a player wins or the live wall is empty (16 tiles are
+held dead). Every discard retains an in-memory event record with observable
+opponent-state inputs, true concealed-hand tenpai, deal-in status, and the
+M4a danger score used for calibration.
+
+The simulator intentionally omits flowers and flower replacement, kang, and
+the temporary Taiwanese `guo shui` (過水) rule. It is a policy testbed, not a
+complete rules implementation. Ron uses downstream priority; then greedy pon
+and next-player chi are allowed only when the resulting best discard strictly
+improves M1 shanten. The house-rule migi declaration is available on either of
+a player's first two discards before any call; declared players must discard
+their draw unless it wins. Calls on their locked discards are omitted so the
+declaration river remains observable.
+
+Seats default to two `attack` and two `cautious` bots. Attack uses the top M2
+discard. Cautious uses that same choice, except at shanten 2+ against a
+declared or four-meld opponent, where it picks the M2 candidate with the
+lowest M4a danger. This deliberately produces observable folding windows.
+
+Generate calibration data in bounded chunks; repeated commands append and
+merge counts rather than raw game logs:
+
+```bash
+python3 -m taimahjong --selfplay --games 250 --seed 1 --out data/calibration.json
+python3 -m taimahjong --selfplay --games 250 --seed 2 --out data/calibration.json
+python3 -m taimahjong --selfplay-report data/calibration.json
+```
+
+The JSON stores mergeable `counts` plus derived tables: empirical
+`P(tenpai | melds, turn bucket, trailing-tsumogiri bucket)`, raw empirical
+deal-in fractions plus their weighted-isotonic monotone
+`P(deal-in | danger bucket)` calibration, and cautious/attack fold-window
+means. At lookup time a cell with fewer than 30 observations is unavailable;
+danger lookups linearly interpolate between populated bucket midpoints. If
+`data/calibration.json` exists, `--danger` labels both the uncalibrated
+heuristic and calibrated `P(tenpai)` / `P(deal-in)` values.
+
+These probabilities are calibrated **against these bots**, their greedy call
+rule, and these simplifications—not against human Taiwanese-mahjong play.

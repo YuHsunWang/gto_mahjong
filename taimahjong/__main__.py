@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
+from .calibration import Calibration, counts_from_games, format_report, load_table, write_merged_table
 from .danger import OpponentView, fold_score, parse_river, rank_discards
+from .selfplay import play_games
 from .shanten import shanten
 from .simulate import win_probability
 from .tiles import SUIT_OFFSETS, format_tiles, parse_tiles
@@ -75,15 +78,21 @@ def _public_counts(opponent: OpponentView) -> tuple[int, ...]:
     return tuple(counts)
 
 
+def _default_calibration_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "data" / "calibration.json"
+
+
 def main() -> None:
     parser = _ArgumentParser(description="Taiwanese mahjong hand analyzer")
-    parser.add_argument("tiles", help="compact tiles, e.g. 123m456p789s1122334z")
+    parser.add_argument("tiles", nargs="?", help="compact tiles, e.g. 123m456p789s1122334z")
     parser.add_argument("--melds", type=int, default=0, help="number of declared melds (0-5)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--ukeire", action="store_true", help="list shanten-improving draws from a 16-tile hand")
     mode.add_argument("--analyze", action="store_true", help="rank discards from a 17-tile hand")
     mode.add_argument("--danger", action="store_true", help="rank M2 discards with one opponent's deal-in danger")
     mode.add_argument("--simulate", action="store_true", help="estimate self-draw tenpai and win probabilities")
+    mode.add_argument("--selfplay", action="store_true", help="run four-player self-play and append calibration counts")
+    mode.add_argument("--selfplay-report", metavar="PATH", help="print a self-play calibration report")
     parser.add_argument("--visible", help="compact notation for other tiles seen elsewhere")
     parser.add_argument("--opp-river", help="ordered compact notation for the modeled opponent's discards")
     parser.add_argument("--opp-melds", help="semicolon-separated three-tile declared melds, e.g. 123s;777s")
@@ -93,8 +102,29 @@ def main() -> None:
     parser.add_argument("--turns", type=int, default=10, help="simulation draws (default: 10)")
     parser.add_argument("--sims", type=int, default=5000, help="simulation trials (default: 5000)")
     parser.add_argument("--seed", type=int, help="random seed for simulation")
+    parser.add_argument("--games", type=int, default=1, help="self-play games to run (default: 1)")
+    parser.add_argument("--out", help="self-play calibration JSON destination")
     args = parser.parse_args()
     try:
+        if args.selfplay_report:
+            if args.tiles:
+                raise ValueError("tiles are not used with --selfplay-report")
+            print(format_report(load_table(args.selfplay_report)))
+            return
+        if args.selfplay:
+            if args.tiles:
+                raise ValueError("tiles are not used with --selfplay")
+            if not args.out:
+                raise ValueError("--selfplay requires --out")
+            games = play_games(args.games, args.seed)
+            metadata = {"seeds": [] if args.seed is None else [args.seed]}
+            if args.seed is not None:
+                metadata["last_seed"] = args.seed
+            document = write_merged_table(args.out, counts_from_games(games), metadata)
+            print(f"self-play: appended {args.games} games; total {document['counts']['games']} games -> {args.out}")
+            return
+        if not args.tiles:
+            raise ValueError("tiles are required unless using --selfplay or --selfplay-report")
         counts = parse_tiles(args.tiles)
         visible = parse_tiles(args.visible) if args.visible else None
         if args.tile and not args.danger:
@@ -106,22 +136,41 @@ def main() -> None:
             other_visible = (0,) * 34 if visible is None else visible
             danger_visible = _add_visible(other_visible, _public_counts(opponent))
             analyses = rank_discards(counts, opponent, danger_visible, args.melds)
+            calibration_path = _default_calibration_path()
+            calibration = Calibration.from_path(calibration_path) if calibration_path.exists() else None
             opponent_tenpai = analyses[0].tenpai if analyses else None
             opponent_fold = fold_score(opponent, parse_tiles(args.others) if args.others else [])
             print(f"Hand: {format_tiles(counts)}")
             if opponent_tenpai is not None:
                 signals = ", ".join(f"{name}={value}" for name, value in opponent_tenpai.signals.items())
-                print(f"Opponent tenpai: {opponent_tenpai.score:.2f} ({signals})")
+                run = int(opponent_tenpai.signals.get("trailing_tsumogiri_run", 0))
+                calibrated = calibration.tenpai_probability(len(opponent.melds), len(opponent.river), run) if calibration else None
+                probability = "unavailable" if calibrated is None else f"{calibrated:.3f}"
+                if calibration:
+                    print(f"Opponent tenpai: heuristic {opponent_tenpai.score:.2f}; calibrated P(tenpai) {probability} ({signals})")
+                else:
+                    print(f"Opponent tenpai: {opponent_tenpai.score:.2f} ({signals})")
             print(f"Opponent fold: {opponent_fold:.2f}")
-            print("Discard  Shanten  Total  Danger          ExpDanger  Accepted")
+            if calibration:
+                print("Discard  Shanten  Total  Danger          P(deal-in)  ExpDanger  Accepted")
+            else:
+                print("Discard  Shanten  Total  Danger          ExpDanger  Accepted")
             for entry in analyses:
                 analysis = entry.analysis
                 danger = "SAFE(declared)" if "declared_safe" in entry.danger.modifiers else f"{entry.danger.score:.2f}"
-                print(
-                    f"{_tile_name(analysis.discard):<7}  {analysis.shanten_after:<7}  "
-                    f"{analysis.total:<5}  {danger:<14}  {entry.expected_danger:<9.2f}  {_accepted_kinds(analysis.ukeire)}"
-                )
-            print("Note: danger, tenpai, and fold scores are UNCALIBRATED deterministic heuristics.")
+                if calibration:
+                    probability = calibration.deal_in_probability(entry.danger.score)
+                    probability_text = "heuristic" if probability is None else f"{probability:.3f}"
+                    print(
+                        f"{_tile_name(analysis.discard):<7}  {analysis.shanten_after:<7}  "
+                        f"{analysis.total:<5}  {danger:<14}  {probability_text:<10}  {entry.expected_danger:<9.2f}  {_accepted_kinds(analysis.ukeire)}"
+                    )
+                else:
+                    print(
+                        f"{_tile_name(analysis.discard):<7}  {analysis.shanten_after:<7}  "
+                        f"{analysis.total:<5}  {danger:<14}  {entry.expected_danger:<9.2f}  {_accepted_kinds(analysis.ukeire)}"
+                    )
+            print("Note: danger, tenpai, and fold heuristics remain separate from bot-calibrated probabilities.")
             if args.tile:
                 requested = _ordered_tiles(args.tile)
                 if len(requested) != 1:
