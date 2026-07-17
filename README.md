@@ -42,6 +42,30 @@ is still listed when it would theoretically improve shanten, so unavailable
 waits remain visible.  Hand plus visible copies may not exceed four for any
 tile kind.
 
+## M3 simulation
+
+`win_probability(counts, turns, melds_declared=0, visible=None, sims=5000,
+seed=None)` runs Monte Carlo trials against the 136-tile ordinary-tile
+universe. The unseen pool contains four copies of each kind minus the
+concealed hand and `visible`; flowers are not modeled. Each trial draws
+without replacement, and a simulated discard is not returned to that pool.
+After a non-winning draw, it uses the M2 top-ranked discard (minimum
+resulting shanten, then maximum ukeire) and continues.
+
+The result reports cumulative tenpai and win probabilities after every draw.
+Starting tenpai is folded into the turn-one tenpai figure rather than exposed
+as a separate turn-zero baseline. This is a **self-draw-only** estimate:
+opponent discards, deal-ins, scoring, and opponent behavior are not modeled.
+
+Run a reproducible simulation from the CLI:
+
+```bash
+python3 -m taimahjong "123m123p123s1112223z" --simulate --turns 10 --sims 5000 --seed 42
+```
+
+It prints cumulative tenpai and self-draw win percentages by turn, followed
+by final totals and the self-draw-only reminder.
+
 Run the tests (pytest is only a test dependency):
 
 ```bash

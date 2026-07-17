@@ -6,6 +6,7 @@ import argparse
 import sys
 
 from .shanten import shanten
+from .simulate import win_probability
 from .tiles import format_tiles, parse_tiles
 from .ukeire import discard_analysis, ukeire
 
@@ -28,18 +29,30 @@ def _accepted_kinds(accepted: dict[int, int]) -> str:
 
 
 def main() -> None:
-    parser = _ArgumentParser(description="Taiwanese mahjong shanten calculator")
+    parser = _ArgumentParser(description="Taiwanese mahjong hand analyzer")
     parser.add_argument("tiles", help="compact tiles, e.g. 123m456p789s1122334z")
     parser.add_argument("--melds", type=int, default=0, help="number of declared melds (0-5)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--ukeire", action="store_true", help="list shanten-improving draws from a 16-tile hand")
     mode.add_argument("--analyze", action="store_true", help="rank discards from a 17-tile hand")
+    mode.add_argument("--simulate", action="store_true", help="estimate self-draw tenpai and win probabilities")
     parser.add_argument("--visible", help="compact notation for tiles seen elsewhere")
+    parser.add_argument("--turns", type=int, default=10, help="simulation draws (default: 10)")
+    parser.add_argument("--sims", type=int, default=5000, help="simulation trials (default: 5000)")
+    parser.add_argument("--seed", type=int, help="random seed for simulation")
     args = parser.parse_args()
     try:
         counts = parse_tiles(args.tiles)
         visible = parse_tiles(args.visible) if args.visible else None
-        if args.ukeire:
+        if args.simulate:
+            result = win_probability(counts, args.turns, args.melds, visible, args.sims, args.seed)
+            print(f"Hand: {format_tiles(counts)}")
+            print("Turn  Tenpai %  Win %")
+            for turn, (tenpai, win) in enumerate(zip(result.tenpai_by_turn, result.win_by_turn), start=1):
+                print(f"{turn:<4}  {tenpai * 100:>7.2f}  {win * 100:>5.2f}")
+            print(f"Totals: tenpai {result.p_tenpai * 100:.2f}%, win {result.p_win * 100:.2f}%")
+            print("Note: self-draw-only estimate; opponent discards are not modeled.")
+        elif args.ukeire:
             accepted = ukeire(counts, args.melds, visible)
             current_shanten = shanten(counts, args.melds)
             print(f"Hand: {format_tiles(counts)}")
