@@ -263,3 +263,58 @@ where upgrades remain possible. The declared score includes migi's 8 tai.
 ```bash
 python3 -m taimahjong "123m123p123s1112223z" --declare --turns 3 --sims 400 --seed 7
 ```
+
+## M6 teaching quiz
+
+`--quiz` turns deterministic self-play into a discard drill. It captures one
+seat immediately after its draw, retaining only what that seat can see: its
+hand, own river and melds, every opponent's river (including tsumogiri/tedashi
+origin), called melds, declaration state, and aggregate visible tile counts.
+Opponent concealed hands never leave self-play.
+
+Starting at the requested seed, the generator tries that game seed and then
+successive seeds, up to `MAX_ATTEMPTS = 80`. A position must have shanten at
+most `SHANTEN_MAX = 2`, be at least `MIN_TURN = 5`, contain an opponent with
+two melds, a declaration, or tenpai estimate at least 0.40, and have an EV
+spread of at least `EV_GAP_MIN = 0.8` tai between the best and worst evaluated
+candidates. EV uses a fixed 24 simulations per candidate and a seed derived
+from the position seed, so the seed fully reproduces the position and grade.
+
+Use a supplied answer for a scriptable check, or omit it to answer one prompt
+interactively:
+
+```bash
+python3 -m taimahjong --quiz --seed 1 --answer 9s
+python3 -m taimahjong --quiz --seed 1
+python3 -m taimahjong --quiz-batch 5 --seed 1
+```
+
+Verdicts are `best` (zero EV loss), `good` (under `GOOD_DELTA = 0.3` tai),
+`inaccuracy` (under 1.0 tai), and `mistake` (1.0 tai or more). The explanation
+uses the same EV table as `--ev`, then identifies the actual win-EV or
+opponent-loss component that mattered most.
+
+Example transcript:
+
+```text
+$ python3 -m taimahjong --quiz --seed 1 --answer 9s
+Quiz seed: 1  Seat: 1  Turn: 5
+Draw: 9m
+Hand: 456789m8899p44599s55z
+Own river: 2.z
+Own melds: -
+Opponent 0: river 2.s2.z1.p4*s4.z | melds 222p;666z | declared no | tenpai 0.52 | fold 0.57
+Opponent 2: river 1.z | melds - | declared no | tenpai 0.17 | fold 0.00
+Opponent 3: river 2.4.z | melds 666p | declared no | tenpai 0.33 | fold 0.00
+Visible counts: 456789m12226668899p2444599s12224455666z
+Verdict: best
+EV delta: 0.00 tai
+Discard  Net EV  P(win)  E[win value]  E[loss]
+9s         0.82   0.208          5.20     0.27
+5z         0.48   0.125          5.00     0.14
+4s         0.33   0.125          5.67     0.37
+8p         0.13   0.125          5.00     0.50
+9p        -0.14   0.042          6.00     0.39
+Best 9s: higher win EV by 0.46 tai than the next-ranked choice.
+Chosen 9s: matches the best's higher win-EV component.
+```

@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import lru_cache
 from random import Random
+from typing import Callable
 
 from .danger import OpponentView, RiverEntry, danger_score, fold_score
 from .shanten import shanten
@@ -80,6 +81,25 @@ class GameResult:
         return (self.outcome, self.winner, self.discarder, self.turns, tuple(tuple(sorted(event.items())) for event in self.events))
 
 
+@dataclass(frozen=True)
+class DecisionSnapshot:
+    """A player's observable table state immediately after a non-winning draw.
+
+    The snapshot deliberately carries no opponent concealed hands.  It is an
+    additive hook for teaching or diagnostics; ordinary self-play behavior is
+    unchanged when no hook is supplied.
+    """
+
+    seat: int
+    hand: tuple[int, ...]
+    river: tuple[RiverEntry, ...]
+    melds: tuple[tuple[int, int, int], ...]
+    opponents: tuple[tuple[int, OpponentView], ...]
+    public_counts: tuple[int, ...]
+    turn: int
+    drawn_tile: int
+
+
 def _public_counts(players: list[Player]) -> tuple[int, ...]:
     counts = [0] * 34
     for player in players:
@@ -93,6 +113,21 @@ def _public_counts(players: list[Player]) -> tuple[int, ...]:
 
 def _view(player: Player) -> OpponentView:
     return OpponentView(list(player.river), list(player.melds), player.declared_at)
+
+
+def _decision_snapshot(player_index: int, drawn_tile: int, players: list[Player]) -> DecisionSnapshot:
+    """Copy the public table view available to ``player_index`` after drawing."""
+    player = players[player_index]
+    return DecisionSnapshot(
+        seat=player_index,
+        hand=tuple(player.hand),
+        river=tuple(player.river),
+        melds=tuple(player.melds),
+        opponents=tuple((index, _view(other)) for index, other in enumerate(players) if index != player_index),
+        public_counts=_public_counts(players),
+        turn=player.discards + 1,
+        drawn_tile=drawn_tile,
+    )
 
 
 def _trailing_tsumogiri_run(river: list[RiverEntry]) -> int:
@@ -196,7 +231,11 @@ def _best_call(player: Player, tile: int, chi: bool) -> tuple[tuple[int, int], t
     return removed, meld
 
 
-def play_game(seed: int | None = None, policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious")) -> GameResult:
+def play_game(
+    seed: int | None = None,
+    policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious"),
+    snapshot_hook: Callable[[DecisionSnapshot], None] | None = None,
+) -> GameResult:
     """Play one deterministic-seeded game and retain every discard event in memory."""
     if len(policies) != 4 or any(policy not in POLICIES for policy in policies):
         raise ValueError("policies must name four entries of 'attack' or 'cautious'")
@@ -230,6 +269,8 @@ def play_game(seed: int | None = None, policies: tuple[str, str, str, str] = ("a
             if _cached_shanten(tuple(player.hand), len(player.melds)) == -1:
                 assert _cached_shanten(tuple(player.hand), len(player.melds)) == -1
                 return GameResult(events, "tsumo", current, None, actions, tuple(player.hand), len(player.melds))
+            if snapshot_hook is not None and not player.declared:
+                snapshot_hook(_decision_snapshot(current, drawn_tile, players))
 
         tile, fold_active = _choose_discard(current, drawn_tile, players)
         assert player.hand[tile] > 0

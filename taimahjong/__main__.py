@@ -9,6 +9,7 @@ from pathlib import Path
 from .calibration import Calibration, counts_from_games, format_report, load_table, write_merged_table
 from .danger import OpponentView, fold_score, parse_river, rank_discards
 from .ev import declaration_ev, ev_rank
+from .quiz import explain, generate_position, grade
 from .scoring import BASE_UNITS, WinContext, score_hand
 from .selfplay import play_games
 from .shanten import shanten
@@ -107,6 +108,8 @@ def main() -> None:
     mode.add_argument("--score", action="store_true", help="itemized tai scoring for a complete winning hand")
     mode.add_argument("--selfplay", action="store_true", help="run four-player self-play and append calibration counts")
     mode.add_argument("--selfplay-report", metavar="PATH", help="print a self-play calibration report")
+    mode.add_argument("--quiz", action="store_true", help="generate and grade one seeded teaching position")
+    mode.add_argument("--quiz-batch", type=int, metavar="N", help="print N seeded quiz drills and their best discards")
     parser.add_argument("--visible", help="compact notation for other tiles seen elsewhere")
     parser.add_argument("--opp-river", help="ordered compact notation for the modeled opponent's discards")
     parser.add_argument("--opp-melds", help="semicolon-separated three-tile declared melds, e.g. 123s;777s")
@@ -128,8 +131,38 @@ def main() -> None:
     parser.add_argument("--seed", type=int, help="random seed for simulation")
     parser.add_argument("--games", type=int, default=1, help="self-play games to run (default: 1)")
     parser.add_argument("--out", help="self-play calibration JSON destination")
+    parser.add_argument("--answer", help="quiz discard answer, e.g. 3m")
     args = parser.parse_args()
     try:
+        if args.quiz_batch is not None:
+            if args.tiles:
+                raise ValueError("tiles are not used with --quiz-batch")
+            if args.answer:
+                raise ValueError("--answer requires --quiz")
+            if args.quiz_batch < 1:
+                raise ValueError("--quiz-batch must be at least 1")
+            next_seed = 0 if args.seed is None else args.seed
+            for _ in range(args.quiz_batch):
+                position = generate_position(next_seed)
+                probe = next(tile for tile, count in enumerate(position.hand) if count)
+                best = grade(position, probe).best
+                print(f"seed {position.seed}: best {_tile_name(best.discard)}")
+                next_seed = position.seed + 1
+            return
+        if args.quiz:
+            if args.tiles:
+                raise ValueError("tiles are not used with --quiz")
+            position = generate_position(0 if args.seed is None else args.seed)
+            print(position.render())
+            answer = args.answer if args.answer is not None else input("Discard tile: ")
+            chosen = _single_tile(answer)
+            quiz_grade = grade(position, chosen)
+            print(f"Verdict: {quiz_grade.verdict}")
+            print(f"EV delta: {quiz_grade.ev_delta:.2f} tai")
+            print(explain(quiz_grade))
+            return
+        if args.answer:
+            raise ValueError("--answer requires --quiz")
         if args.selfplay_report:
             if args.tiles:
                 raise ValueError("tiles are not used with --selfplay-report")
