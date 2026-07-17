@@ -2,237 +2,249 @@
   "counts": {
     "deal_in": {
       "0-1": {
-        "deal_ins": 1,
-        "observations": 19061
+        "deal_ins": 0,
+        "observations": 31419
       },
       "1-2": {
-        "deal_ins": 3,
-        "observations": 10321
+        "deal_ins": 14,
+        "observations": 18808
       },
       "13+": {
-        "deal_ins": 347,
-        "observations": 30117
+        "deal_ins": 252,
+        "observations": 27852
       },
       "2-4": {
-        "deal_ins": 90,
-        "observations": 48783
+        "deal_ins": 75,
+        "observations": 61795
       },
       "4-6": {
-        "deal_ins": 142,
-        "observations": 24533
+        "deal_ins": 191,
+        "observations": 36026
       },
       "6-9": {
-        "deal_ins": 398,
-        "observations": 47615
+        "deal_ins": 399,
+        "observations": 57308
       },
       "9-13": {
-        "deal_ins": 514,
-        "observations": 43952
+        "deal_ins": 389,
+        "observations": 43566
       }
     },
     "fold": {
       "attack": {
-        "score_sum": 15178.000000000204,
-        "windows": 28119
+        "score_sum": 10333.200000000059,
+        "windows": 19164
       },
       "cautious": {
-        "score_sum": 14872.966666666858,
-        "windows": 27052
+        "score_sum": 10231.550000000047,
+        "windows": 18238
       }
     },
     "games": 2000,
     "tenpai": {
       "0|1-6|0": {
-        "observations": 20014,
-        "tenpai": 191
+        "observations": 23057,
+        "tenpai": 101
       },
       "0|1-6|1-2": {
-        "observations": 5080,
-        "tenpai": 124
+        "observations": 5383,
+        "tenpai": 52
       },
       "0|1-6|3+": {
-        "observations": 196,
-        "tenpai": 17
+        "observations": 188,
+        "tenpai": 6
       },
       "0|13+|0": {
-        "observations": 46,
-        "tenpai": 26
+        "observations": 213,
+        "tenpai": 74
       },
       "0|13+|1-2": {
-        "observations": 51,
-        "tenpai": 28
+        "observations": 245,
+        "tenpai": 111
       },
       "0|13+|3+": {
-        "observations": 66,
-        "tenpai": 37
+        "observations": 252,
+        "tenpai": 133
       },
       "0|7-12|0": {
-        "observations": 1831,
-        "tenpai": 345
+        "observations": 3417,
+        "tenpai": 315
       },
       "0|7-12|1-2": {
-        "observations": 1555,
-        "tenpai": 361
+        "observations": 2524,
+        "tenpai": 384
       },
       "0|7-12|3+": {
-        "observations": 628,
-        "tenpai": 175
+        "observations": 719,
+        "tenpai": 177
       },
       "1|1-6|0": {
-        "observations": 12425,
-        "tenpai": 457
+        "observations": 11661,
+        "tenpai": 212
       },
       "1|1-6|1-2": {
-        "observations": 3759,
-        "tenpai": 240
+        "observations": 2921,
+        "tenpai": 108
       },
       "1|1-6|3+": {
-        "observations": 143,
-        "tenpai": 14
-      },
-      "1|13+|0": {
-        "observations": 193,
-        "tenpai": 97
-      },
-      "1|13+|1-2": {
-        "observations": 247,
-        "tenpai": 139
-      },
-      "1|13+|3+": {
-        "observations": 268,
-        "tenpai": 162
-      },
-      "1|7-12|0": {
-        "observations": 4479,
-        "tenpai": 1045
-      },
-      "1|7-12|1-2": {
-        "observations": 4134,
-        "tenpai": 1229
-      },
-      "1|7-12|3+": {
-        "observations": 1348,
-        "tenpai": 509
-      },
-      "2|1-6|0": {
-        "observations": 3482,
-        "tenpai": 454
-      },
-      "2|1-6|1-2": {
-        "observations": 1196,
-        "tenpai": 193
-      },
-      "2|1-6|3+": {
-        "observations": 40,
+        "observations": 124,
         "tenpai": 8
       },
+      "1|13+|0": {
+        "observations": 720,
+        "tenpai": 230
+      },
+      "1|13+|1-2": {
+        "observations": 825,
+        "tenpai": 340
+      },
+      "1|13+|3+": {
+        "observations": 814,
+        "tenpai": 488
+      },
+      "1|7-12|0": {
+        "observations": 6995,
+        "tenpai": 871
+      },
+      "1|7-12|1-2": {
+        "observations": 4901,
+        "tenpai": 890
+      },
+      "1|7-12|3+": {
+        "observations": 1357,
+        "tenpai": 455
+      },
+      "2|1-6|0": {
+        "observations": 2955,
+        "tenpai": 166
+      },
+      "2|1-6|1-2": {
+        "observations": 772,
+        "tenpai": 86
+      },
+      "2|1-6|3+": {
+        "observations": 15,
+        "tenpai": 4
+      },
       "2|13+|0": {
-        "observations": 238,
-        "tenpai": 160
+        "observations": 1092,
+        "tenpai": 296
       },
       "2|13+|1-2": {
-        "observations": 342,
-        "tenpai": 253
+        "observations": 1106,
+        "tenpai": 405
       },
       "2|13+|3+": {
-        "observations": 379,
-        "tenpai": 287
+        "observations": 941,
+        "tenpai": 547
       },
       "2|7-12|0": {
-        "observations": 3722,
-        "tenpai": 1370
+        "observations": 5700,
+        "tenpai": 845
       },
       "2|7-12|1-2": {
-        "observations": 3417,
-        "tenpai": 1553
+        "observations": 4150,
+        "tenpai": 943
       },
       "2|7-12|3+": {
-        "observations": 1171,
-        "tenpai": 619
+        "observations": 1149,
+        "tenpai": 475
       },
       "3|1-6|0": {
-        "observations": 468,
-        "tenpai": 127
+        "observations": 358,
+        "tenpai": 49
       },
       "3|1-6|1-2": {
-        "observations": 153,
-        "tenpai": 54
+        "observations": 96,
+        "tenpai": 18
       },
       "3|1-6|3+": {
-        "observations": 1,
+        "observations": 2,
         "tenpai": 1
       },
       "3|13+|0": {
-        "observations": 108,
-        "tenpai": 88
+        "observations": 887,
+        "tenpai": 177
       },
       "3|13+|1-2": {
-        "observations": 170,
-        "tenpai": 140
+        "observations": 904,
+        "tenpai": 259
       },
       "3|13+|3+": {
-        "observations": 171,
-        "tenpai": 151
+        "observations": 532,
+        "tenpai": 279
       },
       "3|7-12|0": {
-        "observations": 1300,
-        "tenpai": 748
+        "observations": 2102,
+        "tenpai": 371
       },
       "3|7-12|1-2": {
-        "observations": 1166,
-        "tenpai": 752
+        "observations": 1405,
+        "tenpai": 385
       },
       "3|7-12|3+": {
-        "observations": 385,
-        "tenpai": 271
+        "observations": 342,
+        "tenpai": 153
       },
       "4|1-6|0": {
-        "observations": 29,
-        "tenpai": 24
+        "observations": 20,
+        "tenpai": 11
       },
       "4|1-6|1-2": {
-        "observations": 7,
-        "tenpai": 4
+        "observations": 2,
+        "tenpai": 2
       },
       "4|13+|0": {
-        "observations": 19,
-        "tenpai": 19
+        "observations": 266,
+        "tenpai": 42
       },
       "4|13+|1-2": {
-        "observations": 34,
-        "tenpai": 34
+        "observations": 269,
+        "tenpai": 58
       },
       "4|13+|3+": {
-        "observations": 29,
-        "tenpai": 29
+        "observations": 180,
+        "tenpai": 96
       },
       "4|7-12|0": {
-        "observations": 136,
-        "tenpai": 123
+        "observations": 334,
+        "tenpai": 76
       },
       "4|7-12|1-2": {
-        "observations": 135,
-        "tenpai": 126
+        "observations": 207,
+        "tenpai": 87
       },
       "4|7-12|3+": {
-        "observations": 27,
-        "tenpai": 25
+        "observations": 59,
+        "tenpai": 44
       },
       "5|1-6|0": {
         "observations": 1,
         "tenpai": 1
       },
+      "5|13+|0": {
+        "observations": 24,
+        "tenpai": 24
+      },
+      "5|13+|1-2": {
+        "observations": 26,
+        "tenpai": 26
+      },
+      "5|13+|3+": {
+        "observations": 22,
+        "tenpai": 22
+      },
       "5|7-12|0": {
-        "observations": 1,
-        "tenpai": 1
+        "observations": 11,
+        "tenpai": 11
       },
       "5|7-12|1-2": {
-        "observations": 3,
-        "tenpai": 3
+        "observations": 10,
+        "tenpai": 10
       },
       "5|7-12|3+": {
-        "observations": 1,
-        "tenpai": 1
+        "observations": 3,
+        "tenpai": 3
       }
     }
   },
@@ -245,263 +257,298 @@
     },
     "danger_reference": "per_opponent",
     "games": 2000,
-    "last_seed": 10008,
+    "last_seed": 30037,
+    "policy_mix": [
+      "attack",
+      "cautious",
+      "ev_aware",
+      "ev_aware"
+    ],
     "seeds": [
-      10001,
-      10002,
-      10003,
-      10004,
-      10005,
-      10006,
-      10007,
-      10008
+      30001,
+      30002,
+      30003,
+      30004,
+      30005,
+      30006,
+      30007,
+      30008,
+      30009,
+      30010,
+      30011,
+      30012,
+      30013,
+      30014,
+      30015,
+      30016,
+      30017,
+      30018,
+      30019,
+      30020,
+      30021,
+      30022,
+      30023,
+      30024,
+      30025,
+      30026,
+      30027,
+      30028,
+      30029,
+      30030,
+      30031,
+      30032,
+      30033,
+      30034,
+      30035,
+      30036,
+      30037
     ]
   },
   "tables": {
     "deal_in": {
       "0-1": {
-        "deal_ins": 1,
-        "empirical_probability": 5.2463144640889776e-05,
-        "observations": 19061,
-        "probability": 5.2463144640889776e-05
+        "deal_ins": 0,
+        "empirical_probability": 0.0,
+        "observations": 31419,
+        "probability": 0.0
       },
       "1-2": {
-        "deal_ins": 3,
-        "empirical_probability": 0.0002906695087685302,
-        "observations": 10321,
-        "probability": 0.0002906695087685302
+        "deal_ins": 14,
+        "empirical_probability": 0.0007443641003828158,
+        "observations": 18808,
+        "probability": 0.0007443641003828158
       },
       "13+": {
-        "deal_ins": 347,
-        "empirical_probability": 0.011521731912209052,
-        "observations": 30117,
-        "probability": 0.011624296264294105
+        "deal_ins": 252,
+        "empirical_probability": 0.00904782421370099,
+        "observations": 27852,
+        "probability": 0.00904782421370099
       },
       "2-4": {
-        "deal_ins": 90,
-        "empirical_probability": 0.0018449049873931493,
-        "observations": 48783,
-        "probability": 0.0018449049873931493
+        "deal_ins": 75,
+        "empirical_probability": 0.0012136904280281575,
+        "observations": 61795,
+        "probability": 0.0012136904280281575
       },
       "4-6": {
-        "deal_ins": 142,
-        "empirical_probability": 0.005788122121224473,
-        "observations": 24533,
-        "probability": 0.005788122121224473
+        "deal_ins": 191,
+        "empirical_probability": 0.005301726530838839,
+        "observations": 36026,
+        "probability": 0.005301726530838839
       },
       "6-9": {
-        "deal_ins": 398,
-        "empirical_probability": 0.008358710490391684,
-        "observations": 47615,
-        "probability": 0.008358710490391684
+        "deal_ins": 399,
+        "empirical_probability": 0.006962378725483353,
+        "observations": 57308,
+        "probability": 0.006962378725483353
       },
       "9-13": {
-        "deal_ins": 514,
-        "empirical_probability": 0.011694575900982891,
-        "observations": 43952,
-        "probability": 0.011624296264294105
+        "deal_ins": 389,
+        "empirical_probability": 0.008928981315704907,
+        "observations": 43566,
+        "probability": 0.008928981315704907
       }
     },
     "fold": {
       "attack": {
-        "mean_fold_score": 0.5397773747288382,
-        "windows": 28119
+        "mean_fold_score": 0.5391984971822197,
+        "windows": 19164
       },
       "cautious": {
-        "mean_fold_score": 0.5497917590812826,
-        "windows": 27052
+        "mean_fold_score": 0.5610017545783554,
+        "windows": 18238
       }
     },
     "tenpai": {
       "0|1-6|0": {
-        "observations": 20014,
-        "probability": 0.009543319676226642,
-        "tenpai": 191
+        "observations": 23057,
+        "probability": 0.004380448453831808,
+        "tenpai": 101
       },
       "0|1-6|1-2": {
-        "observations": 5080,
-        "probability": 0.024409448818897637,
-        "tenpai": 124
+        "observations": 5383,
+        "probability": 0.009660040869403677,
+        "tenpai": 52
       },
       "0|1-6|3+": {
-        "observations": 196,
-        "probability": 0.08673469387755102,
-        "tenpai": 17
+        "observations": 188,
+        "probability": 0.031914893617021274,
+        "tenpai": 6
       },
       "0|13+|0": {
-        "observations": 46,
-        "probability": 0.5652173913043478,
-        "tenpai": 26
+        "observations": 213,
+        "probability": 0.3474178403755869,
+        "tenpai": 74
       },
       "0|13+|1-2": {
-        "observations": 51,
-        "probability": 0.5490196078431373,
-        "tenpai": 28
+        "observations": 245,
+        "probability": 0.4530612244897959,
+        "tenpai": 111
       },
       "0|13+|3+": {
-        "observations": 66,
-        "probability": 0.5606060606060606,
-        "tenpai": 37
+        "observations": 252,
+        "probability": 0.5277777777777778,
+        "tenpai": 133
       },
       "0|7-12|0": {
-        "observations": 1831,
-        "probability": 0.1884216275259421,
-        "tenpai": 345
+        "observations": 3417,
+        "probability": 0.09218612818261633,
+        "tenpai": 315
       },
       "0|7-12|1-2": {
-        "observations": 1555,
-        "probability": 0.23215434083601286,
-        "tenpai": 361
+        "observations": 2524,
+        "probability": 0.15213946117274169,
+        "tenpai": 384
       },
       "0|7-12|3+": {
-        "observations": 628,
-        "probability": 0.2786624203821656,
-        "tenpai": 175
+        "observations": 719,
+        "probability": 0.24617524339360222,
+        "tenpai": 177
       },
       "1|1-6|0": {
-        "observations": 12425,
-        "probability": 0.036780684104627766,
-        "tenpai": 457
+        "observations": 11661,
+        "probability": 0.01818025898293457,
+        "tenpai": 212
       },
       "1|1-6|1-2": {
-        "observations": 3759,
-        "probability": 0.06384676775738228,
-        "tenpai": 240
+        "observations": 2921,
+        "probability": 0.036973639164669635,
+        "tenpai": 108
       },
       "1|1-6|3+": {
-        "observations": 143,
-        "probability": 0.0979020979020979,
-        "tenpai": 14
-      },
-      "1|13+|0": {
-        "observations": 193,
-        "probability": 0.5025906735751295,
-        "tenpai": 97
-      },
-      "1|13+|1-2": {
-        "observations": 247,
-        "probability": 0.562753036437247,
-        "tenpai": 139
-      },
-      "1|13+|3+": {
-        "observations": 268,
-        "probability": 0.6044776119402985,
-        "tenpai": 162
-      },
-      "1|7-12|0": {
-        "observations": 4479,
-        "probability": 0.23331100692118775,
-        "tenpai": 1045
-      },
-      "1|7-12|1-2": {
-        "observations": 4134,
-        "probability": 0.2972907595549105,
-        "tenpai": 1229
-      },
-      "1|7-12|3+": {
-        "observations": 1348,
-        "probability": 0.3775964391691395,
-        "tenpai": 509
-      },
-      "2|1-6|0": {
-        "observations": 3482,
-        "probability": 0.13038483630097644,
-        "tenpai": 454
-      },
-      "2|1-6|1-2": {
-        "observations": 1196,
-        "probability": 0.16137123745819398,
-        "tenpai": 193
-      },
-      "2|1-6|3+": {
-        "observations": 40,
-        "probability": 0.2,
+        "observations": 124,
+        "probability": 0.06451612903225806,
         "tenpai": 8
       },
+      "1|13+|0": {
+        "observations": 720,
+        "probability": 0.3194444444444444,
+        "tenpai": 230
+      },
+      "1|13+|1-2": {
+        "observations": 825,
+        "probability": 0.4121212121212121,
+        "tenpai": 340
+      },
+      "1|13+|3+": {
+        "observations": 814,
+        "probability": 0.5995085995085995,
+        "tenpai": 488
+      },
+      "1|7-12|0": {
+        "observations": 6995,
+        "probability": 0.12451751250893495,
+        "tenpai": 871
+      },
+      "1|7-12|1-2": {
+        "observations": 4901,
+        "probability": 0.1815955927361763,
+        "tenpai": 890
+      },
+      "1|7-12|3+": {
+        "observations": 1357,
+        "probability": 0.3352984524686809,
+        "tenpai": 455
+      },
+      "2|1-6|0": {
+        "observations": 2955,
+        "probability": 0.05617597292724196,
+        "tenpai": 166
+      },
+      "2|1-6|1-2": {
+        "observations": 772,
+        "probability": 0.11139896373056994,
+        "tenpai": 86
+      },
+      "2|1-6|3+": {
+        "observations": 15,
+        "probability": 0.26666666666666666,
+        "tenpai": 4
+      },
       "2|13+|0": {
-        "observations": 238,
-        "probability": 0.6722689075630253,
-        "tenpai": 160
+        "observations": 1092,
+        "probability": 0.27106227106227104,
+        "tenpai": 296
       },
       "2|13+|1-2": {
-        "observations": 342,
-        "probability": 0.7397660818713451,
-        "tenpai": 253
+        "observations": 1106,
+        "probability": 0.36618444846292947,
+        "tenpai": 405
       },
       "2|13+|3+": {
-        "observations": 379,
-        "probability": 0.7572559366754618,
-        "tenpai": 287
+        "observations": 941,
+        "probability": 0.5812964930924548,
+        "tenpai": 547
       },
       "2|7-12|0": {
-        "observations": 3722,
-        "probability": 0.36808167651800106,
-        "tenpai": 1370
+        "observations": 5700,
+        "probability": 0.1482456140350877,
+        "tenpai": 845
       },
       "2|7-12|1-2": {
-        "observations": 3417,
-        "probability": 0.45449224465905763,
-        "tenpai": 1553
+        "observations": 4150,
+        "probability": 0.2272289156626506,
+        "tenpai": 943
       },
       "2|7-12|3+": {
-        "observations": 1171,
-        "probability": 0.5286080273270709,
-        "tenpai": 619
+        "observations": 1149,
+        "probability": 0.4134029590948651,
+        "tenpai": 475
       },
       "3|1-6|0": {
-        "observations": 468,
-        "probability": 0.27136752136752135,
-        "tenpai": 127
+        "observations": 358,
+        "probability": 0.13687150837988826,
+        "tenpai": 49
       },
       "3|1-6|1-2": {
-        "observations": 153,
-        "probability": 0.35294117647058826,
-        "tenpai": 54
+        "observations": 96,
+        "probability": 0.1875,
+        "tenpai": 18
       },
       "3|1-6|3+": {
-        "observations": 1,
-        "probability": 1.0,
+        "observations": 2,
+        "probability": 0.5,
         "tenpai": 1
       },
       "3|13+|0": {
-        "observations": 108,
-        "probability": 0.8148148148148148,
-        "tenpai": 88
+        "observations": 887,
+        "probability": 0.1995490417136415,
+        "tenpai": 177
       },
       "3|13+|1-2": {
-        "observations": 170,
-        "probability": 0.8235294117647058,
-        "tenpai": 140
+        "observations": 904,
+        "probability": 0.28650442477876104,
+        "tenpai": 259
       },
       "3|13+|3+": {
-        "observations": 171,
-        "probability": 0.8830409356725146,
-        "tenpai": 151
+        "observations": 532,
+        "probability": 0.5244360902255639,
+        "tenpai": 279
       },
       "3|7-12|0": {
-        "observations": 1300,
-        "probability": 0.5753846153846154,
-        "tenpai": 748
+        "observations": 2102,
+        "probability": 0.17649857278782113,
+        "tenpai": 371
       },
       "3|7-12|1-2": {
-        "observations": 1166,
-        "probability": 0.6449399656946827,
-        "tenpai": 752
+        "observations": 1405,
+        "probability": 0.27402135231316727,
+        "tenpai": 385
       },
       "3|7-12|3+": {
-        "observations": 385,
-        "probability": 0.7038961038961039,
-        "tenpai": 271
+        "observations": 342,
+        "probability": 0.4473684210526316,
+        "tenpai": 153
       },
       "4|1-6|0": {
-        "observations": 29,
-        "probability": 0.8275862068965517,
-        "tenpai": 24
+        "observations": 20,
+        "probability": 0.55,
+        "tenpai": 11
       },
       "4|1-6|1-2": {
-        "observations": 7,
-        "probability": 0.5714285714285714,
-        "tenpai": 4
+        "observations": 2,
+        "probability": 1.0,
+        "tenpai": 2
       },
       "4|1-6|3+": {
         "observations": 0,
@@ -509,34 +556,34 @@
         "tenpai": 0
       },
       "4|13+|0": {
-        "observations": 19,
-        "probability": 1.0,
-        "tenpai": 19
+        "observations": 266,
+        "probability": 0.15789473684210525,
+        "tenpai": 42
       },
       "4|13+|1-2": {
-        "observations": 34,
-        "probability": 1.0,
-        "tenpai": 34
+        "observations": 269,
+        "probability": 0.21561338289962825,
+        "tenpai": 58
       },
       "4|13+|3+": {
-        "observations": 29,
-        "probability": 1.0,
-        "tenpai": 29
+        "observations": 180,
+        "probability": 0.5333333333333333,
+        "tenpai": 96
       },
       "4|7-12|0": {
-        "observations": 136,
-        "probability": 0.9044117647058824,
-        "tenpai": 123
+        "observations": 334,
+        "probability": 0.2275449101796407,
+        "tenpai": 76
       },
       "4|7-12|1-2": {
-        "observations": 135,
-        "probability": 0.9333333333333333,
-        "tenpai": 126
+        "observations": 207,
+        "probability": 0.42028985507246375,
+        "tenpai": 87
       },
       "4|7-12|3+": {
-        "observations": 27,
-        "probability": 0.9259259259259259,
-        "tenpai": 25
+        "observations": 59,
+        "probability": 0.7457627118644068,
+        "tenpai": 44
       },
       "5|1-6|0": {
         "observations": 1,
@@ -554,34 +601,34 @@
         "tenpai": 0
       },
       "5|13+|0": {
-        "observations": 0,
-        "probability": null,
-        "tenpai": 0
+        "observations": 24,
+        "probability": 1.0,
+        "tenpai": 24
       },
       "5|13+|1-2": {
-        "observations": 0,
-        "probability": null,
-        "tenpai": 0
+        "observations": 26,
+        "probability": 1.0,
+        "tenpai": 26
       },
       "5|13+|3+": {
-        "observations": 0,
-        "probability": null,
-        "tenpai": 0
+        "observations": 22,
+        "probability": 1.0,
+        "tenpai": 22
       },
       "5|7-12|0": {
-        "observations": 1,
+        "observations": 11,
         "probability": 1.0,
-        "tenpai": 1
+        "tenpai": 11
       },
       "5|7-12|1-2": {
+        "observations": 10,
+        "probability": 1.0,
+        "tenpai": 10
+      },
+      "5|7-12|3+": {
         "observations": 3,
         "probability": 1.0,
         "tenpai": 3
-      },
-      "5|7-12|3+": {
-        "observations": 1,
-        "probability": 1.0,
-        "tenpai": 1
       }
     }
   },

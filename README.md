@@ -307,6 +307,26 @@ where upgrades remain possible. The declared score includes migi's 8 tai.
 python3 -m taimahjong "123m123p123s1112223z" --declare --turns 3 --sims 400 --seed 7
 ```
 
+## M5c point-accounted self-play
+
+Self-play terminal results now include balanced point deltas. A ron makes the
+actual discarder pay the winner the full scored value; on tsumo each of the
+other three seats pays that full value; a draw is zero. The new `ev_aware`
+policy is a deterministic closed-form ranking: M2's top five candidates plus
+the minimum-danger candidate trade shanten/ukeire attack value against the
+calibrated per-opponent deal-in loss. It does not run Monte Carlo per decision.
+
+The committed v2 calibration is a 2,000-game mixed population with policies
+`attack,cautious,ev_aware,ev_aware`, continuing seeds 30001--30037 and using
+per-opponent danger exposure. Run a matching chunk with:
+
+```bash
+python3 -m taimahjong --selfplay --games 25 --seed 30038 \
+  --policies attack,cautious,ev_aware,ev_aware --out data/calibration.json
+```
+
+Head-to-head: pending below.
+
 ## M7 survival-discounted EV and draw path
 
 M7 prices the chance that another player wins before our next draw.  It is an

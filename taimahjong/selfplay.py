@@ -9,14 +9,29 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import lru_cache
 from random import Random
+from math import sqrt
+from pathlib import Path
 from typing import Callable
 
-from .danger import OpponentView, RiverEntry, danger_score, fold_score
+from .calibration import Calibration
+from .danger import OpponentView, RiverEntry, danger_score, fold_score, tenpai_score
+from .ev import BASELINE_TENPAI_RATE, DECLARED_FACTOR, opponent_value_estimate
+from .scoring import BASE_UNITS, WinContext, score_hand
 from .shanten import shanten
 from .ukeire import DiscardAnalysis
 
 
-POLICIES = ("attack", "cautious")
+POLICIES = ("attack", "cautious", "ev_aware")
+
+# M5c's deliberately cheap, deterministic replacement for per-discard Monte
+# Carlo.  Candidate attack value is relative ukeire times a shanten lookup;
+# risk is a calibrated per-opponent deal-in loss.  These are policy constants,
+# not Taiwan-human-play estimates.
+ATTACK_TOP_K = 5
+SHANTEN_WIN_WEIGHT = {-1: 1.0, 0: 0.45, 1: 0.18, 2: 0.06}
+SHANTEN_FALLBACK_WEIGHT = 0.02
+EXPECTED_TAI_PROXY = 1.0
+DEALER_SEAT = 0
 
 
 @lru_cache(maxsize=200_000)
@@ -76,9 +91,28 @@ class GameResult:
     turns: int
     winning_hand: tuple[int, ...] | None = None
     winning_melds: int = 0
+    point_deltas: tuple[int, int, int, int] = (0, 0, 0, 0)
+    value_units: int = 0
 
     def summary(self) -> tuple:
-        return (self.outcome, self.winner, self.discarder, self.turns, tuple(tuple(sorted(event.items())) for event in self.events))
+        return (
+            self.outcome, self.winner, self.discarder, self.turns,
+            tuple(tuple(sorted(event.items())) for event in self.events), self.point_deltas, self.value_units,
+        )
+
+
+@dataclass(frozen=True)
+class HeadToHeadResult:
+    """Point-accounted ev_aware versus attack comparison over paired seats."""
+
+    games: int
+    seed_start: int
+    ev_aware_mean: float
+    attack_mean: float
+    difference: float
+    standard_error: float
+    significance: float | None
+    game_deltas: tuple[tuple[float, float], ...]
 
 
 @dataclass(frozen=True)
@@ -164,6 +198,58 @@ def _danger_for(player_index: int, tile: int, post_hand: list[int], players: lis
     return danger_score(tile, _view(players[player_index]), visible, tuple(post_hand)).score
 
 
+@lru_cache(maxsize=1)
+def _default_calibration() -> Calibration | None:
+    """Load the committed table once; a missing table leaves a safe fallback."""
+    path = Path(__file__).resolve().parent.parent / "data" / "calibration.json"
+    return Calibration.from_path(path) if path.exists() else None
+
+
+def _tenpai_factor(opponent: OpponentView) -> float:
+    if opponent.declared_at is not None:
+        return DECLARED_FACTOR
+    score = tenpai_score(opponent, len(opponent.river)).score
+    return min(3.0, max(0.25, score / BASELINE_TENPAI_RATE))
+
+
+def _ev_aware_discard(player_index: int, analyses: tuple[DiscardAnalysis, ...], players: list[Player]) -> int:
+    """Choose from M2's top candidates plus the raw minimum-danger discard."""
+    player = players[player_index]
+    visible = _public_counts(players)
+    opponents = [(index, _view(other)) for index, other in enumerate(players) if index != player_index]
+    danger_by_candidate: dict[int, dict[int, float]] = {}
+    for analysis in analyses:
+        post = list(player.hand)
+        post[analysis.discard] -= 1
+        danger_by_candidate[analysis.discard] = {
+            index: danger_score(analysis.discard, opponent, visible, tuple(post)).score
+            for index, opponent in opponents
+        }
+    candidates = list(analyses[:ATTACK_TOP_K])
+    safest = min(analyses, key=lambda analysis: (sum(danger_by_candidate[analysis.discard].values()), analysis.discard))
+    if safest.discard not in {analysis.discard for analysis in candidates}:
+        candidates.append(safest)
+    best_ukeire = max((analysis.total for analysis in analyses), default=0)
+    calibration = _default_calibration()
+    ranked: list[tuple[float, int, int]] = []
+    for order, analysis in enumerate(candidates):
+        post = list(player.hand)
+        post[analysis.discard] -= 1
+        relative_ukeire = analysis.total / best_ukeire if best_ukeire else 0.0
+        attack = SHANTEN_WIN_WEIGHT.get(analysis.shanten_after, SHANTEN_FALLBACK_WEIGHT)
+        attack *= relative_ukeire * (BASE_UNITS + EXPECTED_TAI_PROXY)
+        risk = 0.0
+        for index, opponent in opponents:
+            danger = danger_by_candidate[analysis.discard][index]
+            probability = calibration.deal_in_probability(danger) if calibration else None
+            # The committed table normally supplies this.  The fallback only
+            # keeps the simulator usable before a first calibration build.
+            probability = 0.0 if probability is None else probability
+            risk += probability * opponent_value_estimate(opponent) * _tenpai_factor(opponent)
+        ranked.append((attack - risk, -order, analysis.discard))
+    return max(ranked)[2]
+
+
 def _choose_discard(player_index: int, drawn_tile: int | None, players: list[Player]) -> tuple[int, bool]:
     player = players[player_index]
     if player.declared:
@@ -172,6 +258,8 @@ def _choose_discard(player_index: int, drawn_tile: int | None, players: list[Pla
     visible = _public_counts(players)
     analyses = _cached_analysis(tuple(player.hand), len(player.melds), visible)
     assert analyses
+    if player.policy == "ev_aware":
+        return _ev_aware_discard(player_index, analyses, players), False
     fold_active = (
         player.policy == "cautious"
         and _cached_shanten(tuple(player.hand), len(player.melds)) >= 2
@@ -186,6 +274,47 @@ def _choose_discard(player_index: int, drawn_tile: int | None, players: list[Pla
         post[analysis.discard] -= 1
         ranked.append((max(_danger_for(opponent, analysis.discard, post, players) for opponent in threats), order, analysis.discard))
     return min(ranked)[2], True
+
+
+def _settlement(
+    outcome: str,
+    winner: int | None,
+    discarder: int | None,
+    players: list[Player],
+    winning_hand: tuple[int, ...] | None,
+    winning_tile: int | None,
+) -> tuple[tuple[int, int, int, int], int]:
+    """Score a terminal game using M5a, with deliberate bot-table omissions.
+
+    No winds, dealer streak, heavenly/earthly values, or dealer payment
+    doubling are modeled.  Ron is paid solely by the actual discarder; tsumo
+    uses Taiwanese three-opponent equal payments.
+    """
+    if outcome == "draw":
+        return (0, 0, 0, 0), 0
+    assert winner is not None and winning_hand is not None and winning_tile is not None
+    value = score_hand(
+        winning_hand,
+        players[winner].melds,
+        WinContext(
+            winning_tile=winning_tile,
+            self_draw=outcome == "tsumo",
+            dealer=winner == DEALER_SEAT,
+            migi_declared=players[winner].declared,
+        ),
+    ).value_units
+    deltas = [0, 0, 0, 0]
+    if outcome == "ron":
+        assert discarder is not None
+        deltas[winner] += value
+        deltas[discarder] -= value
+    else:
+        deltas[winner] += 3 * value
+        for seat in range(4):
+            if seat != winner:
+                deltas[seat] -= value
+    assert sum(deltas) == 0
+    return tuple(deltas), value
 
 
 def _post_call_choice(player: Player, removed: tuple[int, int]) -> tuple[int, int] | None:
@@ -238,7 +367,7 @@ def play_game(
 ) -> GameResult:
     """Play one deterministic-seeded game and retain every discard event in memory."""
     if len(policies) != 4 or any(policy not in POLICIES for policy in policies):
-        raise ValueError("policies must name four entries of 'attack' or 'cautious'")
+        raise ValueError("policies must name four entries from POLICIES")
     rng = Random(seed)
     tiles = [tile for tile in range(34) for _ in range(4)]
     rng.shuffle(tiles)
@@ -262,13 +391,18 @@ def play_game(
         drawn_tile: int | None = None
         if needs_draw:
             if not wall:
-                return GameResult(events, "draw", None, None, actions)
+                points, value = _settlement("draw", None, None, players, None, None)
+                return GameResult(events, "draw", None, None, actions, point_deltas=points, value_units=value)
             drawn_tile = wall.pop()
             player.hand[drawn_tile] += 1
             _assert_conservation(players, wall, dead)
             if _cached_shanten(tuple(player.hand), len(player.melds)) == -1:
                 assert _cached_shanten(tuple(player.hand), len(player.melds)) == -1
-                return GameResult(events, "tsumo", current, None, actions, tuple(player.hand), len(player.melds))
+                winning_hand = tuple(player.hand)
+                points, value = _settlement("tsumo", current, None, players, winning_hand, drawn_tile)
+                return GameResult(
+                    events, "tsumo", current, None, actions, winning_hand, len(player.melds), points, value,
+                )
             if snapshot_hook is not None and not player.declared:
                 snapshot_hook(_decision_snapshot(current, drawn_tile, players))
 
@@ -335,7 +469,11 @@ def play_game(
             winning_hand = list(players[winner].hand)
             winning_hand[tile] += 1
             assert _cached_shanten(tuple(winning_hand), len(players[winner].melds)) == -1
-            return GameResult(events, "ron", winner, current, actions, tuple(winning_hand), len(players[winner].melds))
+            winning = tuple(winning_hand)
+            points, value = _settlement("ron", winner, current, players, winning, tile)
+            return GameResult(
+                events, "ron", winner, current, actions, winning, len(players[winner].melds), points, value,
+            )
 
         # Pon takes priority; ties use closest player downstream. Chi is next-seat only.
         caller: int | None = None
@@ -377,3 +515,39 @@ def play_games(games: int, seed: int | None = None, policies: tuple[str, str, st
         raise ValueError("games must be a non-negative integer")
     rng = Random(seed)
     return [play_game(rng.randrange(2**63), policies) for _ in range(games)]
+
+
+def head_to_head(games: int, seed: int) -> HeadToHeadResult:
+    """Run alternating-seat ev_aware/attack games and summarize point EV.
+
+    Consecutive fixed seeds make a full comparison reproducible.  Even games
+    alternate which policy owns dealer seat, cancelling this simulator's
+    fixed-dealer-seat bias.
+    """
+    if not isinstance(games, int) or isinstance(games, bool) or games < 1:
+        raise ValueError("games must be a positive integer")
+    paired_policies = (
+        ("ev_aware", "attack", "ev_aware", "attack"),
+        ("attack", "ev_aware", "attack", "ev_aware"),
+    )
+    deltas: list[tuple[float, float]] = []
+    differences: list[float] = []
+    for index in range(games):
+        policies = paired_policies[index % 2]
+        game = play_game(seed + index, policies)
+        ev_points = sum(game.point_deltas[seat] for seat, policy in enumerate(policies) if policy == "ev_aware") / 2
+        attack_points = sum(game.point_deltas[seat] for seat, policy in enumerate(policies) if policy == "attack") / 2
+        deltas.append((ev_points, attack_points))
+        differences.append(ev_points - attack_points)
+    ev_mean = sum(value[0] for value in deltas) / games
+    attack_mean = sum(value[1] for value in deltas) / games
+    difference = ev_mean - attack_mean
+    if games < 2:
+        standard_error = 0.0
+    else:
+        variance = sum((value - difference) ** 2 for value in differences) / (games - 1)
+        standard_error = sqrt(variance / games)
+    return HeadToHeadResult(
+        games, seed, ev_mean, attack_mean, difference, standard_error,
+        None if standard_error == 0 else difference / standard_error, tuple(deltas),
+    )

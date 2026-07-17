@@ -11,7 +11,7 @@ from .danger import OpponentView, fold_score, parse_river, rank_discards
 from .ev import declaration_ev, ev_rank, remaining_draws
 from .quiz import explain, generate_position, grade
 from .scoring import BASE_UNITS, WinContext, score_hand
-from .selfplay import play_games
+from .selfplay import POLICIES, play_games
 from .shanten import shanten
 from .simulate import win_probability
 from .tiles import SUIT_OFFSETS, format_tiles, parse_tiles
@@ -130,6 +130,7 @@ def main() -> None:
     parser.add_argument("--sims", type=int, help="simulation trials (default: 5000; EV modes: 400 per discard)")
     parser.add_argument("--seed", type=int, help="random seed for simulation")
     parser.add_argument("--games", type=int, default=1, help="self-play games to run (default: 1)")
+    parser.add_argument("--policies", help="four comma-separated self-play policies (attack, cautious, ev_aware)")
     parser.add_argument("--out", help="self-play calibration JSON destination")
     parser.add_argument("--answer", help="quiz discard answer, e.g. 3m")
     args = parser.parse_args()
@@ -173,8 +174,13 @@ def main() -> None:
                 raise ValueError("tiles are not used with --selfplay")
             if not args.out:
                 raise ValueError("--selfplay requires --out")
-            games = play_games(args.games, args.seed)
-            metadata = {"seeds": [] if args.seed is None else [args.seed]}
+            policies = ("attack", "cautious", "attack", "cautious")
+            if args.policies:
+                policies = tuple(args.policies.split(","))
+                if len(policies) != 4 or any(policy not in POLICIES for policy in policies):
+                    raise ValueError("--policies requires four entries from attack, cautious, ev_aware")
+            games = play_games(args.games, args.seed, policies)
+            metadata = {"seeds": [] if args.seed is None else [args.seed], "policy_mix": list(policies)}
             if args.seed is not None:
                 metadata["last_seed"] = args.seed
             document = write_merged_table(args.out, counts_from_games(games), metadata)

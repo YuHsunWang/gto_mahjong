@@ -13,7 +13,7 @@ from taimahjong.calibration import (
     table_document,
     write_merged_table,
 )
-from taimahjong.selfplay import play_game, play_games
+from taimahjong.selfplay import Player, _choose_discard, head_to_head, play_game, play_games
 from taimahjong.shanten import shanten
 
 
@@ -35,6 +35,46 @@ def test_smoke_batch_has_each_terminal_path_and_valid_wins():
         if game.outcome != "draw":
             assert game.winning_hand is not None
             assert shanten(game.winning_hand, game.winning_melds) == -1
+
+
+def test_point_accounting_conserves_and_charges_the_actual_loser():
+    games = play_games(50, 20260717)
+    assert all(sum(game.point_deltas) == 0 for game in games)
+    for game in games:
+        if game.outcome == "ron":
+            assert game.discarder == game.events[-1]["seat"]
+            assert game.point_deltas[game.winner] == game.value_units
+            assert game.point_deltas[game.discarder] == -game.value_units
+        elif game.outcome == "tsumo":
+            assert game.point_deltas[game.winner] == 3 * game.value_units
+            assert all(
+                delta == -game.value_units
+                for seat, delta in enumerate(game.point_deltas)
+                if seat != game.winner
+            )
+        else:
+            assert game.point_deltas == (0, 0, 0, 0)
+
+
+def test_ev_aware_is_deterministic_and_chooses_the_safe_known_case():
+    # This 17-tile state is the first seat-zero decision from fixed seed 1.
+    # Attack's M2 choice is 2s (19); the calibrated policy instead takes the
+    # lower-danger 2z (28), so the test catches a risk term that is ignored.
+    hand = (0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 2, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 2, 0)
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand = list(hand)
+    assert _choose_discard(0, 8, players) == (19, False)
+    players[0].policy = "ev_aware"
+    first = _choose_discard(0, 8, players)
+    second = _choose_discard(0, 8, players)
+    assert first == second == (28, False)
+
+
+def test_head_to_head_smoke_batch_records_point_deltas():
+    result = head_to_head(40, 41000)
+    assert result.games == 40
+    assert len(result.game_deltas) == 40
+    assert all(ev == -attack for ev, attack in result.game_deltas)
 
 
 def test_chunked_counts_merge_like_the_same_seeded_chunks(tmp_path):
@@ -82,6 +122,7 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
     assert calibration.document["counts"]["games"] >= 2000
     assert calibration.document["metadata"]["danger_reference"] == DANGER_REFERENCE
     assert calibration.document["metadata"]["danger_modifiers"] == DANGER_MODIFIERS
+    assert calibration.document["metadata"]["policy_mix"] == ["attack", "cautious", "ev_aware", "ev_aware"]
     table = calibration.tables["tenpai"]
     for turn in ("1-6", "7-12", "13+"):
         for run in ("0", "1-2", "3+"):

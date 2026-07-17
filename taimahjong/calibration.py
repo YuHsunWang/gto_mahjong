@@ -74,9 +74,13 @@ def add_observation(counts: dict, event: dict) -> None:
         counts["deal_in"][bucket]["deal_ins"] += int(dealt_in)
     if event.get("fold_window"):
         policy = event["policy"]
-        fold = counts["fold"][policy]
-        fold["windows"] += 1
-        fold["score_sum"] += event["fold_score"]
+        # M8's fold table intentionally compares its two folding policies.
+        # ev_aware has no fold mode, so retain the established table schema
+        # rather than treating its ordinary late-game windows as folding data.
+        if policy in counts["fold"]:
+            fold = counts["fold"][policy]
+            fold["windows"] += 1
+            fold["score_sum"] += event["fold_score"]
 
 
 def counts_from_games(games: list) -> dict:
