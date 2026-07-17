@@ -136,3 +136,17 @@ unseen count as `4 - visible - own_hand - discarded_copy`, validates that this
 never exceeds four known copies, and therefore never double-counts the
 discard.  `rank_discards(counts17, opponent, visible, melds_declared=0)` wraps
 M2's existing ordering and attaches a separate assessment to each entry.
+
+## M4a+ opponent state (tenpai, fold, and migi declaration)
+
+The opponent-state estimates in `taimahjong.danger` are deterministic and **UNCALIBRATED**. They are directional hand-reading signals, not measured probabilities; self-play calibration is a later milestone. `RiverEntry(tile, origin)` records one river tile, where `origin` is `"tsumogiri"`, `"tedashi"`, or `"unknown"`. Plain integer river entries remain supported and mean unknown origin.
+
+`parse_river()` and `format_river()` live in `taimahjong.danger`, alongside the opponent-specific schema. River notation permits `*` after a digit for tsumogiri and `.` for tedashi before the suit applies: `1*2.3m` is 1m tsumogiri, 2m tedashi, and 3m unknown. In a trailing tsumogiri scan, unknown entries are neutral: scanning newest to oldest, they neither add to nor stop the run; the first known tedashi stops it.
+
+`tenpai_score(opponent, turn)` returns `TenpaiAssessment(score, signals, recent_wait_change)`. Its constants are `TENPAI_BASE_BY_MELDS` (the strongest signal, because calls shrink the concealed hand), `TENPAI_TURN_INCREMENT`, `TENPAI_TURN_CAP`, and `TSUMOGIRI_RUN_INCREMENT`. At `LATE_TURN` (9), a tedashi in the latest `RECENT_TEDASHI_WINDOW` (2) discards sets `recent_wait_change`; its `RECENT_TEDASHI_MULTIPLIER` weakens the prior river read. `rank_discards` retains raw `danger` and `tenpai`, adds `tenpai_score`, and exposes `expected_danger = danger.score * tenpai_score` as a convenience only.
+
+`fold_score(opponent, others_discards)` reads the latest `FOLD_WINDOW` (4) opponent discards. It needs at least `MIN_FOLD_SAMPLE` (3), then averages the strongest safety shape per tile: another player's matching discard is 1.0, an honor is `HONOR_FOLD_WEIGHT` (0.6), and a terminal is `TERMINAL_FOLD_WEIGHT` (0.3). A tedashi middle tile (3--7) contributes zero. A folding opponent's win threat collapses and draw (流局) likelihood rises; numeric EV and draw-probability integration are later work.
+
+The only declaration form in these rules is the house-rule **migi**. It may be declared only on the player's first or second discard (the table's first eight discards) and only before any chi, pon, or kang. `OpponentView` stores the declaration river index as `declared_at`, which must be 0 or 1. `DECLARED_TAI = 8` is reserved for a future scoring milestone. A declared opponent is certain tenpai (`1.0`), cannot fold (`0.0`), and has a locked hand: any tile kind discarded after `declared_at` is hard excluded from their wins and reports `declared_safe` with danger exactly zero. This is an absolute rule, unlike pre-declaration river evidence, which remains only a statistical discount because Taiwanese rules do not have permanent Japanese-riichi furiten.
+
+In `--danger` mode, use `--opp-declared 0` or `--opp-declared 1` for migi and `--others "..."` as the fold safety reference. The output includes opponent tenpai and fold headers plus an `ExpDanger` column; a hard-excluded kind prints `SAFE(declared)`.

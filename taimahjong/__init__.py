@@ -1,6 +1,20 @@
 """Taiwanese (16-tile) mahjong hand analysis."""
 
-from .danger import DangerAssessment, DangerDiscardAnalysis, OpponentView, WaitShape, danger_score, rank_discards
+from .danger import (
+    DECLARED_TAI,
+    DangerAssessment,
+    DangerDiscardAnalysis,
+    OpponentView,
+    RiverEntry,
+    TenpaiAssessment,
+    WaitShape,
+    danger_score,
+    fold_score,
+    format_river,
+    parse_river,
+    rank_discards,
+    tenpai_score,
+)
 from .shanten import shanten
 from .simulate import SimResult, win_probability
 from .tiles import format_tiles, parse_tiles
@@ -9,16 +23,23 @@ from .ukeire import DiscardAnalysis, discard_analysis, ukeire
 __all__ = [
     "DangerAssessment",
     "DangerDiscardAnalysis",
+    "DECLARED_TAI",
     "DiscardAnalysis",
     "OpponentView",
+    "RiverEntry",
     "SimResult",
+    "TenpaiAssessment",
     "WaitShape",
     "danger_score",
     "discard_analysis",
     "format_tiles",
+    "format_river",
+    "fold_score",
+    "parse_river",
     "parse_tiles",
     "rank_discards",
     "shanten",
+    "tenpai_score",
     "ukeire",
     "win_probability",
 ]

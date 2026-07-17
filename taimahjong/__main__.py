@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .danger import OpponentView, rank_discards
+from .danger import OpponentView, fold_score, parse_river, rank_discards
 from .shanten import shanten
 from .simulate import win_probability
 from .tiles import SUIT_OFFSETS, format_tiles, parse_tiles
@@ -66,7 +66,8 @@ def _add_visible(*groups: tuple[int, ...] | list[int]) -> tuple[int, ...]:
 
 def _public_counts(opponent: OpponentView) -> tuple[int, ...]:
     counts = [0] * 34
-    for tile in opponent.river:
+    for entry in opponent.river:
+        tile = entry if isinstance(entry, int) else entry.tile
         counts[tile] += 1
     for meld in opponent.melds:
         for tile in meld:
@@ -86,6 +87,8 @@ def main() -> None:
     parser.add_argument("--visible", help="compact notation for other tiles seen elsewhere")
     parser.add_argument("--opp-river", help="ordered compact notation for the modeled opponent's discards")
     parser.add_argument("--opp-melds", help="semicolon-separated three-tile declared melds, e.g. 123s;777s")
+    parser.add_argument("--opp-declared", type=int, help="migi declaration river index (only 0 or 1)")
+    parser.add_argument("--others", help="other players' discard kinds for fold estimation")
     parser.add_argument("--tile", help="show the danger shape breakdown for one discard tile (with --danger)")
     parser.add_argument("--turns", type=int, default=10, help="simulation draws (default: 10)")
     parser.add_argument("--sims", type=int, default=5000, help="simulation trials (default: 5000)")
@@ -99,19 +102,26 @@ def main() -> None:
         if args.danger:
             if not args.opp_river:
                 raise ValueError("--danger requires --opp-river")
-            opponent = OpponentView(_ordered_tiles(args.opp_river), _parse_opponent_melds(args.opp_melds))
+            opponent = OpponentView(parse_river(args.opp_river), _parse_opponent_melds(args.opp_melds), args.opp_declared)
             other_visible = (0,) * 34 if visible is None else visible
             danger_visible = _add_visible(other_visible, _public_counts(opponent))
             analyses = rank_discards(counts, opponent, danger_visible, args.melds)
+            opponent_tenpai = analyses[0].tenpai if analyses else None
+            opponent_fold = fold_score(opponent, parse_tiles(args.others) if args.others else [])
             print(f"Hand: {format_tiles(counts)}")
-            print("Discard  Shanten  Total  Danger  Accepted")
+            if opponent_tenpai is not None:
+                signals = ", ".join(f"{name}={value}" for name, value in opponent_tenpai.signals.items())
+                print(f"Opponent tenpai: {opponent_tenpai.score:.2f} ({signals})")
+            print(f"Opponent fold: {opponent_fold:.2f}")
+            print("Discard  Shanten  Total  Danger          ExpDanger  Accepted")
             for entry in analyses:
                 analysis = entry.analysis
+                danger = "SAFE(declared)" if "declared_safe" in entry.danger.modifiers else f"{entry.danger.score:.2f}"
                 print(
                     f"{_tile_name(analysis.discard):<7}  {analysis.shanten_after:<7}  "
-                    f"{analysis.total:<5}  {entry.danger.score:<6.2f}  {_accepted_kinds(analysis.ukeire)}"
+                    f"{analysis.total:<5}  {danger:<14}  {entry.expected_danger:<9.2f}  {_accepted_kinds(analysis.ukeire)}"
                 )
-            print("Note: danger scores are UNCALIBRATED deterministic heuristics.")
+            print("Note: danger, tenpai, and fold scores are UNCALIBRATED deterministic heuristics.")
             if args.tile:
                 requested = _ordered_tiles(args.tile)
                 if len(requested) != 1:
