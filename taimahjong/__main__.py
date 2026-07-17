@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .calibration import Calibration, counts_from_games, format_report, load_table, write_merged_table
 from .danger import OpponentView, fold_score, parse_river, rank_discards
+from .scoring import BASE_UNITS, WinContext, score_hand
 from .selfplay import play_games
 from .shanten import shanten
 from .simulate import win_probability
@@ -45,6 +46,15 @@ def _ordered_tiles(text: str) -> list[int]:
             ordered.extend(offset + int(digit) - 1 for digit in digits)
             digits = ""
     return ordered
+
+
+def _single_tile(text: str | None) -> int | None:
+    if not text:
+        return None
+    tiles = _ordered_tiles(text)
+    if len(tiles) != 1:
+        raise ValueError("expected exactly one tile")
+    return tiles[0]
 
 
 def _parse_opponent_melds(text: str | None) -> list[tuple[int, int, int]]:
@@ -91,6 +101,7 @@ def main() -> None:
     mode.add_argument("--analyze", action="store_true", help="rank discards from a 17-tile hand")
     mode.add_argument("--danger", action="store_true", help="rank M2 discards with one opponent's deal-in danger")
     mode.add_argument("--simulate", action="store_true", help="estimate self-draw tenpai and win probabilities")
+    mode.add_argument("--score", action="store_true", help="itemized tai scoring for a complete winning hand")
     mode.add_argument("--selfplay", action="store_true", help="run four-player self-play and append calibration counts")
     mode.add_argument("--selfplay-report", metavar="PATH", help="print a self-play calibration report")
     parser.add_argument("--visible", help="compact notation for other tiles seen elsewhere")
@@ -99,6 +110,16 @@ def main() -> None:
     parser.add_argument("--opp-declared", type=int, help="migi declaration river index (only 0 or 1)")
     parser.add_argument("--others", help="other players' discard kinds for fold estimation")
     parser.add_argument("--tile", help="show the danger shape breakdown for one discard tile (with --danger)")
+    parser.add_argument("--my-melds", help="semicolon-separated declared melds of the scored hand, e.g. 123s;777z")
+    parser.add_argument("--win-tile", help="winning tile for --score, e.g. 3z")
+    parser.add_argument("--self-draw", action="store_true", help="the win was by self-draw (自摸)")
+    parser.add_argument("--dealer", action="store_true", help="the winner is the dealer (莊家)")
+    parser.add_argument("--streak", type=int, default=0, help="dealer repeat count for 連莊拉莊 (default: 0)")
+    parser.add_argument("--migi", action="store_true", help="the winner had declared tenpai (migi)")
+    parser.add_argument("--heavenly", action="store_true", help="dealer initial-hand win (天胡)")
+    parser.add_argument("--earthly", action="store_true", help="non-dealer first-draw win (地胡)")
+    parser.add_argument("--round-wind", help="round wind tile for --score, e.g. 1z")
+    parser.add_argument("--seat-wind", help="seat wind tile for --score, e.g. 2z")
     parser.add_argument("--turns", type=int, default=10, help="simulation draws (default: 10)")
     parser.add_argument("--sims", type=int, default=5000, help="simulation trials (default: 5000)")
     parser.add_argument("--seed", type=int, help="random seed for simulation")
@@ -187,6 +208,33 @@ def main() -> None:
                     )
                 modifiers = ", ".join(f"{name}=x{value:g}" for name, value in selected.danger.modifiers.items()) or "none"
                 print(f"  Modifiers: {modifiers}")
+        elif args.score:
+            if not args.win_tile:
+                raise ValueError("--score requires --win-tile")
+            winning = _ordered_tiles(args.win_tile)
+            if len(winning) != 1:
+                raise ValueError("--win-tile must name exactly one tile")
+            my_melds = _parse_opponent_melds(args.my_melds)
+            context = WinContext(
+                winning_tile=winning[0],
+                self_draw=args.self_draw,
+                dealer=args.dealer,
+                dealer_streak=args.streak,
+                migi_declared=args.migi,
+                heavenly=args.heavenly,
+                earthly=args.earthly,
+                round_wind=_single_tile(args.round_wind),
+                seat_wind=_single_tile(args.seat_wind),
+            )
+            result = score_hand(counts, my_melds, context)
+            melds_text = args.my_melds or "-"
+            print(f"Hand: {format_tiles(counts)} (melds: {melds_text})")
+            print(f"Win tile: {_tile_name(winning[0])} ({'self-draw' if args.self_draw else 'ron'})")
+            print("Tai breakdown:")
+            for name, tai in result.items:
+                print(f"  {name:<38} {tai}")
+            print(f"Total: {result.total_tai} tai")
+            print(f"Value: 底({BASE_UNITS} tai) + {result.total_tai} tai = {result.value_units} tai units")
         elif args.simulate:
             result = win_probability(counts, args.turns, args.melds, visible, args.sims, args.seed)
             print(f"Hand: {format_tiles(counts)}")

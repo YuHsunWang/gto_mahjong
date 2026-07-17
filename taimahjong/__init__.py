@@ -16,12 +16,14 @@ from .danger import (
     tenpai_score,
 )
 from .calibration import Calibration, MIN_CELL_COUNT
+from .scoring import BASE_UNITS, ScoreResult, WinContext, score_hand
 from .shanten import shanten
 from .simulate import SimResult, win_probability
 from .tiles import format_tiles, parse_tiles
 from .ukeire import DiscardAnalysis, discard_analysis, ukeire
 
 __all__ = [
+    "BASE_UNITS",
     "DangerAssessment",
     "DangerDiscardAnalysis",
     "Calibration",
@@ -41,7 +43,10 @@ __all__ = [
     "parse_river",
     "parse_tiles",
     "rank_discards",
+    "ScoreResult",
+    "score_hand",
     "shanten",
+    "WinContext",
     "tenpai_score",
     "ukeire",
     "win_probability",

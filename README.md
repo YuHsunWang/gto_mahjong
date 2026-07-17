@@ -195,3 +195,30 @@ heuristic and calibrated `P(tenpai)` / `P(deal-in)` values.
 
 These probabilities are calibrated **against these bots**, their greedy call
 rule, and these simplifications—not against human Taiwanese-mahjong play.
+
+## M5a tai scoring
+
+`taimahjong/scoring.py` scores a complete winning hand with an itemized tai
+(台) breakdown. House rules encoded as module constants: one 底 equals
+`BASE_UNITS` (3) tai; the standard Taiwanese tai table (莊 1, 連N拉N 2N,
+門清/自摸/獨聽 1, 平胡/全求人/三暗刻 2, 碰碰胡/混一色/小三元 4, 四暗刻 5,
+清一色/大三元/小四喜/五暗刻 8, 字一色/大四喜 16, 圈風/門風/三元牌刻 1);
+the migi declaration adds `DECLARED_TAI` (8); heavenly/earthly hands default
+to 24/16 tai (common values, adjust if the house differs). Flowers and kongs
+are not modelled — `WinContext.extra` is the reserved pass-through slot.
+
+Documented stacking choices: individual dragon/wind triplet tai stack with
+小三元/大三元/小四喜/大四喜; 字一色 stacks with 碰碰胡 and concealed-triplet
+tai; only the highest 暗刻 tier counts; 平胡 requires all runs, a non-honor
+pair and a multi-kind wait (self-draw allowed). All winning decompositions
+are enumerated and the highest-tai reading is used. A triplet completed by
+ron is not concealed; single wait (獨聽) means exactly one winning kind.
+
+```bash
+python3 -m taimahjong "123m111555666777z22z" --score --win-tile 2z
+python3 -m taimahjong "22z" --score --my-melds "123m;456p;789s;111z;555z" \
+  --win-tile 2z --dealer --streak 2 --migi
+```
+
+Optional context flags: `--self-draw --dealer --streak N --migi --heavenly
+--earthly --round-wind 1z --seat-wind 2z`.
