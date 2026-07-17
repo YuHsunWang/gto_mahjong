@@ -438,3 +438,20 @@ Discard  Net EV  P(win)  E[win value]  E[loss]
 Best 9s: higher win EV by 0.46 tai than the next-ranked choice.
 Chosen 9s: matches the best's higher win-EV component.
 ```
+
+## M9 Streamlit 教學介面
+
+安裝 UI 層唯一相依套件後，在專案根目錄啟動：
+
+```bash
+pip install -r requirements.txt
+streamlit run webapp/app.py
+```
+
+手機瀏覽器可直接在牌桌旁使用：練習頁以牌面按鈕選擇切牌，切牌分析可輸入
+緊湊記法與對手河牌，算台頁會列出逐項台數。核心引擎沒有 Streamlit 相依，UI
+只直接呼叫既有 Python API。
+
+部署到 Streamlit Community Cloud：使用者先自行將此專案推送到 GitHub，然後在
+Community Cloud 選擇該 repository／branch，將主檔設定為 `webapp/app.py`，並以
+`requirements.txt` 作為相依清單後部署。請勿在這個專案中新增 remote 或代為推送。

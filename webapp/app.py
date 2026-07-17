@@ -115,13 +115,13 @@ def ev_rows(entries: tuple[EVRankEntry, ...] | list[EVRankEntry]) -> list[dict[s
 
 def render_position(position: QuizPosition) -> None:
     st.caption(f"種子 {position.seed} · 座位 {position.seat} · 第 {position.turn} 巡 · 摸入 {tile_glyph(position.drawn_tile)} {format_tiles(tuple(1 if tile == position.drawn_tile else 0 for tile in range(34)))}")
-    st.markdown(f"**手牌**  \\n+{glyphs(position.hand)}  \\n+`{format_tiles(position.hand)}`")
-    st.markdown(f"**自己的河**  \\n+{river_glyphs(position.own_river)}  \\n+`{format_river(list(position.own_river)) or '-'}'")
-    st.markdown(f"**自己的副露**  \\n+{meld_glyphs(position.own_melds)}  \\n+`{meld_text(position.own_melds)}`")
+    st.markdown(f"**手牌**  \n{glyphs(position.hand)}  \n`{format_tiles(position.hand)}`")
+    st.markdown(f"**自己的河**  \n{river_glyphs(position.own_river)}  \n`{format_river(list(position.own_river)) or '-'}`")
+    st.markdown(f"**自己的副露**  \n{meld_glyphs(position.own_melds)}  \n`{meld_text(position.own_melds)}`")
     for opponent in position.opponents:
         declaration = f"立直第 {opponent.declared_at + 1} 張" if opponent.declared else "未宣告"
         st.markdown(
-            f"**對手 {opponent.seat}**（{declaration}；聽牌估計 {opponent.tenpai_estimate:.2f}；棄和估計 {opponent.fold_estimate:.2f}）  \\n+{river_glyphs(opponent.river)}  \\n+`{format_river(list(opponent.river)) or '-'}` · 副露 {meld_glyphs(opponent.melds)} `{meld_text(opponent.melds)}`"
+            f"**對手 {opponent.seat}**（{declaration}；聽牌估計 {opponent.tenpai_estimate:.2f}；棄和估計 {opponent.fold_estimate:.2f}）  \n{river_glyphs(opponent.river)}  \n`{format_river(list(opponent.river)) or '-'}` · 副露 {meld_glyphs(opponent.melds)} `{meld_text(opponent.melds)}`"
         )
 
 
