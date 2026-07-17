@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import random
+import sys
 from pathlib import Path
+
+# `streamlit run webapp/app.py` puts webapp/ (not the repo root) on sys.path.
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 import streamlit as st
 
