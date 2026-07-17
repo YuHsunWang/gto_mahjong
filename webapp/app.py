@@ -63,6 +63,27 @@ div.st-key-quiz_hand_row div[data-testid="stHorizontalBlock"] {flex-wrap:nowrap 
   overflow-x:auto;gap:0.25rem !important;}
 div.st-key-quiz_hand_row div[data-testid="stColumn"] {width:auto !important;
   min-width:34px !important;flex:1 1 0 !important;}
+/* one green felt table: opponents around the edges, self hand at the bottom */
+.mj-table {display:grid;gap:6px;padding:10px;
+  grid-template-columns:minmax(64px,0.9fr) minmax(96px,1.3fr) minmax(64px,0.9fr);
+  grid-template-areas:"top top top" "left center right" "self self self";
+  background:radial-gradient(ellipse at center,#2a8f68 0%,#1f7a5a 70%,#186347 100%);
+  border:8px solid #7a4a24;border-radius:16px;box-shadow:inset 0 0 24px rgba(0,0,0,.28);}
+.mj-z-top{grid-area:top} .mj-z-left{grid-area:left} .mj-z-right{grid-area:right}
+.mj-z-center{grid-area:center} .mj-z-self{grid-area:self}
+.mj-zone{background:rgba(0,0,0,.14);border-radius:8px;padding:5px 6px;min-width:0;}
+.mj-zone.mj-center{background:rgba(0,0,0,.05);display:flex;flex-direction:column;
+  align-items:center;justify-content:center;text-align:center;}
+.mj-zhead{color:#eafff6;font-size:11px;font-weight:700;margin-bottom:3px;line-height:1.3;}
+.mj-zsub{color:#bfe9d6;font-size:10px;margin:3px 0 1px;}
+.mj-turn{color:#eafff6;font-size:12px;font-weight:700;}
+.mj-table .mj-strip{padding:2px 0;gap:3px;}
+.mj-hand-felt{background:linear-gradient(#1f7a5a,#186347);border:8px solid #7a4a24;
+  border-top:none;border-radius:0 0 16px 16px;margin-top:-8px;padding:8px 10px 4px;}
+.mj-hand-felt .mj-strip{padding:0;}
+div.st-key-quiz_hand_row div[data-testid="stHorizontalBlock"]{background:linear-gradient(#186347,#14513a);
+  border:8px solid #7a4a24;border-top:none;border-radius:0 0 16px 16px;margin-top:-2px;
+  padding:8px 6px !important;}
 </style>
 """
 
@@ -197,23 +218,54 @@ def ev_rows(entries: tuple[EVRankEntry, ...] | list[EVRankEntry]) -> list[dict[s
     return rows
 
 
+def _opponent_zone(opp, css_class: str) -> str:
+    if opp is None:
+        return f'<div class="mj-zone {css_class}"></div>'
+    declaration = f" · 宣告{opp.declared_at + 1}" if opp.declared else ""
+    head = f'<div class="mj-zhead">對手 {opp.seat}{declaration}<br>聽 {opp.tenpai_estimate:.2f}｜棄 {opp.fold_estimate:.2f}</div>'
+    body = ""
+    if opp.melds:
+        body += '<div class="mj-zsub">副露</div>' + meld_strip(opp.melds)
+    body += '<div class="mj-zsub">牌河</div>' + river_strip(opp.river)
+    return f'<div class="mj-zone {css_class}">{head}{body}</div>'
+
+
 def render_position(position: QuizPosition) -> None:
-    for opponent in position.opponents:
-        declaration = f"宣告第 {opponent.declared_at + 1} 張" if opponent.declared else "未宣告"
-        st.markdown(f"**對手 {opponent.seat}**（{declaration}；聽牌估計 {opponent.tenpai_estimate:.2f}；棄和估計 {opponent.fold_estimate:.2f}）")
-        st.markdown(river_strip(opponent.river), unsafe_allow_html=True)
-        if opponent.melds:
-            st.markdown(f"副露 {meld_strip(opponent.melds)}", unsafe_allow_html=True)
-        st.caption(f"`{format_river(list(opponent.river)) or '-'}` · 副露 `{meld_text(opponent.melds)}`")
-    if any(entry for entry in position.own_river) or position.own_melds:
-        st.markdown("**自己的河與副露**")
-        st.markdown(river_strip(position.own_river), unsafe_allow_html=True)
-        if position.own_melds:
-            st.markdown(meld_strip(position.own_melds), unsafe_allow_html=True)
-        st.caption(f"`{format_river(list(position.own_river)) or '-'}` · 副露 `{meld_text(position.own_melds)}`")
-    st.markdown(f"**手牌**（種子 {position.seed} · 座位 {position.seat} · 第 {position.turn} 巡 · 右側為摸入的 {face_text(position.drawn_tile)}）")
-    st.markdown(hand_strip(position.hand, position.drawn_tile), unsafe_allow_html=True)
-    st.caption(f"`{format_tiles(position.hand)}`")
+    """Render the whole position as one green-felt table: three opponents around
+    the edges, the discard/turn info in the centre, our own river at the near
+    edge. The clickable hand is rendered separately as the table's front row."""
+    opps = list(position.opponents)
+    left = opps[0] if len(opps) > 0 else None
+    top = opps[1] if len(opps) > 1 else None
+    right = opps[2] if len(opps) > 2 else None
+
+    center = (
+        '<div class="mj-zone mj-center mj-z-center">'
+        f'<div class="mj-turn">第 {position.turn} 巡</div>'
+        '<div class="mj-zsub">摸入</div>'
+        f'{tile_div(position.drawn_tile, "mj-sm", "mj-draw")}</div>'
+    )
+    self_body = ""
+    if position.own_melds:
+        self_body += '<div class="mj-zsub">我的副露</div>' + meld_strip(position.own_melds)
+    self_body += '<div class="mj-zsub">我的牌河</div>' + river_strip(position.own_river)
+    self_zone = f'<div class="mj-zone mj-z-self">{self_body}</div>'
+
+    table = (
+        '<div class="mj-table">'
+        + _opponent_zone(top, "mj-z-top")
+        + _opponent_zone(left, "mj-z-left")
+        + center
+        + _opponent_zone(right, "mj-z-right")
+        + self_zone
+        + "</div>"
+    )
+    st.markdown(table, unsafe_allow_html=True)
+    with st.expander("文字記法（可複製到 CLI）", expanded=False):
+        st.caption(f"手牌 `{format_tiles(position.hand)}`")
+        st.caption(f"我的河 `{format_river(list(position.own_river)) or '-'}` · 副露 `{meld_text(position.own_melds)}`")
+        for opp in opps:
+            st.caption(f"對手 {opp.seat} 河 `{format_river(list(opp.river)) or '-'}` · 副露 `{meld_text(opp.melds)}`")
 
 
 def _queue_next_quiz() -> None:
@@ -245,17 +297,19 @@ def show_quiz() -> None:
         return
 
     render_position(position)
-    st.markdown("**點一張牌切出**")
+    st.caption("我的手牌 — 點一張切出（金框為剛摸入的牌）")
     unique_tiles = [tile for tile, count in enumerate(position.hand) if count]
     color_rules = "".join(
         f'.st-key-quiz_discard_{tile} button p {{color:{_face(tile)[2]};}}' for tile in unique_tiles
     )
+    color_rules += f'.st-key-quiz_discard_{position.drawn_tile} button {{outline:3px solid #e0a300;outline-offset:1px;}}'
     st.markdown(f"<style>{color_rules}</style>", unsafe_allow_html=True)
     with st.container(key="quiz_hand_row"):
         columns = st.columns(len(unique_tiles), gap="small")
         for column, tile in zip(columns, unique_tiles):
+            label = face_text(tile) if position.hand[tile] == 1 else f"{face_text(tile)}×{position.hand[tile]}"
             with column:
-                if st.button(face_text(tile), key=f"quiz_discard_{tile}"):
+                if st.button(label, key=f"quiz_discard_{tile}"):
                     st.session_state.quiz_grade = grade(position, tile)
 
     controls = st.columns(2)
