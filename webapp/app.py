@@ -131,12 +131,23 @@ def render_position(position: QuizPosition) -> None:
         )
 
 
+def _queue_next_quiz() -> None:
+    """Advance the seed from a button callback: session_state keys backing an
+    instantiated widget may only be written before widgets render, and
+    on_click callbacks run at the start of the rerun."""
+    next_seed = int(st.session_state.quiz_position.seed) + 1
+    st.session_state.quiz_seed = next_seed
+    st.session_state.quiz_pending_generate = True
+    st.session_state.quiz_grade = None
+
+
 def show_quiz() -> None:
     st.subheader("練習")
     if "quiz_seed" not in st.session_state:
         st.session_state.quiz_seed = random.SystemRandom().randrange(1, 1_000_000)
     seed = int(st.number_input("種子", min_value=0, step=1, key="quiz_seed"))
-    if st.button("出題", type="primary", key="quiz_generate"):
+    generate_clicked = st.button("出題", type="primary", key="quiz_generate")
+    if st.session_state.pop("quiz_pending_generate", False) or generate_clicked:
         try:
             st.session_state.quiz_position = generate_position(seed)
             st.session_state.quiz_grade = None
@@ -160,11 +171,7 @@ def show_quiz() -> None:
 
     controls = st.columns(2)
     with controls[0]:
-        if st.button("下一題", key="quiz_next"):
-            st.session_state.quiz_seed = position.seed + 1
-            st.session_state.quiz_position = generate_position(position.seed + 1)
-            st.session_state.quiz_grade = None
-            st.rerun()
+        st.button("下一題", key="quiz_next", on_click=_queue_next_quiz)
     with controls[1]:
         if st.button("重出這題", key="quiz_repeat"):
             st.session_state.quiz_position = generate_position(position.seed)

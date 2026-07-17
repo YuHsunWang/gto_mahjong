@@ -28,6 +28,16 @@ def test_quiz_fixed_seed_best_discard_shows_verdict():
     assert any("判定：best" in element.value for element in app.success)
 
 
+def test_quiz_next_question_advances_seed_without_state_error():
+    app = _app()
+    app.number_input(key="quiz_seed").set_value(1)
+    app.button(key="quiz_generate").click().run(timeout=60)
+    app.button(key="quiz_next").click().run(timeout=120)
+    assert not app.exception
+    expected = generate_position(1).seed + 1
+    assert app.number_input(key="quiz_seed").value == expected
+
+
 def test_ev_valid_input_renders_table_and_invalid_hand_is_friendly():
     app = _app()
     app.button(key="ev_run").click().run(timeout=60)
