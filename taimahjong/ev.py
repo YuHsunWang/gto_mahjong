@@ -1,17 +1,12 @@
-"""M5b tai-unit expected-value approximations.
-
-Attack EV models self-draw wins only.  Deal-in calibration is a marginal
-bot-state probability, so combining it with M4a reads and this visible-state
-opponent value is deliberately an approximation; no draw (流局) term exists.
-"""
+"""Tai-unit EV approximations with survival-discounted self-draw attack."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from math import comb
+from math import ceil, comb
 
 from .calibration import Calibration
-from .danger import OpponentView, _flush_suit, danger_score, tenpai_score
+from .danger import OpponentView, _flush_suit, danger_score, fold_score, tenpai_score
 from .scoring import BASE_UNITS, WinContext, score_hand
 from .shanten import shanten
 from .simulate import winning_trials
@@ -28,6 +23,11 @@ DEAL_IN_FALLBACK_RATE = 0.02
 DECLARED_FACTOR = 2.0
 BASELINE_TENPAI_RATE = 0.25
 
+# M7 survival/draw constants.  They are deliberately UNCALIBRATED heuristics.
+BASE_OPPONENT_HAZARD = 0.03
+FOLD_HAZARD_CUTOFF = 0.60
+DRAW_VALUE = 0.0
+
 
 @dataclass(frozen=True)
 class WinValueContext:
@@ -42,6 +42,10 @@ class WinValueEstimate:
     p_win: float
     mean_value_units: float | None
     expected_win_ev: float
+    survival_adjusted_p_win: float = 0.0
+    discounted_attack_ev: float = 0.0
+    p_draw: float = 0.0
+    net_ev: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,10 @@ class EVRankEntry:
     opponent_losses: tuple[float, ...]
     risk_ev: float
     net_ev: float
+    survival_adjusted_p_win: float = 0.0
+    p_draw: float = 0.0
+    is_fold: bool = False
+    label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +68,50 @@ class DeclarationAdvice:
     declared: WinValueEstimate
     undeclared: WinValueEstimate
     should_declare: bool
+
+
+def remaining_draws(own_hand: tuple[int, ...] | list[int], visible: tuple[int, ...] | list[int]) -> int:
+    """Approximate this seat's remaining draws from the live-wall tile count.
+
+    Taiwanese mahjong reserves a 16-tile dead wall.  Public tiles and this
+    seat's concealed hand have already left the live wall, and turns rotate
+    among four seats, so this returns ``ceil(live_wall / 4)``.
+    """
+    hand = validate_counts(own_hand)
+    seen = validate_counts(visible)
+    live_wall = 136 - 16 - sum(hand) - sum(seen)
+    return max(0, ceil(live_wall / 4))
+
+
+def opponent_hazards(opponents: tuple[OpponentView, ...] | list[OpponentView]) -> tuple[float, ...]:
+    """Return fixed per-turn opponent win hazards from current public reads."""
+    views = tuple(opponents)
+    hazards: list[float] = []
+    for index, opponent in enumerate(views):
+        others = [
+            entry if isinstance(entry, int) else entry.tile
+            for other_index, other in enumerate(views)
+            if other_index != index
+            for entry in other.river
+        ]
+        folded = fold_score(opponent, others) >= FOLD_HAZARD_CUTOFF
+        tenpai = 1.0 if opponent.declared_at is not None else tenpai_score(opponent, len(opponent.river)).score
+        multiplier = min(3.0, max(0.25, tenpai / BASELINE_TENPAI_RATE))
+        hazards.append(0.0 if folded else BASE_OPPONENT_HAZARD * multiplier)
+    return tuple(hazards)
+
+
+def survival_by_turn(turns: int, opponents: tuple[OpponentView, ...] | list[OpponentView]) -> tuple[float, ...]:
+    """Return survival through each of our draws, using independent hazards."""
+    if turns < 0:
+        raise ValueError("turns must be non-negative")
+    per_turn = min(1.0, sum(opponent_hazards(opponents)))
+    survival = 1.0
+    values: list[float] = []
+    for _ in range(turns):
+        survival = max(0.0, survival * (1.0 - per_turn))
+        values.append(survival)
+    return tuple(values)
 
 
 def _template(template: WinContext | WinValueContext | None) -> tuple[WinContext, tuple[tuple[int, int, int], ...]]:
@@ -91,12 +143,49 @@ def estimate_win_value(
     context_template: WinContext | WinValueContext | None = None,
 ) -> WinValueEstimate:
     """Estimate self-draw P(win), conditional win value, and their product."""
+    if turns == 0:
+        return WinValueEstimate(0.0, None, 0.0)
     wins = winning_trials(counts16, turns, melds_declared, visible, sims, seed)
     if not wins:
         return WinValueEstimate(0.0, None, 0.0)
     values = [_score_value(trial.hand, trial.winning_tile, context_template) for trial in wins]
     mean = sum(values) / len(values)
     return WinValueEstimate(len(wins) / sims, mean, len(wins) / sims * mean)
+
+
+def _discounted_win_estimate(
+    counts16: tuple[int, ...],
+    turns: int,
+    melds_declared: int,
+    visible: tuple[int, ...],
+    sims: int,
+    seed: int | None,
+    context_template: WinContext | WinValueContext | None,
+    survival: tuple[float, ...],
+) -> WinValueEstimate:
+    """Score simulated first-win increments and weight each by survival."""
+    if not turns:
+        return WinValueEstimate(0.0, None, 0.0, p_draw=1.0, net_ev=DRAW_VALUE)
+    wins = winning_trials(counts16, turns, melds_declared, visible, sims, seed)
+    values = [_score_value(trial.hand, trial.winning_tile, context_template) for trial in wins]
+    if not wins:
+        return WinValueEstimate(0.0, None, 0.0, p_draw=survival[-1], net_ev=survival[-1] * DRAW_VALUE)
+    mean = sum(values) / len(values)
+    raw = WinValueEstimate(len(wins) / sims, mean, len(wins) / sims * mean)
+    discounted_p_win = sum(survival[trial.turn - 1] for trial in wins) / sims
+    discounted_attack = sum(survival[trial.turn - 1] * value for trial, value in zip(wins, values)) / sims
+    # Preserve exact pre-M7 arithmetic in the no-hazard case.
+    if all(value == 1.0 for value in survival):
+        discounted_p_win = raw.p_win
+        discounted_attack = raw.expected_win_ev
+    p_draw = survival[-1] * (1.0 - raw.p_win)
+    return replace(
+        raw,
+        survival_adjusted_p_win=discounted_p_win,
+        discounted_attack_ev=discounted_attack,
+        p_draw=p_draw,
+        net_ev=discounted_attack + p_draw * DRAW_VALUE,
+    )
 
 
 def opponent_value_estimate(opponent: OpponentView) -> float:
@@ -165,16 +254,29 @@ def ev_rank(
     selected.extend(item for item in ranked_danger[top_k:] if item[1] < baseline)
     selected = selected[: top_k + 2]
 
+    survival = survival_by_turn(turns, views)
     entries: list[EVRankEntry] = []
     for analysis, _ in selected:
         post = list(hand)
         post[analysis.discard] -= 1
         candidate_seed = None if seed is None else seed + analysis.discard * 1_000_003
-        attack = estimate_win_value(tuple(post), turns, melds_declared, seen, sims, candidate_seed, context_template)
+        attack = _discounted_win_estimate(
+            tuple(post), turns, melds_declared, seen, sims, candidate_seed, context_template, survival,
+        )
         losses = tuple(deal_in_ev(analysis.discard, view, seen, tuple(post), calibration) for view in views)
         risk = sum(losses)
-        entries.append(EVRankEntry(analysis.discard, attack.p_win, attack.mean_value_units, attack.expected_win_ev, losses, risk, attack.expected_win_ev - risk))
-    return sorted(entries, key=lambda entry: (-entry.net_ev, entry.discard))
+        entries.append(EVRankEntry(
+            analysis.discard, attack.p_win, attack.mean_value_units, attack.discounted_attack_ev,
+            losses, risk, attack.net_ev - risk, attack.survival_adjusted_p_win, attack.p_draw,
+        ))
+    minimum_risk = min((entry.risk_ev for entry in entries), default=0.0)
+    terminal_survival = survival[-1] if survival else 1.0
+    entries.append(EVRankEntry(
+        -1, 0.0, None, 0.0, (), minimum_risk,
+        terminal_survival * DRAW_VALUE - minimum_risk, 0.0, terminal_survival,
+        True, "fold",
+    ))
+    return sorted(entries, key=lambda entry: (entry.is_fold, -entry.net_ev, entry.discard))
 
 
 def declaration_ev(
@@ -184,6 +286,7 @@ def declaration_ev(
     context_template: WinContext | WinValueContext | None = None,
     sims: int = 400,
     seed: int | None = None,
+    opponents: tuple[OpponentView, ...] | list[OpponentView] = (),
 ) -> DeclarationAdvice:
     """Compare exact locked-migi EV with the simulated upgrade-allowed branch."""
     hand = validate_counts(counts16)
@@ -193,8 +296,8 @@ def declaration_ev(
     if any(hand[tile] + seen[tile] > 4 for tile in range(34)):
         raise ValueError("hand and visible tiles cannot contain more than four copies of a tile kind")
     pool = sum(4 - hand[tile] - seen[tile] for tile in range(34))
-    if turns < 1 or turns > pool:
-        raise ValueError("turns must be between 1 and the unseen pool size")
+    if turns < 0 or turns > pool:
+        raise ValueError("turns must be between 0 and the unseen pool size")
     waits: list[tuple[int, int, int]] = []
     for tile in range(34):
         remaining = 4 - hand[tile] - seen[tile]
@@ -205,10 +308,26 @@ def declaration_ev(
         if shanten(tuple(completed)) == -1:
             waits.append((tile, remaining, _score_value(tuple(completed), tile, context_template, migi=True)))
     winning = sum(remaining for _, remaining, _ in waits)
-    p_win = 0.0 if not winning else 1.0 - comb(pool - winning, turns) / comb(pool, turns)
+    p_win = 0.0 if not winning or not turns else 1.0 - comb(pool - winning, turns) / comb(pool, turns)
     mean = None if not winning else sum(remaining * value for _, remaining, value in waits) / winning
-    declared = WinValueEstimate(p_win, mean, p_win * mean if mean is not None else 0.0)
+    raw_declared_ev = p_win * mean if mean is not None else 0.0
+    survival = survival_by_turn(turns, opponents)
+    declared_attack = 0.0
+    declared_adjusted_p_win = 0.0
+    for turn in range(1, turns + 1):
+        no_prior_win = comb(pool - winning, turn - 1) / comb(pool, turn - 1)
+        increment = no_prior_win * winning / (pool - turn + 1)
+        declared_adjusted_p_win += survival[turn - 1] * increment
+        declared_attack += survival[turn - 1] * no_prior_win * sum(remaining * value for _, remaining, value in waits) / (pool - turn + 1)
+    if all(value == 1.0 for value in survival):
+        declared_adjusted_p_win = p_win
+        declared_attack = raw_declared_ev
+    declared_draw = (survival[-1] if survival else 1.0) * (1.0 - p_win)
+    declared = WinValueEstimate(
+        p_win, mean, raw_declared_ev, declared_adjusted_p_win, declared_attack,
+        declared_draw, declared_attack + declared_draw * DRAW_VALUE,
+    )
     base_context, melds = _template(context_template)
     undeclared_template = WinValueContext(replace(base_context, migi_declared=False), melds)
-    undeclared = estimate_win_value(hand, turns, 0, seen, sims, seed, undeclared_template)
-    return DeclarationAdvice(declared, undeclared, declared.expected_win_ev > undeclared.expected_win_ev)
+    undeclared = _discounted_win_estimate(hand, turns, 0, seen, sims, seed, undeclared_template, survival)
+    return DeclarationAdvice(declared, undeclared, declared.net_ev > undeclared.net_ev)

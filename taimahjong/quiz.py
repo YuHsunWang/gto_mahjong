@@ -193,7 +193,7 @@ def _score_template(position: QuizPosition) -> WinValueContext:
 
 @lru_cache(maxsize=256)
 def _rank(position: QuizPosition) -> tuple[EVRankEntry, ...]:
-    return tuple(ev_rank(
+    return tuple(entry for entry in ev_rank(
         position.hand,
         [opponent.view() for opponent in position.opponents],
         position.public_counts,
@@ -203,7 +203,7 @@ def _rank(position: QuizPosition) -> tuple[EVRankEntry, ...]:
         _evaluation_seed(position),
         _score_template(position),
         top_k=EV_TOP_K,
-    ))
+    ) if not entry.is_fold)
 
 
 def _interesting(position: QuizPosition) -> bool:

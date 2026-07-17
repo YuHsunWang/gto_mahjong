@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .calibration import Calibration, counts_from_games, format_report, load_table, write_merged_table
 from .danger import OpponentView, fold_score, parse_river, rank_discards
-from .ev import declaration_ev, ev_rank
+from .ev import declaration_ev, ev_rank, remaining_draws
 from .quiz import explain, generate_position, grade
 from .scoring import BASE_UNITS, WinContext, score_hand
 from .selfplay import play_games
@@ -126,7 +126,7 @@ def main() -> None:
     parser.add_argument("--earthly", action="store_true", help="non-dealer first-draw win (地胡)")
     parser.add_argument("--round-wind", help="round wind tile for --score, e.g. 1z")
     parser.add_argument("--seat-wind", help="seat wind tile for --score, e.g. 2z")
-    parser.add_argument("--turns", type=int, default=10, help="simulation draws (default: 10)")
+    parser.add_argument("--turns", type=int, help="simulation draws (default: 10; --ev/--declare: live-wall auto)")
     parser.add_argument("--sims", type=int, help="simulation trials (default: 5000; EV modes: 400 per discard)")
     parser.add_argument("--seed", type=int, help="random seed for simulation")
     parser.add_argument("--games", type=int, default=1, help="self-play games to run (default: 1)")
@@ -206,17 +206,31 @@ def main() -> None:
                 round_wind=_single_tile(args.round_wind),
                 seat_wind=_single_tile(args.seat_wind),
             )
+            turns = args.turns if args.turns is not None else remaining_draws(counts, ev_visible)
             entries = ev_rank(
-                counts, [] if opponent is None else [opponent], ev_visible, args.melds, args.turns,
+                counts, [] if opponent is None else [opponent], ev_visible, args.melds, turns,
                 args.sims or 400, args.seed, template, calibration,
             )
             print(f"Hand: {format_tiles(counts)}")
-            print("Discard  Net EV  P(win)  E[win value]  E[loss]")
+            if args.turns is None:
+                print(f"Remaining draws (auto): {turns}")
+            print("Discard  Net EV  P(win)  Surv P(win)  P(draw)  E[win value]  E[loss]")
             for entry in entries:
                 value = "-" if entry.mean_win_value is None else f"{entry.mean_win_value:.2f}"
-                print(f"{_tile_name(entry.discard):<7}  {entry.net_ev:>6.2f}  {entry.p_win:>6.3f}  {value:>12}  {entry.risk_ev:>7.2f}")
-            print("Note: EV is in tai units; attack is self-draw-only. Draw (流局) EV is not modeled.")
+                discard = entry.label if entry.is_fold else _tile_name(entry.discard)
+                print(
+                    f"{discard:<7}  {entry.net_ev:>6.2f}  {entry.p_win:>6.3f}  "
+                    f"{entry.survival_adjusted_p_win:>11.3f}  {entry.p_draw:>6.3f}  {value:>12}  {entry.risk_ev:>7.2f}"
+                )
+            print("Note: EV uses survival-discounted self-draw attack and a configurable draw (流局) value.")
         elif args.declare:
+            opponent = None
+            if args.opp_river or args.opp_melds or args.opp_declared is not None:
+                if not args.opp_river:
+                    raise ValueError("--declare opponent state requires --opp-river")
+                opponent = OpponentView(parse_river(args.opp_river), _parse_opponent_melds(args.opp_melds), args.opp_declared)
+            other_visible = (0,) * 34 if visible is None else visible
+            declare_visible = _add_visible(other_visible, _public_counts(opponent)) if opponent else other_visible
             template = WinContext(
                 winning_tile=0,
                 dealer=args.dealer,
@@ -226,12 +240,21 @@ def main() -> None:
                 round_wind=_single_tile(args.round_wind),
                 seat_wind=_single_tile(args.seat_wind),
             )
-            advice = declaration_ev(counts, visible, args.turns, template, args.sims or 400, args.seed)
+            turns = args.turns if args.turns is not None else remaining_draws(counts, declare_visible)
+            advice = declaration_ev(
+                counts, declare_visible, turns, template, args.sims or 400, args.seed,
+                [] if opponent is None else [opponent],
+            )
             print(f"Hand: {format_tiles(counts)}")
-            print("Branch       P(win)  E[win value]  EV")
+            if args.turns is None:
+                print(f"Remaining draws (auto): {turns}")
+            print("Branch       P(win)  Surv P(win)  P(draw)  E[win value]  Net EV")
             for name, branch in (("Declare", advice.declared), ("Continue", advice.undeclared)):
                 value = "-" if branch.mean_value_units is None else f"{branch.mean_value_units:.2f}"
-                print(f"{name:<11}  {branch.p_win:>6.3f}  {value:>12}  {branch.expected_win_ev:>5.2f}")
+                print(
+                    f"{name:<11}  {branch.p_win:>6.3f}  {branch.survival_adjusted_p_win:>11.3f}  "
+                    f"{branch.p_draw:>6.3f}  {value:>12}  {branch.net_ev:>6.2f}"
+                )
             print(f"Recommendation: {'DECLARE migi' if advice.should_declare else 'DO NOT declare'}")
         elif args.danger:
             if not args.opp_river:
@@ -319,7 +342,7 @@ def main() -> None:
             print(f"Total: {result.total_tai} tai")
             print(f"Value: 底({BASE_UNITS} tai) + {result.total_tai} tai = {result.value_units} tai units")
         elif args.simulate:
-            result = win_probability(counts, args.turns, args.melds, visible, args.sims or 5000, args.seed)
+            result = win_probability(counts, args.turns if args.turns is not None else 10, args.melds, visible, args.sims or 5000, args.seed)
             print(f"Hand: {format_tiles(counts)}")
             print("Turn  Tenpai %  Win %")
             for turn, (tenpai, win) in enumerate(zip(result.tenpai_by_turn, result.win_by_turn), start=1):

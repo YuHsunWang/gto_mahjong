@@ -3,7 +3,16 @@
 from math import comb
 
 from taimahjong.danger import OpponentView, parse_river
-from taimahjong.ev import declaration_ev, estimate_win_value, ev_rank
+import taimahjong.ev as ev
+from taimahjong.ev import (
+    DRAW_VALUE,
+    FOLD_HAZARD_CUTOFF,
+    declaration_ev,
+    estimate_win_value,
+    ev_rank,
+    opponent_hazards,
+    remaining_draws,
+)
 from taimahjong.scoring import EARTHLY_TAI, HEAVENLY_TAI, WinContext, score_hand
 from taimahjong.tiles import parse_tiles
 
@@ -94,3 +103,59 @@ def test_winning_trial_values_are_scored_as_self_draws():
     expected_value = score_hand(tuple(completed), (), WinContext(29, self_draw=True)).value_units
     assert estimate.p_win > 0
     assert estimate.mean_value_units == expected_value
+
+
+def test_remaining_draws_uses_live_wall_and_four_seats():
+    assert remaining_draws(POST_DRAW, (0,) * 34) == 26  # ceil((136 - 16 - 17) / 4)
+    hand = tuple([4, 4, 4, 4, 1] + [0] * 29)
+    visible = tuple([0] * 5 + [4] * 21 + [0] * 8)
+    assert remaining_draws(hand, visible) == 5  # ceil((136 - 16 - 17 - 84) / 4)
+
+
+def test_opponent_hazard_survival_strictly_reduces_attack_ev_and_net_ev():
+    opponent = OpponentView(parse_river("123456789m123456789p"), [], None)
+    visible = _visible_with_opponent(opponent)
+    safe = {entry.discard: entry for entry in ev_rank(POST_DRAW, [], visible, turns=3, sims=80, seed=19, top_k=10) if not entry.is_fold}
+    threatened = {
+        entry.discard: entry
+        for entry in ev_rank(POST_DRAW, [opponent], visible, turns=3, sims=80, seed=19, top_k=10)
+        if not entry.is_fold
+    }
+    assert all(threatened[tile].attack_ev < entry.attack_ev for tile, entry in safe.items() if entry.attack_ev > 0)
+    assert all(threatened[tile].net_ev < entry.net_ev for tile, entry in safe.items() if entry.attack_ev > 0)
+
+
+def test_folded_opponent_contributes_zero_hazard():
+    folding = OpponentView(parse_river("1234z"), [], None)
+    safety_source = OpponentView(parse_river("1234z"), [], None)
+    assert FOLD_HAZARD_CUTOFF == 0.60
+    assert opponent_hazards([folding, safety_source])[0] == 0.0
+
+
+def test_zero_hazard_attack_ev_is_exactly_the_pre_m7_value():
+    entries = [entry for entry in ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19) if not entry.is_fold]
+    sample = entries[0]
+    post = list(POST_DRAW)
+    post[sample.discard] -= 1
+    previous = estimate_win_value(tuple(post), 3, visible=(0,) * 34, sims=80, seed=19 + sample.discard * 1_000_003)
+    assert sample.attack_ev == previous.expected_win_ev
+    assert sample.survival_adjusted_p_win == previous.p_win
+
+
+def test_draw_value_shifts_net_ev_by_exact_draw_term(monkeypatch):
+    baseline = {entry.discard: entry for entry in ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19) if not entry.is_fold}
+    assert DRAW_VALUE == 0.0
+    monkeypatch.setattr(ev, "DRAW_VALUE", 2.5)
+    shifted = {entry.discard: entry for entry in ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19) if not entry.is_fold}
+    for tile, before in baseline.items():
+        after = shifted[tile]
+        assert after.net_ev - before.net_ev == after.p_draw * 2.5
+
+
+def test_fold_row_is_last_labeled_and_no_riskier_than_real_discards():
+    opponent = OpponentView(parse_river("123456789m"), [], None)
+    entries = ev_rank(POST_DRAW, [opponent], _visible_with_opponent(opponent), turns=3, sims=80, seed=19, top_k=10)
+    fold = entries[-1]
+    real = entries[:-1]
+    assert fold.is_fold and fold.label == "fold" and fold.discard == -1
+    assert fold.risk_ev <= min(entry.risk_ev for entry in real)

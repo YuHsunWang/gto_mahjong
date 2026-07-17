@@ -145,7 +145,7 @@ The opponent-state estimates in `taimahjong.danger` are deterministic and **UNCA
 
 `tenpai_score(opponent, turn)` returns `TenpaiAssessment(score, signals, recent_wait_change)`. Its constants are `TENPAI_BASE_BY_MELDS` (the strongest signal, because calls shrink the concealed hand), `TENPAI_TURN_INCREMENT`, `TENPAI_TURN_CAP`, and `TSUMOGIRI_RUN_INCREMENT`. At `LATE_TURN` (9), a tedashi in the latest `RECENT_TEDASHI_WINDOW` (2) discards sets `recent_wait_change`; its `RECENT_TEDASHI_MULTIPLIER` weakens the prior river read. `rank_discards` retains raw `danger` and `tenpai`, adds `tenpai_score`, and exposes `expected_danger = danger.score * tenpai_score` as a convenience only.
 
-`fold_score(opponent, others_discards)` reads the latest `FOLD_WINDOW` (4) opponent discards. It needs at least `MIN_FOLD_SAMPLE` (3), then averages the strongest safety shape per tile: another player's matching discard is 1.0, an honor is `HONOR_FOLD_WEIGHT` (0.6), and a terminal is `TERMINAL_FOLD_WEIGHT` (0.3). A tedashi middle tile (3--7) contributes zero. A folding opponent's win threat collapses and draw (流局) likelihood rises; numeric EV and draw-probability integration are later work.
+`fold_score(opponent, others_discards)` reads the latest `FOLD_WINDOW` (4) opponent discards. It needs at least `MIN_FOLD_SAMPLE` (3), then averages the strongest safety shape per tile: another player's matching discard is 1.0, an honor is `HONOR_FOLD_WEIGHT` (0.6), and a terminal is `TERMINAL_FOLD_WEIGHT` (0.3). A tedashi middle tile (3--7) contributes zero. A folding opponent's win threat collapses and draw (流局) likelihood rises; M7 uses the fold score to zero that opponent's survival hazard.
 
 The only declaration form in these rules is the house-rule **migi**. It may be declared only on the player's first or second discard (the table's first eight discards) and only before any chi, pon, or kang. `OpponentView` stores the declaration river index as `declared_at`, which must be 0 or 1. `DECLARED_TAI = 8` is reserved for a future scoring milestone. A declared opponent is certain tenpai (`1.0`), cannot fold (`0.0`), and has a locked hand: any tile kind discarded after `declared_at` is hard excluded from their wins and reports `declared_safe` with danger exactly zero. This is an absolute rule, unlike pre-declaration river evidence, which remains only a statistical discount because Taiwanese rules do not have permanent Japanese-riichi furiten.
 
@@ -237,7 +237,8 @@ net_ev    = attack_ev - sum(E[deal-in loss per opponent])
 E[loss]  = P(deal-in | danger) * opponent-state factor * visible-state value
 ```
 
-The attack side is self-draw-only and does not include a draw (流局) term.
+The attack side is self-draw-only.  M7 below adds survival discounting and a
+configurable draw (流局) term.
 Deal-in calibration is a marginal probability over deterministic bot states,
 not a conditional human-game model. Opponent value is likewise an
 **UNCALIBRATED** visible-state heuristic: base, migi, visible dragon triplets,
@@ -263,6 +264,52 @@ where upgrades remain possible. The declared score includes migi's 8 tai.
 ```bash
 python3 -m taimahjong "123m123p123s1112223z" --declare --turns 3 --sims 400 --seed 7
 ```
+
+## M7 survival-discounted EV and draw path
+
+M7 prices the chance that another player wins before our next draw.  It is an
+explicitly **UNCALIBRATED** independent-per-turn approximation, intended to
+make defensive discards and folding visible rather than to claim calibrated
+human-game equity.  For each modeled opponent, per-turn hazard is:
+
+```
+BASE_OPPONENT_HAZARD (0.03)
+* clamp(tenpai_score / BASELINE_TENPAI_RATE (0.25), 0.25, 3.0)
+* 0 when fold_score >= FOLD_HAZARD_CUTOFF (0.60), otherwise 1
+```
+
+A declared migi opponent uses tenpai score 1.0.  The engine sums those
+hazards, applies survival `S(t) = product(1 - total_hazard)` through each of
+our draws, and weights each simulation's first-win increment by `S(t)`.  The
+CLI reports both raw `P(win)` and survival-adjusted `P(win)`.
+
+There is also an explicit draw path:
+
+```
+P(draw) = S(T) * (1 - P(win within T))
+net_ev  = discounted_attack_ev - risk_ev + P(draw) * DRAW_VALUE
+```
+
+`DRAW_VALUE` defaults to `0.0`, matching the house assumption of no noten
+penalty.  It remains a module constant so house rules can set another value.
+Dealer-continuation and repeat effects on a draw are out of scope.
+
+For `--ev` and `--declare`, omitting `--turns` derives our remaining draws
+from the table: `ceil((136 - 16 dead-wall - visible tiles - concealed hand) /
+4)`.  An explicit `--turns` still overrides this approximation.  `--ev` also
+renders a final synthetic `fold` row.  It is advice, not a tile to discard:
+it sets attack EV to zero, uses the lowest immediately achievable deal-in EV
+among the shown discards, and keeps only the survival-weighted draw term.
+
+Example with automatic turns and one threatening opponent:
+
+```bash
+python3 -m taimahjong "123m123p123s11122233z" --ev --opp-river "123456789m" --sims 400 --seed 7
+```
+
+The hazard constants, their per-turn independence, and combining a marginal
+deal-in estimate with this survival model are all approximations.  They are
+not calibrated win probabilities and should not be treated as such.
 
 ## M6 teaching quiz
 
