@@ -31,19 +31,106 @@ def load_calibration() -> Calibration | None:
     return Calibration.from_path(path) if path.exists() else None
 
 
-def tile_glyph(tile: int) -> str:
-    """Return the Unicode Mahjong Tiles glyph for an engine tile index."""
-    if tile < 9:
-        return chr(0x1F007 + tile)  # characters
-    if tile < 18:
-        return chr(0x1F019 + tile - 9)  # circles
+_NUMERALS = "一二三四五六七八九"
+_HONOR_FACES = ("東", "南", "西", "北", "白", "發", "中")
+_WIND_COLOR = "#23407a"
+_SUIT_COLORS = {"m": ("#c02c2c", "#2a4fa2"), "p": ("#2a4fa2", "#2a4fa2"), "s": ("#2e7d32", "#2e7d32")}
+_HONOR_COLORS = (_WIND_COLOR, _WIND_COLOR, _WIND_COLOR, _WIND_COLOR, "#b5b0a0", "#2e7d32", "#c02c2c")
+
+TILE_CSS = """
+<style>
+.mj-strip {display:flex;flex-wrap:nowrap;overflow-x:auto;gap:4px;padding:6px 2px;align-items:flex-end;}
+.mj-strip.mj-wrap {flex-wrap:wrap;}
+.mj-tile {display:inline-flex;flex-direction:column;align-items:center;justify-content:center;
+  flex:0 0 auto;background:#fbfaf2;border:1px solid #cfcabc;border-radius:6px;
+  box-shadow:0 3px 0 #b5b0a0;font-weight:800;line-height:1.05;user-select:none;
+  font-family:"Noto Serif TC","PMingLiU",serif;}
+.mj-lg {width:46px;height:62px;font-size:21px;}
+.mj-sm {width:28px;height:40px;font-size:12px;}
+.mj-gap {width:14px;flex:0 0 auto;}
+.mj-draw {outline:3px solid #e0a300;outline-offset:1px;}
+.mj-tsumogiri {border-top:4px solid #c02c2c;}
+.mj-tedashi {border-top:4px solid #2a4fa2;}
+div[class*="st-key-quiz_discard_"] button {background:#fbfaf2;border:1px solid #cfcabc;border-radius:6px;
+  box-shadow:0 3px 0 #b5b0a0;width:100%;min-height:66px;padding:4px 0;}
+div[class*="st-key-quiz_discard_"] button:hover {border-color:#e0a300;}
+div[class*="st-key-quiz_discard_"] button p {writing-mode:vertical-rl;text-orientation:upright;
+  font-weight:800;font-size:19px;letter-spacing:1px;margin:0 auto;
+  font-family:"Noto Serif TC","PMingLiU",serif;}
+/* keep discard buttons on one horizontal row even on phones: Streamlit stacks
+   columns below its mobile breakpoint, which turns the hand into a vertical list */
+div.st-key-quiz_hand_row div[data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important;
+  overflow-x:auto;gap:0.25rem !important;}
+div.st-key-quiz_hand_row div[data-testid="stColumn"] {width:auto !important;
+  min-width:34px !important;flex:1 1 0 !important;}
+</style>
+"""
+
+
+def _face(tile: int) -> tuple[str, str, str, str]:
+    """Return (top char, bottom char, top color, bottom color); honors have one char."""
     if tile < 27:
-        return chr(0x1F010 + tile - 18)  # bamboo
-    return chr((0x1F000, 0x1F001, 0x1F002, 0x1F003, 0x1F006, 0x1F005, 0x1F004)[tile - 27])
+        suit = "mps"[tile // 9]
+        top, bottom = _SUIT_COLORS[suit]
+        return _NUMERALS[tile % 9], "萬筒條"[tile // 9], top, bottom
+    face = _HONOR_FACES[tile - 27]
+    color = _HONOR_COLORS[tile - 27]
+    return face, "", color, color
 
 
-def glyphs(counts: tuple[int, ...] | list[int]) -> str:
-    return " ".join(tile_glyph(tile) for tile, count in enumerate(counts) for _ in range(count))
+def face_text(tile: int) -> str:
+    top, bottom, _, _ = _face(tile)
+    return top + bottom
+
+
+def tile_div(tile: int, size: str = "mj-lg", extra: str = "") -> str:
+    top, bottom, top_color, bottom_color = _face(tile)
+    if tile == 31:  # white dragon: a blank face, like the real tile
+        body = ""
+    elif bottom:
+        body = f'<span style="color:{top_color}">{top}</span><span style="color:{bottom_color}">{bottom}</span>'
+    else:
+        body = f'<span style="color:{top_color}">{top}</span>'
+    return f'<div class="mj-tile {size} {extra}" title="{face_text(tile)}">{body}</div>'
+
+
+def strip_html(parts: list[str], wrap: bool = False) -> str:
+    inner = "".join(parts) if parts else '<span style="color:#999">-</span>'
+    wrap_cls = " mj-wrap" if wrap else ""
+    return f'<div class="mj-strip{wrap_cls}">{inner}</div>'
+
+
+def hand_strip(hand: tuple[int, ...] | list[int], drawn: int | None = None) -> str:
+    counts = list(hand)
+    parts: list[str] = []
+    if drawn is not None and counts[drawn] > 0:
+        counts[drawn] -= 1
+    for tile, count in enumerate(counts):
+        parts.extend(tile_div(tile) for _ in range(count))
+    if drawn is not None:
+        parts.append('<div class="mj-gap"></div>')
+        parts.append(tile_div(drawn, extra="mj-draw"))
+    return strip_html(parts, wrap=True)
+
+
+def counts_strip(counts: tuple[int, ...] | list[int], size: str = "mj-sm") -> str:
+    parts = [tile_div(tile, size) for tile, count in enumerate(counts) for _ in range(count)]
+    return strip_html(parts, wrap=True)
+
+
+def river_strip(river: tuple[RiverEntry, ...] | list[RiverEntry]) -> str:
+    marker = {"tsumogiri": "mj-tsumogiri", "tedashi": "mj-tedashi", "unknown": ""}
+    parts = [tile_div(entry.tile, "mj-sm", marker[entry.origin]) for entry in river]
+    return strip_html(parts, wrap=True)
+
+
+def meld_strip(melds: tuple[tuple[int, int, int], ...] | list[tuple[int, int, int]]) -> str:
+    parts: list[str] = []
+    for index, meld in enumerate(melds):
+        if index:
+            parts.append('<div class="mj-gap"></div>')
+        parts.extend(tile_div(tile, "mj-sm") for tile in meld)
+    return strip_html(parts, wrap=True)
 
 
 def meld_text(melds: tuple[tuple[int, int, int], ...] | list[tuple[int, int, int]]) -> str:
@@ -54,15 +141,6 @@ def meld_text(melds: tuple[tuple[int, int, int], ...] | list[tuple[int, int, int
             counts[tile] += 1
         rendered.append(format_tiles(counts))
     return ";".join(rendered) or "-"
-
-
-def meld_glyphs(melds: tuple[tuple[int, int, int], ...] | list[tuple[int, int, int]]) -> str:
-    return "  ".join(" ".join(tile_glyph(tile) for tile in meld) for meld in melds) or "-"
-
-
-def river_glyphs(river: tuple[RiverEntry, ...] | list[RiverEntry]) -> str:
-    marker = {"tsumogiri": "*", "tedashi": ".", "unknown": ""}
-    return " ".join(f"{tile_glyph(entry.tile)}{marker[entry.origin]}" for entry in river) or "-"
 
 
 def tile_from_compact(text: str) -> int:
@@ -108,7 +186,7 @@ def ev_rows(entries: tuple[EVRankEntry, ...] | list[EVRankEntry]) -> list[dict[s
     rows: list[dict[str, object]] = []
     for entry in entries:
         rows.append({
-            "切牌": entry.label if entry.is_fold else f"{tile_glyph(entry.discard)} {format_tiles(tuple(1 if tile == entry.discard else 0 for tile in range(34)))}",
+            "切牌": entry.label if entry.is_fold else f"{face_text(entry.discard)} {format_tiles(tuple(1 if tile == entry.discard else 0 for tile in range(34)))}",
             "淨 EV": round(entry.net_ev, 2),
             "P(自摸和)": round(entry.p_win, 3),
             "存活後 P(和)": round(entry.survival_adjusted_p_win, 3),
@@ -120,15 +198,22 @@ def ev_rows(entries: tuple[EVRankEntry, ...] | list[EVRankEntry]) -> list[dict[s
 
 
 def render_position(position: QuizPosition) -> None:
-    st.caption(f"種子 {position.seed} · 座位 {position.seat} · 第 {position.turn} 巡 · 摸入 {tile_glyph(position.drawn_tile)} {format_tiles(tuple(1 if tile == position.drawn_tile else 0 for tile in range(34)))}")
-    st.markdown(f"**手牌**  \n{glyphs(position.hand)}  \n`{format_tiles(position.hand)}`")
-    st.markdown(f"**自己的河**  \n{river_glyphs(position.own_river)}  \n`{format_river(list(position.own_river)) or '-'}`")
-    st.markdown(f"**自己的副露**  \n{meld_glyphs(position.own_melds)}  \n`{meld_text(position.own_melds)}`")
     for opponent in position.opponents:
-        declaration = f"立直第 {opponent.declared_at + 1} 張" if opponent.declared else "未宣告"
-        st.markdown(
-            f"**對手 {opponent.seat}**（{declaration}；聽牌估計 {opponent.tenpai_estimate:.2f}；棄和估計 {opponent.fold_estimate:.2f}）  \n{river_glyphs(opponent.river)}  \n`{format_river(list(opponent.river)) or '-'}` · 副露 {meld_glyphs(opponent.melds)} `{meld_text(opponent.melds)}`"
-        )
+        declaration = f"宣告第 {opponent.declared_at + 1} 張" if opponent.declared else "未宣告"
+        st.markdown(f"**對手 {opponent.seat}**（{declaration}；聽牌估計 {opponent.tenpai_estimate:.2f}；棄和估計 {opponent.fold_estimate:.2f}）")
+        st.markdown(river_strip(opponent.river), unsafe_allow_html=True)
+        if opponent.melds:
+            st.markdown(f"副露 {meld_strip(opponent.melds)}", unsafe_allow_html=True)
+        st.caption(f"`{format_river(list(opponent.river)) or '-'}` · 副露 `{meld_text(opponent.melds)}`")
+    if any(entry for entry in position.own_river) or position.own_melds:
+        st.markdown("**自己的河與副露**")
+        st.markdown(river_strip(position.own_river), unsafe_allow_html=True)
+        if position.own_melds:
+            st.markdown(meld_strip(position.own_melds), unsafe_allow_html=True)
+        st.caption(f"`{format_river(list(position.own_river)) or '-'}` · 副露 `{meld_text(position.own_melds)}`")
+    st.markdown(f"**手牌**（種子 {position.seed} · 座位 {position.seat} · 第 {position.turn} 巡 · 右側為摸入的 {face_text(position.drawn_tile)}）")
+    st.markdown(hand_strip(position.hand, position.drawn_tile), unsafe_allow_html=True)
+    st.caption(f"`{format_tiles(position.hand)}`")
 
 
 def _queue_next_quiz() -> None:
@@ -160,13 +245,17 @@ def show_quiz() -> None:
         return
 
     render_position(position)
-    st.markdown("**選一張要切的牌**")
+    st.markdown("**點一張牌切出**")
     unique_tiles = [tile for tile, count in enumerate(position.hand) if count]
-    for start in range(0, len(unique_tiles), 5):
-        columns = st.columns(5)
-        for column, tile in zip(columns, unique_tiles[start:start + 5]):
+    color_rules = "".join(
+        f'.st-key-quiz_discard_{tile} button p {{color:{_face(tile)[2]};}}' for tile in unique_tiles
+    )
+    st.markdown(f"<style>{color_rules}</style>", unsafe_allow_html=True)
+    with st.container(key="quiz_hand_row"):
+        columns = st.columns(len(unique_tiles), gap="small")
+        for column, tile in zip(columns, unique_tiles):
             with column:
-                if st.button(f"{tile_glyph(tile)} {format_tiles(tuple(1 if index == tile else 0 for index in range(34)))}", key=f"quiz_discard_{tile}"):
+                if st.button(face_text(tile), key=f"quiz_discard_{tile}"):
                     st.session_state.quiz_grade = grade(position, tile)
 
     controls = st.columns(2)
@@ -191,7 +280,16 @@ def show_quiz() -> None:
 def show_ev() -> None:
     st.subheader("切牌分析")
     hand = st.text_input("手牌（17 張）", value="123m123p123s11122233z", key="ev_hand")
+    try:
+        st.markdown(counts_strip(parse_tiles(hand), "mj-lg"), unsafe_allow_html=True)
+    except ValueError:
+        pass
     river = st.text_input("對手河（可用 * / .）", value="", key="ev_river")
+    if river.strip():
+        try:
+            st.markdown(river_strip(parse_river(river)), unsafe_allow_html=True)
+        except ValueError:
+            pass
     melds = st.text_input("對手副露（以 ; 分隔）", value="", key="ev_melds")
     declared = st.text_input("宣告位置（0 或 1，可留白）", value="", key="ev_declared")
     visible = st.text_input("其他可見牌", value="", key="ev_visible")
@@ -237,6 +335,10 @@ def show_ev() -> None:
 def show_score() -> None:
     st.subheader("算台")
     hand = st.text_input("和牌手牌", value="123m111555666777z22z", key="score_hand")
+    try:
+        st.markdown(counts_strip(parse_tiles(hand), "mj-lg"), unsafe_allow_html=True)
+    except ValueError:
+        pass
     win_tile = st.text_input("和牌", value="2z", key="score_win_tile")
     self_draw = st.toggle("自摸", key="score_self_draw")
     dealer = st.toggle("莊家", key="score_dealer")
@@ -265,10 +367,11 @@ def show_score() -> None:
 
 
 def render_legend() -> None:
-    st.caption("記法：`m/p/s/z` = 萬／筒／索／字；河牌 `*` = 摸切，`.` = 手切。")
+    st.caption("記法：`m/p/s/z` = 萬／筒／條／字；河牌 `*`／紅槓 = 摸切，`.`／藍槓 = 手切；金框 = 剛摸入的牌。")
 
 
 def main() -> None:
+    st.markdown(TILE_CSS, unsafe_allow_html=True)
     st.title("🀄 台灣麻將教室")
     render_legend()
     quiz_tab, ev_tab, score_tab = st.tabs(["練習", "切牌分析", "算台"])
