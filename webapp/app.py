@@ -63,27 +63,33 @@ div.st-key-quiz_hand_row div[data-testid="stHorizontalBlock"] {flex-wrap:nowrap 
   overflow-x:auto;gap:0.25rem !important;}
 div.st-key-quiz_hand_row div[data-testid="stColumn"] {width:auto !important;
   min-width:34px !important;flex:1 1 0 !important;}
-/* one green felt table: opponents around the edges, self hand at the bottom */
-.mj-table {display:grid;gap:6px;padding:10px;
-  grid-template-columns:minmax(64px,0.9fr) minmax(96px,1.3fr) minmax(64px,0.9fr);
-  grid-template-areas:"top top top" "left center right" "self self self";
-  background:radial-gradient(ellipse at center,#2a8f68 0%,#1f7a5a 70%,#186347 100%);
-  border:8px solid #7a4a24;border-radius:16px;box-shadow:inset 0 0 24px rgba(0,0,0,.28);}
-.mj-z-top{grid-area:top} .mj-z-left{grid-area:left} .mj-z-right{grid-area:right}
-.mj-z-center{grid-area:center} .mj-z-self{grid-area:self}
-.mj-zone{background:rgba(0,0,0,.14);border-radius:8px;padding:5px 6px;min-width:0;}
-.mj-zone.mj-center{background:rgba(0,0,0,.05);display:flex;flex-direction:column;
-  align-items:center;justify-content:center;text-align:center;}
-.mj-zhead{color:#eafff6;font-size:11px;font-weight:700;margin-bottom:3px;line-height:1.3;}
-.mj-zsub{color:#bfe9d6;font-size:10px;margin:3px 0 1px;}
-.mj-turn{color:#eafff6;font-size:12px;font-weight:700;}
-.mj-table .mj-strip{padding:2px 0;gap:3px;}
-.mj-hand-felt{background:linear-gradient(#1f7a5a,#186347);border:8px solid #7a4a24;
-  border-top:none;border-radius:0 0 16px 16px;margin-top:-8px;padding:8px 10px 4px;}
-.mj-hand-felt .mj-strip{padding:0;}
-div.st-key-quiz_hand_row div[data-testid="stHorizontalBlock"]{background:linear-gradient(#186347,#14513a);
-  border:8px solid #7a4a24;border-top:none;border-radius:0 0 16px 16px;margin-top:-2px;
-  padding:8px 6px !important;}
+/* Mahjong-Soul-style table: the four discard rivers converge into a centre
+   cross, each rotated to face the middle; hand sits at the near edge. */
+.mj-felt{display:grid;place-items:center;width:100%;max-width:440px;margin:0 auto;
+  aspect-ratio:1/1;padding:6px;
+  grid-template-columns:1fr 1.25fr 1fr;grid-template-rows:1fr 1.25fr 1fr;
+  grid-template-areas:"c top c2" "left center right" "c3 bottom c4";
+  background:radial-gradient(ellipse at center,#4a2b52 0%,#3a2140 68%,#291630 100%);
+  border:10px solid #45203a;border-radius:16px;box-shadow:inset 0 0 30px rgba(0,0,0,.45);}
+.mj-river{display:grid;grid-template-columns:repeat(6,auto);gap:2px;justify-content:center;}
+.mj-block{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0;}
+.mj-z-top{grid-area:top;transform:rotate(180deg);}
+.mj-z-left{grid-area:left;transform:rotate(90deg);}
+.mj-z-right{grid-area:right;transform:rotate(-90deg);}
+.mj-z-bottom{grid-area:bottom;}
+.mj-z-center{grid-area:center;}
+.mj-mmelds .mj-strip{gap:1px;padding:0;}
+.mj-center-box{background:rgba(15,8,20,.82);color:#f2eaf7;border-radius:12px;
+  padding:7px 13px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.45);}
+.mj-turn{color:#f2eaf7;font-size:12px;font-weight:700;}
+.mj-zsub{color:#d9c2e6;font-size:10px;margin:2px 0 1px;}
+.mj-seatbar{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;
+  font-size:11px;color:#555;margin-bottom:2px;}
+.mj-seatbar b{color:#333;}
+/* hand row = near edge of the table, matching felt */
+div.st-key-quiz_hand_row div[data-testid="stHorizontalBlock"]{
+  background:linear-gradient(#3a2140,#291630);border:10px solid #45203a;
+  border-radius:16px;margin-top:6px;padding:9px 6px !important;}
 </style>
 """
 
@@ -218,49 +224,53 @@ def ev_rows(entries: tuple[EVRankEntry, ...] | list[EVRankEntry]) -> list[dict[s
     return rows
 
 
-def _opponent_zone(opp, css_class: str) -> str:
-    if opp is None:
-        return f'<div class="mj-zone {css_class}"></div>'
-    declaration = f" · 宣告{opp.declared_at + 1}" if opp.declared else ""
-    head = f'<div class="mj-zhead">對手 {opp.seat}{declaration}<br>聽 {opp.tenpai_estimate:.2f}｜棄 {opp.fold_estimate:.2f}</div>'
-    body = ""
-    if opp.melds:
-        body += '<div class="mj-zsub">副露</div>' + meld_strip(opp.melds)
-    body += '<div class="mj-zsub">牌河</div>' + river_strip(opp.river)
-    return f'<div class="mj-zone {css_class}">{head}{body}</div>'
+def river_grid(river: tuple[RiverEntry, ...] | list[RiverEntry]) -> str:
+    """Discards laid out 6-per-row like a real river (not a single flex line)."""
+    marker = {"tsumogiri": "mj-tsumogiri", "tedashi": "mj-tedashi", "unknown": ""}
+    tiles = "".join(tile_div(entry.tile, "mj-sm", marker[entry.origin]) for entry in river)
+    return f'<div class="mj-river">{tiles}</div>' if tiles else '<div class="mj-river"></div>'
+
+
+def _river_block(css_class: str, river, melds) -> str:
+    parts = ['<div class="mj-block ' + css_class + '">']
+    if melds:
+        parts.append(f'<div class="mj-mmelds">{meld_strip(melds)}</div>')
+    parts.append(river_grid(river))
+    parts.append("</div>")
+    return "".join(parts)
 
 
 def render_position(position: QuizPosition) -> None:
-    """Render the whole position as one green-felt table: three opponents around
-    the edges, the discard/turn info in the centre, our own river at the near
-    edge. The clickable hand is rendered separately as the table's front row."""
+    """Render the position as a Mahjong-Soul-style table: the four discard
+    rivers meet in a centre cross, each rotated toward the middle; the clickable
+    hand is rendered separately as the table's near edge."""
     opps = list(position.opponents)
-    left = opps[0] if len(opps) > 0 else None
+    right = opps[0] if len(opps) > 0 else None
     top = opps[1] if len(opps) > 1 else None
-    right = opps[2] if len(opps) > 2 else None
+    left = opps[2] if len(opps) > 2 else None
+
+    seatbar = " ｜ ".join(
+        f'<b>對手 {opp.seat}</b>{" 宣告" if opp.declared else ""} 聽{opp.tenpai_estimate:.2f}/棄{opp.fold_estimate:.2f}'
+        for opp in opps
+    )
+    st.markdown(f'<div class="mj-seatbar">{seatbar}</div>', unsafe_allow_html=True)
 
     center = (
-        '<div class="mj-zone mj-center mj-z-center">'
+        '<div class="mj-z-center"><div class="mj-center-box">'
         f'<div class="mj-turn">第 {position.turn} 巡</div>'
         '<div class="mj-zsub">摸入</div>'
-        f'{tile_div(position.drawn_tile, "mj-sm", "mj-draw")}</div>'
+        f'{tile_div(position.drawn_tile, "mj-sm", "mj-draw")}</div></div>'
     )
-    self_body = ""
-    if position.own_melds:
-        self_body += '<div class="mj-zsub">我的副露</div>' + meld_strip(position.own_melds)
-    self_body += '<div class="mj-zsub">我的牌河</div>' + river_strip(position.own_river)
-    self_zone = f'<div class="mj-zone mj-z-self">{self_body}</div>'
-
-    table = (
-        '<div class="mj-table">'
-        + _opponent_zone(top, "mj-z-top")
-        + _opponent_zone(left, "mj-z-left")
+    felt = (
+        '<div class="mj-felt">'
+        + _river_block("mj-z-top", top.river if top else [], top.melds if top else [])
+        + _river_block("mj-z-left", left.river if left else [], left.melds if left else [])
         + center
-        + _opponent_zone(right, "mj-z-right")
-        + self_zone
+        + _river_block("mj-z-right", right.river if right else [], right.melds if right else [])
+        + _river_block("mj-z-bottom", position.own_river, position.own_melds)
         + "</div>"
     )
-    st.markdown(table, unsafe_allow_html=True)
+    st.markdown(felt, unsafe_allow_html=True)
     with st.expander("文字記法（可複製到 CLI）", expanded=False):
         st.caption(f"手牌 `{format_tiles(position.hand)}`")
         st.caption(f"我的河 `{format_river(list(position.own_river)) or '-'}` · 副露 `{meld_text(position.own_melds)}`")
