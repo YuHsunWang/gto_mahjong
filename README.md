@@ -325,7 +325,18 @@ python3 -m taimahjong --selfplay --games 25 --seed 30038 \
   --policies attack,cautious,ev_aware,ev_aware --out data/calibration.json
 ```
 
-Head-to-head: pending below.
+Head-to-head results use two bots per policy, alternating which policy owns
+dealer seat every game, with fixed consecutive seeds 41000--42199:
+
+| games | ev_aware points/seat/game | attack points/seat/game | ev_aware - attack | SE |
+| ---: | ---: | ---: | ---: | ---: |
+| 1,200 | -1.911 | 1.911 | -3.823 | 0.119 |
+
+This sample favors attack (about 32 standard errors by this game-level
+estimate); no policy constants were retuned after observing it. On the same
+100-game fixed-seed benchmark, ev_aware took 88.32 s and attack 48.96 s
+(1.804x). Use `scripts/head_to_head.py --games N --seed S` for a reproducible
+batch summary.
 
 ## M7 survival-discounted EV and draw path
 
