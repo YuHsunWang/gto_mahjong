@@ -50,6 +50,7 @@ TILE_CSS = """
 .mj-sm {width:28px;height:40px;font-size:12px;}
 .mj-gap {width:14px;flex:0 0 auto;}
 .mj-draw {outline:3px solid #e0a300;outline-offset:1px;}
+.mj-cut {opacity:.5;outline:2px solid #c02c2c;position:relative;}
 .mj-tsumogiri {border-top:4px solid #c02c2c;}
 .mj-tedashi {border-top:4px solid #2a4fa2;}
 div[class*="st-key-quiz_discard_"] button {background:#fbfaf2;border:1px solid #cfcabc;border-radius:6px;
@@ -147,6 +148,24 @@ def hand_strip(hand: tuple[int, ...] | list[int], drawn: int | None = None) -> s
 
 def counts_strip(counts: tuple[int, ...] | list[int], size: str = "mj-sm") -> str:
     parts = [tile_div(tile, size) for tile, count in enumerate(counts) for _ in range(count)]
+    return strip_html(parts, wrap=True)
+
+
+def hand_view(hand: tuple[int, ...] | list[int], drawn: int | None = None, chosen: int | None = None) -> str:
+    """Full hand in sorted order; the drawn tile is gold-framed and the chosen
+    discard is marked, so it stays visible while EV computes and in feedback."""
+    parts: list[str] = []
+    drawn_used = chosen_used = False
+    for tile, count in enumerate(hand):
+        for _ in range(count):
+            classes: list[str] = []
+            if tile == drawn and not drawn_used:
+                classes.append("mj-draw")
+                drawn_used = True
+            if chosen is not None and tile == chosen and not chosen_used:
+                classes.append("mj-cut")
+                chosen_used = True
+            parts.append(tile_div(tile, "mj-lg", " ".join(classes)))
     return strip_html(parts, wrap=True)
 
 
@@ -417,8 +436,10 @@ def show_trainer() -> None:
     _trainer_scorecard()
     render_position(position)
     feedback: QuizGrade | None = st.session_state.get("trainer_feedback")
+    pending: int | None = st.session_state.get("trainer_pending_tile")
 
-    if feedback is None:
+    # State 1 — awaiting a discard: show the clickable hand.
+    if feedback is None and pending is None:
         st.caption("我的手牌 — 點一張切出（金框為剛摸入的牌）")
         unique_tiles = [tile for tile, count in enumerate(position.hand) if count]
         color_rules = "".join(
@@ -432,17 +453,28 @@ def show_trainer() -> None:
                 label = face_text(tile) if position.hand[tile] == 1 else f"{face_text(tile)}×{position.hand[tile]}"
                 with column:
                     if st.button(label, key=f"trainer_discard_{tile}"):
-                        with st.spinner("計算 EV…"):
-                            result = grade(position, tile)
-                        score = st.session_state.trainer_score
-                        score["decisions"] += 1
-                        score["best"] += int(result.verdict == "best")
-                        score["loss"] += result.ev_delta
-                        st.session_state.trainer_feedback = result
                         st.session_state.trainer_pending_tile = tile
                         st.rerun()
         return
 
+    # State 2 — computing: the hand (with the cut tile marked) stays on screen
+    # while EV is evaluated, so the position is never hidden behind a spinner.
+    if feedback is None and pending is not None:
+        st.caption(f"你切 {face_text(pending)}，計算 EV 中…（紅框為切出、金框為摸入）")
+        st.markdown(hand_view(position.hand, position.drawn_tile, pending), unsafe_allow_html=True)
+        with st.spinner("計算 EV…"):
+            result = grade(position, pending)
+        score = st.session_state.trainer_score
+        score["decisions"] += 1
+        score["best"] += int(result.verdict == "best")
+        score["loss"] += result.ev_delta
+        st.session_state.trainer_feedback = result
+        st.rerun()
+        return
+
+    # State 3 — feedback: keep the hand visible alongside the verdict and table.
+    assert feedback is not None
+    st.markdown(hand_view(position.hand, position.drawn_tile, feedback.chosen.discard), unsafe_allow_html=True)
     message = f"你切 {face_text(feedback.chosen.discard)} · 判定：{feedback.verdict} · EV 差 {feedback.ev_delta:.2f} 台"
     {"best": st.success, "good": st.info, "inaccuracy": st.warning, "mistake": st.error}[feedback.verdict](message)
     if feedback.best.discard != feedback.chosen.discard:
