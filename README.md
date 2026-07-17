@@ -1,4 +1,4 @@
-# Taiwanese Mahjong shanten (M1)
+# Taiwanese Mahjong shanten and ukeire (M2)
 
 This package calculates regular-hand shanten for Taiwanese 16-tile mahjong.
 It supports the 34 ordinary tile kinds only; flowers and special hands are out
@@ -18,6 +18,29 @@ Run the calculator:
 ```bash
 python3 -m taimahjong "123m456p789s1122334z"
 ```
+
+For a 16-tile-equivalent concealed hand, `--ukeire` lists every draw that
+strictly reduces shanten and the total number of unseen acceptable tiles:
+
+```bash
+python3 -m taimahjong "123m123p123s1112223z" --ukeire
+```
+
+For a 17-tile-equivalent concealed hand, `--analyze` ranks each distinct
+discard by resulting shanten and then total ukeire:
+
+```bash
+python3 -m taimahjong "123m123p123s11122233z" --analyze
+```
+
+The Python API provides `ukeire(counts, melds_declared=0, visible=None)` and
+`discard_analysis(counts, melds_declared=0, visible=None)`.  `visible` is a
+34-count array for tiles seen elsewhere and can also be supplied to the CLI
+with `--visible "..."`.  For an accepted tile kind, its unseen count is
+`4 - copies in hand - copies in visible`.  A kind whose unseen count is zero
+is still listed when it would theoretically improve shanten, so unavailable
+waits remain visible.  Hand plus visible copies may not exceed four for any
+tile kind.
 
 Run the tests (pytest is only a test dependency):
 
