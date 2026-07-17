@@ -19,6 +19,7 @@ from taimahjong.ev import EVRankEntry, ev_rank, remaining_draws
 from taimahjong.quiz import QuizGrade, QuizPosition, explain, generate_position, grade
 from taimahjong.scoring import BASE_UNITS, WinContext, score_hand
 from taimahjong.tiles import SUIT_OFFSETS, format_tiles, parse_tiles
+from taimahjong.trainer import TrainerDecision, TrainerOutcome, play_trainer
 
 
 st.set_page_config(page_title="台灣麻將教室", page_icon="🀄", layout="centered")
@@ -87,9 +88,13 @@ div.st-key-quiz_hand_row div[data-testid="stColumn"] {width:auto !important;
   font-size:11px;color:#555;margin-bottom:2px;}
 .mj-seatbar b{color:#333;}
 /* hand row = near edge of the table, matching felt */
-div.st-key-quiz_hand_row div[data-testid="stHorizontalBlock"]{
+div.st-key-quiz_hand_row div[data-testid="stHorizontalBlock"],
+div.st-key-trainer_hand_row div[data-testid="stHorizontalBlock"]{
   background:linear-gradient(#3a2140,#291630);border:10px solid #45203a;
   border-radius:16px;margin-top:6px;padding:9px 6px !important;}
+.mj-score{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;
+  background:#f3eef7;border-radius:10px;padding:8px 10px;margin:4px 0;font-size:13px;}
+.mj-score b{font-size:16px;color:#5a2f7a;}
 </style>
 """
 
@@ -341,6 +346,111 @@ def show_quiz() -> None:
     st.text(explain(result))
 
 
+def _trainer_scorecard() -> None:
+    score = st.session_state.get("trainer_score", {"decisions": 0, "best": 0, "loss": 0.0})
+    decisions = score["decisions"]
+    accuracy = f"{100 * score['best'] / decisions:.0f}%" if decisions else "—"
+    avg = f"{score['loss'] / decisions:.2f}" if decisions else "—"
+    st.markdown(
+        '<div class="mj-score">'
+        f'<span>手數 <b>{decisions}</b></span>'
+        f'<span>最佳率 <b>{accuracy}</b></span>'
+        f'<span>總 EV 損失 <b>{score["loss"]:.2f}</b> 台</span>'
+        f'<span>每手均損 <b>{avg}</b></span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _trainer_start(seed: int) -> None:
+    generator = play_trainer(seed)
+    st.session_state.trainer_gen = generator
+    st.session_state.trainer_item = next(generator)
+    st.session_state.trainer_seed = seed
+    st.session_state.trainer_score = {"decisions": 0, "best": 0, "loss": 0.0}
+    st.session_state.trainer_feedback = None
+    st.session_state.trainer_pending_tile = None
+
+
+def _trainer_advance() -> None:
+    """Send the graded tile into the generator and move to the next decision."""
+    tile = st.session_state.trainer_pending_tile
+    st.session_state.trainer_item = st.session_state.trainer_gen.send(tile)
+    st.session_state.trainer_feedback = None
+    st.session_state.trainer_pending_tile = None
+
+
+def show_trainer() -> None:
+    st.subheader("實戰")
+    st.caption("一局打到底，每一手切牌都即時給你 EV 回饋與計分（GTO Wizard 式）。")
+    item = st.session_state.get("trainer_item")
+
+    if item is None:
+        if "trainer_new_seed" not in st.session_state:
+            st.session_state.trainer_new_seed = random.SystemRandom().randrange(1, 1_000_000)
+        seed = int(st.number_input("種子", min_value=0, step=1, key="trainer_new_seed"))
+        if st.button("開始新局", type="primary", key="trainer_start"):
+            with st.spinner("發牌中…"):
+                _trainer_start(seed)
+            st.rerun()
+        st.info("我這家打門清（可自摸／榮和，Phase 1 暫不吃碰）；對手正常鳴牌。")
+        return
+
+    if isinstance(item, TrainerOutcome):
+        _trainer_scorecard()
+        tone = st.success if item.human_won else (st.error if item.human_dealt_in else st.info)
+        tone(f"本局結束：{item.headline}　你的收支 {item.point_delta:+d} 台單位（{item.turns} 手）")
+        controls = st.columns(2)
+        with controls[0]:
+            if st.button("再來一局", type="primary", key="trainer_again"):
+                with st.spinner("發牌中…"):
+                    _trainer_start(int(st.session_state.trainer_seed) + 1)
+                st.rerun()
+        with controls[1]:
+            if st.button("結束", key="trainer_quit"):
+                for key in ("trainer_gen", "trainer_item", "trainer_feedback", "trainer_pending_tile"):
+                    st.session_state.pop(key, None)
+                st.rerun()
+        return
+
+    position = item.position
+    _trainer_scorecard()
+    render_position(position)
+    feedback: QuizGrade | None = st.session_state.get("trainer_feedback")
+
+    if feedback is None:
+        st.caption("我的手牌 — 點一張切出（金框為剛摸入的牌）")
+        unique_tiles = [tile for tile, count in enumerate(position.hand) if count]
+        color_rules = "".join(
+            f'.st-key-trainer_discard_{tile} button p {{color:{_face(tile)[2]};}}' for tile in unique_tiles
+        )
+        color_rules += f'.st-key-trainer_discard_{position.drawn_tile} button {{outline:3px solid #e0a300;outline-offset:1px;}}'
+        st.markdown(f"<style>{color_rules}</style>", unsafe_allow_html=True)
+        with st.container(key="trainer_hand_row"):
+            columns = st.columns(len(unique_tiles), gap="small")
+            for column, tile in zip(columns, unique_tiles):
+                label = face_text(tile) if position.hand[tile] == 1 else f"{face_text(tile)}×{position.hand[tile]}"
+                with column:
+                    if st.button(label, key=f"trainer_discard_{tile}"):
+                        with st.spinner("計算 EV…"):
+                            result = grade(position, tile)
+                        score = st.session_state.trainer_score
+                        score["decisions"] += 1
+                        score["best"] += int(result.verdict == "best")
+                        score["loss"] += result.ev_delta
+                        st.session_state.trainer_feedback = result
+                        st.session_state.trainer_pending_tile = tile
+                        st.rerun()
+        return
+
+    message = f"你切 {face_text(feedback.chosen.discard)} · 判定：{feedback.verdict} · EV 差 {feedback.ev_delta:.2f} 台"
+    {"best": st.success, "good": st.info, "inaccuracy": st.warning, "mistake": st.error}[feedback.verdict](message)
+    if feedback.best.discard != feedback.chosen.discard:
+        st.caption(f"最佳切牌為 {face_text(feedback.best.discard)}（淨 EV {feedback.best.net_ev:.2f}）")
+    st.dataframe(ev_rows(feedback.ranked), use_container_width=True, hide_index=True)
+    st.button("下一手 ▶", type="primary", key="trainer_next", on_click=_trainer_advance)
+
+
 def show_ev() -> None:
     st.subheader("切牌分析")
     hand = st.text_input("手牌（17 張）", value="123m123p123s11122233z", key="ev_hand")
@@ -438,9 +548,11 @@ def main() -> None:
     st.markdown(TILE_CSS, unsafe_allow_html=True)
     st.title("🀄 台灣麻將教室")
     render_legend()
-    quiz_tab, ev_tab, score_tab = st.tabs(["練習", "切牌分析", "算台"])
+    quiz_tab, trainer_tab, ev_tab, score_tab = st.tabs(["單題", "實戰", "切牌分析", "算台"])
     with quiz_tab:
         show_quiz()
+    with trainer_tab:
+        show_trainer()
     with ev_tab:
         show_ev()
     with score_tab:

@@ -12,10 +12,24 @@ def _app() -> AppTest:
     return AppTest.from_file(APP).run(timeout=60)
 
 
-def test_app_boots_with_three_tabs():
+def test_app_boots_with_four_tabs():
     app = _app()
     assert not app.exception
-    assert [tab.label for tab in app.tabs] == ["練習", "切牌分析", "算台"]
+    assert [tab.label for tab in app.tabs] == ["單題", "實戰", "切牌分析", "算台"]
+
+
+def test_trainer_start_then_discard_shows_verdict_and_advances():
+    app = _app()
+    app.number_input(key="trainer_new_seed").set_value(1)
+    app.button(key="trainer_start").click().run(timeout=90)
+    # A trainer decision should now be pending: a hand-tile button exists.
+    discard = next(b for b in app.button if b.key.startswith("trainer_discard_"))
+    discard.click().run(timeout=90)
+    assert not app.exception
+    # Feedback shown: a verdict message and the "下一手" advance button.
+    assert any(b.key == "trainer_next" for b in app.button)
+    app.button(key="trainer_next").click().run(timeout=90)
+    assert not app.exception
 
 
 def test_quiz_fixed_seed_best_discard_shows_verdict():

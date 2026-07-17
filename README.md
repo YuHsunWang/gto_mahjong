@@ -448,9 +448,18 @@ pip install -r requirements.txt
 streamlit run webapp/app.py
 ```
 
-手機瀏覽器可直接在牌桌旁使用：練習頁以牌面按鈕選擇切牌，切牌分析可輸入
-緊湊記法與對手河牌，算台頁會列出逐項台數。核心引擎沒有 Streamlit 相依，UI
-只直接呼叫既有 Python API。
+手機瀏覽器可直接在牌桌旁使用，四個分頁：單題（抽一題練切牌）、實戰
+（一局打到底、每手 EV 回饋）、切牌分析（輸入緊湊記法與對手河牌）、算台
+（逐項台數）。牌局以雀魂式十字河呈現：四家牌河朝中心聚集、手牌在近端。
+核心引擎沒有 Streamlit 相依，UI 只直接呼叫既有 Python API。
+
+### 實戰訓練器（M10，Phase 1）
+
+「實戰」分頁用 `taimahjong.trainer.play_trainer` 生成器逐手推進一局：輪到你
+切牌時暫停，你選牌後即時以 `quiz.grade` 給出 EV 判定（最佳／不錯／小失誤／
+失誤），並累計最佳率與總 EV 損失，打到胡／放槍／流局給總結。Phase 1 你這家
+打門清（可自摸／榮和，暫不吃碰），對手正常鳴牌；你的鳴牌決策與鳴牌 EV 為
+Phase 2。所有機率仍是對機器人校準、非真人牌局。
 
 部署到 Streamlit Community Cloud：使用者先自行將此專案推送到 GitHub，然後在
 Community Cloud 選擇該 repository／branch，將主檔設定為 `webapp/app.py`，並以
