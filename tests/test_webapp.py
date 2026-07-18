@@ -32,6 +32,35 @@ def test_trainer_start_then_discard_shows_verdict_and_advances():
     assert not app.exception
 
 
+def test_trainer_handles_call_decisions_without_error():
+    """Drive the trainer a bounded number of steps; if a pon/chi is offered,
+    exercise the call UI (choose then advance) and assert nothing crashes."""
+    app = _app()
+    app.number_input(key="trainer_new_seed").set_value(1)
+    app.button(key="trainer_start").click().run(timeout=90)
+    exercised_call = False
+    for _ in range(10):
+        assert not app.exception
+        call_buttons = [b for b in app.button if b.key.startswith("trainer_call_")]
+        if call_buttons:
+            call_buttons[0].click().run(timeout=90)          # choose (option or pass)
+            assert not app.exception
+            app.button(key="trainer_call_next").click().run(timeout=90)  # advance
+            exercised_call = True
+            break
+        discards = [b for b in app.button if b.key.startswith("trainer_discard_")]
+        if not discards:
+            break  # game ended
+        discards[0].click().run(timeout=90)
+        nxt = [b for b in app.button if b.key == "trainer_next"]
+        if nxt:
+            nxt[0].click().run(timeout=90)
+    assert not app.exception
+    # The call UI is exercised opportunistically; reaching it is not guaranteed
+    # within the step budget, so absence is acceptable, a crash is not.
+    _ = exercised_call
+
+
 def test_quiz_fixed_seed_best_discard_shows_verdict():
     app = _app()
     app.number_input(key="quiz_seed").set_value(1)

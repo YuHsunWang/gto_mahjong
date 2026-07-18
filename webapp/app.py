@@ -19,7 +19,13 @@ from taimahjong.ev import EVRankEntry, ev_rank, remaining_draws
 from taimahjong.quiz import QuizGrade, QuizPosition, explain, generate_position, grade
 from taimahjong.scoring import BASE_UNITS, WinContext, score_hand
 from taimahjong.tiles import SUIT_OFFSETS, format_tiles, parse_tiles
-from taimahjong.trainer import TrainerDecision, TrainerOutcome, play_trainer
+from taimahjong.trainer import (
+    TrainerCallDecision,
+    TrainerDecision,
+    TrainerOutcome,
+    evaluate_call,
+    play_trainer,
+)
 
 
 st.set_page_config(page_title="台灣麻將教室", page_icon="🀄", layout="centered")
@@ -264,10 +270,11 @@ def _river_block(css_class: str, river, melds) -> str:
     return "".join(parts)
 
 
-def render_position(position: QuizPosition) -> None:
+def render_position(position: QuizPosition, offered_tile: int | None = None) -> None:
     """Render the position as a Mahjong-Soul-style table: the four discard
     rivers meet in a centre cross, each rotated toward the middle; the clickable
-    hand is rendered separately as the table's near edge."""
+    hand is rendered separately as the table's near edge. ``offered_tile`` marks
+    a tile an opponent just discarded that the human may call."""
     opps = list(position.opponents)
     right = opps[0] if len(opps) > 0 else None
     top = opps[1] if len(opps) > 1 else None
@@ -279,11 +286,15 @@ def render_position(position: QuizPosition) -> None:
     )
     st.markdown(f'<div class="mj-seatbar">{seatbar}</div>', unsafe_allow_html=True)
 
+    if offered_tile is not None:
+        center_inner = f'<div class="mj-zsub">可鳴</div>{tile_div(offered_tile, "mj-sm", "mj-draw")}'
+    elif position.drawn_tile is not None:
+        center_inner = f'<div class="mj-zsub">摸入</div>{tile_div(position.drawn_tile, "mj-sm", "mj-draw")}'
+    else:
+        center_inner = '<div class="mj-zsub">剛鳴牌</div>'
     center = (
         '<div class="mj-z-center"><div class="mj-center-box">'
-        f'<div class="mj-turn">第 {position.turn} 巡</div>'
-        '<div class="mj-zsub">摸入</div>'
-        f'{tile_div(position.drawn_tile, "mj-sm", "mj-draw")}</div></div>'
+        f'<div class="mj-turn">第 {position.turn} 巡</div>{center_inner}</div></div>'
     )
     felt = (
         '<div class="mj-felt">'
@@ -389,6 +400,8 @@ def _trainer_start(seed: int) -> None:
     st.session_state.trainer_score = {"decisions": 0, "best": 0, "loss": 0.0}
     st.session_state.trainer_feedback = None
     st.session_state.trainer_pending_tile = None
+    st.session_state.trainer_call_feedback = None
+    st.session_state.pop("trainer_call_pending", None)
 
 
 def _trainer_advance() -> None:
@@ -397,6 +410,76 @@ def _trainer_advance() -> None:
     st.session_state.trainer_item = st.session_state.trainer_gen.send(tile)
     st.session_state.trainer_feedback = None
     st.session_state.trainer_pending_tile = None
+
+
+def _trainer_call_advance() -> None:
+    """Send the chosen call (option index) or a pass (None) into the generator."""
+    pending = st.session_state.trainer_call_pending
+    choice = None if pending == "pass" else int(pending)
+    st.session_state.trainer_item = st.session_state.trainer_gen.send(choice)
+    st.session_state.trainer_call_feedback = None
+    st.session_state.pop("trainer_call_pending", None)
+
+
+def _call_label(option) -> str:
+    return ("碰 " if option.kind == "pon" else "吃 ") + "".join(face_text(tile) for tile in option.meld)
+
+
+def show_trainer_call(item: TrainerCallDecision) -> None:
+    """Call decision: same GTO-Wizard flow as discards — choose, see EV, advance."""
+    position = item.position
+    render_position(position, offered_tile=item.offered_tile)
+    pending = st.session_state.get("trainer_call_pending")
+    feedback = st.session_state.get("trainer_call_feedback")
+
+    # State 1 — awaiting: show the hand and the call/pass buttons.
+    if pending is None and feedback is None:
+        st.markdown(hand_view(position.hand), unsafe_allow_html=True)
+        st.caption(f"對手 {item.discarder} 打出 {face_text(item.offered_tile)} — 要鳴牌嗎？")
+        columns = st.columns(len(item.options) + 1, gap="small")
+        for index, option in enumerate(item.options):
+            with columns[index]:
+                if st.button(_call_label(option), key=f"trainer_call_{index}"):
+                    st.session_state.trainer_call_pending = index
+                    st.rerun()
+        with columns[-1]:
+            if st.button("過（不鳴）", key="trainer_call_pass"):
+                st.session_state.trainer_call_pending = "pass"
+                st.rerun()
+        return
+
+    # State 2 — computing: keep the hand visible while EV is evaluated.
+    if feedback is None:
+        st.markdown(hand_view(position.hand), unsafe_allow_html=True)
+        st.caption("計算 EV 中…")
+        with st.spinner("計算 EV…"):
+            evaluation = evaluate_call(item)
+        choice = None if pending == "pass" else int(pending)
+        verdict, delta = evaluation.verdict_for(choice)
+        score = st.session_state.trainer_score
+        score["decisions"] += 1
+        score["best"] += int(verdict == "best")
+        score["loss"] += delta
+        st.session_state.trainer_call_feedback = (evaluation, choice, verdict, delta)
+        st.rerun()
+        return
+
+    # State 3 — feedback: verdict, best action, per-option EV table.
+    st.markdown(hand_view(position.hand), unsafe_allow_html=True)
+    evaluation, choice, verdict, delta = feedback
+    chosen = "過（不鳴）" if choice is None else _call_label(item.options[choice])
+    message = f"你選擇：{chosen} · 判定：{verdict} · EV 差 {delta:.2f} 台"
+    {"best": st.success, "good": st.info, "inaccuracy": st.warning, "mistake": st.error}[verdict](message)
+    if evaluation.best_index is None:
+        st.caption(f"最佳：過（不鳴），EV {evaluation.pass_ev:.2f} 台")
+    else:
+        best = item.options[evaluation.best_index]
+        st.caption(f"最佳：{_call_label(best)}，EV {evaluation.option_evs[evaluation.best_index]:.2f} 台")
+    rows = [{"選項": "過（不鳴）", "EV（台）": round(evaluation.pass_ev, 3)}]
+    for index, option in enumerate(item.options):
+        rows.append({"選項": _call_label(option), "EV（台）": round(evaluation.option_evs[index], 3)})
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.button("繼續 ▶", type="primary", key="trainer_call_next", on_click=_trainer_call_advance)
 
 
 def show_trainer() -> None:
@@ -412,7 +495,7 @@ def show_trainer() -> None:
             with st.spinner("發牌中…"):
                 _trainer_start(seed)
             st.rerun()
-        st.info("我這家打門清（可自摸／榮和，Phase 1 暫不吃碰）；對手正常鳴牌。")
+        st.info("每手切牌、以及可以吃碰時，都會即時給 EV 回饋（槓為後續階段）。")
         return
 
     if isinstance(item, TrainerOutcome):
@@ -432,8 +515,13 @@ def show_trainer() -> None:
                 st.rerun()
         return
 
-    position = item.position
     _trainer_scorecard()
+
+    if isinstance(item, TrainerCallDecision):
+        show_trainer_call(item)
+        return
+
+    position = item.position
     render_position(position)
     feedback: QuizGrade | None = st.session_state.get("trainer_feedback")
     pending: int | None = st.session_state.get("trainer_pending_tile")
