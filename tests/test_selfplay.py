@@ -1,6 +1,8 @@
 from math import sqrt
 from pathlib import Path
 
+import taimahjong.selfplay as selfplay
+
 from taimahjong.calibration import (
     Calibration,
     DANGER_BUCKETS,
@@ -13,7 +15,16 @@ from taimahjong.calibration import (
     table_document,
     write_merged_table,
 )
-from taimahjong.selfplay import Player, _choose_discard, _settlement, head_to_head, play_game, play_games
+from taimahjong.selfplay import (
+    Player,
+    _choose_discard,
+    _declared,
+    _robbing_winner,
+    _settlement,
+    head_to_head,
+    play_game,
+    play_games,
+)
 from taimahjong.shanten import shanten
 from taimahjong.tiles import parse_tiles
 
@@ -93,6 +104,34 @@ def test_streak_raises_dealer_leg_by_two_per_repeat():
     base_win, base_value = _ron_settlement(winner=0, discarder=2, dealer_streak=0)
     assert dealer_value == base_value + 4
     assert dealer_win[0] == dealer_value
+
+
+def test_cautious_avoids_feeding_the_dealer(monkeypatch):
+    # Two fold candidates with a deliberate split: 1m is dangerous to the dealer
+    # (seat 0) and safe to the peer; 9m is the reverse. Raw max-danger would feed
+    # the dealer (1m's 8 > 9m's 9? no — the dealer weight tips it). With the
+    # dealer weight ON, cautious must pick the dealer-safe 9m; with the bonus
+    # patched to 0 (seat-blind baseline) it reverts to the raw-danger 1m.
+    one_m, nine_m = 0, 8
+    danger = {one_m: {0: 8.0, 2: 1.0}, nine_m: {0: 1.0, 2: 9.0}}
+    # Every other candidate is made maximally dangerous so the fold choice is a
+    # clean contest between 1m and 9m.
+    monkeypatch.setattr(selfplay, "_danger_for", lambda opponent, tile, post, players: danger.get(tile, {}).get(opponent, 100.0))
+
+    players = [Player("attack") for _ in range(4)]
+    players[1].policy = "cautious"
+    # A shanten>=2 scattered hand containing both 1m and 9m as legal discards.
+    players[1].hand = list(parse_tiles("1159m159p159s1234567z"))
+    players[0].declared_at = 0  # dealer is a declared threat
+    players[0].river = [selfplay.RiverEntry(0)]
+    players[2].declared_at = 0  # a second, non-dealer declared threat
+    players[2].river = [selfplay.RiverEntry(0)]
+
+    with_weight, folded = _choose_discard(1, None, players)
+    assert folded and with_weight == nine_m
+    monkeypatch.setattr(selfplay, "CAUTIOUS_DEALER_BONUS", 0.0)
+    without_weight, _ = _choose_discard(1, None, players)
+    assert without_weight == one_m
 
 
 def test_ev_aware_is_deterministic_and_chooses_the_safe_known_case():
@@ -186,3 +225,64 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
         pooled = (left["deal_ins"] + right["deal_ins"]) / (left["observations"] + right["observations"])
         standard_error = sqrt(pooled * (1 - pooled) * (1 / left["observations"] + 1 / right["observations"]))
         assert left["empirical_probability"] - right["empirical_probability"] <= 1.5 * standard_error
+
+
+# --- M5: kong engine ---
+
+def test_kong_policy_none_reproduces_baseline():
+    # The entire kong branch must be inert by default: a "none" game equals the
+    # pre-kong engine tile-for-tile, so enabling kongs never silently perturbs
+    # existing behavior or the committed calibration.
+    for seed in (941, 20260717, 42, 30001):
+        assert play_game(seed).summary() == play_game(seed, kong_policy="none").summary()
+
+
+def test_kong_all_policy_conserves_tiles_and_uses_dead_wall():
+    # Conservation is asserted inside play_game after every kong/replacement, so
+    # a batch that actually declares kongs exercises the dead-wall draw path.
+    games = [play_game(seed, ("attack", "attack", "attack", "attack"), kong_policy="all") for seed in range(200, 320)]
+    konged = [game for game in games if game.kongs]
+    assert konged, "the all policy should declare kongs across 120 attack games"
+    # A win with kongs still resolves to a valid winning hand at its declared count.
+    for game in games:
+        if game.outcome != "draw":
+            assert shanten(game.winning_hand, game.winning_melds) == -1
+        if game.kong_bloom or game.robbed_kong:
+            assert game.outcome in {"tsumo", "ron"}
+
+
+def test_added_kong_can_be_robbed():
+    # 搶槓: a seat waiting on the tile a rival adds to a pon wins off that tile.
+    players = [Player("attack") for _ in range(4)]
+    # Seat 1 is tenpai on 6s (a pinghu wait); seats 2/3 hold valid non-winning
+    # hands (real play never has an empty seat, which shanten would reject).
+    players[1].hand = list(parse_tiles("123456789m123p1178s"))
+    players[2].hand = list(parse_tiles("112233m112233p1122s"))
+    players[3].hand = list(parse_tiles("112233m112233p1122s"))
+    six_s = next(index for index, count in enumerate(parse_tiles("6s")) if count)
+    assert _robbing_winner(players, konger=0, tile=six_s) == 1
+    # A tile nobody waits on cannot be robbed.
+    one_z = next(index for index, count in enumerate(parse_tiles("1z")) if count)
+    assert _robbing_winner(players, konger=0, tile=one_z) is None
+
+
+def test_kong_bloom_flag_reaches_settlement_and_adds_one_tai():
+    # 槓上開花 must thread from the loop into scoring: the same self-draw win with
+    # a concealed kong scores exactly KONG_BLOOM_TAI (1) more when the flag is set.
+    players = [Player("attack") for _ in range(4)]
+    players[0].kongs = [(next(i for i, c in enumerate(parse_tiles("1z")) if c), True)]
+    winning_hand = parse_tiles("234567m234p234s55s")
+    two_s = next(index for index, count in enumerate(parse_tiles("2s")) if count)
+    _, plain = _settlement("tsumo", 0, None, players, winning_hand, two_s)
+    _, bloom = _settlement("tsumo", 0, None, players, winning_hand, two_s, kong_bloom=True)
+    assert bloom - plain == 1
+
+
+def test_kong_counts_as_one_declared_set_for_shanten():
+    # A concealed kong occupies a declared set, so _declared feeds shanten the
+    # right count and a hand completed around one kong resolves to a win.
+    player = Player("attack")
+    player.kongs = [(next(i for i, c in enumerate(parse_tiles("1z")) if c), True)]
+    player.hand = list(parse_tiles("234567m234p234s55s"))  # 14 tiles = 17 - 3*1
+    assert _declared(player) == 1
+    assert shanten(tuple(player.hand), _declared(player)) == -1
