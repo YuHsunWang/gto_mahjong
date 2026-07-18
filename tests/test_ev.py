@@ -159,3 +159,30 @@ def test_fold_row_is_last_labeled_and_no_riskier_than_real_discards():
     real = entries[:-1]
     assert fold.is_fold and fold.label == "fold" and fold.discard == -1
     assert fold.risk_ev <= min(entry.risk_ev for entry in real)
+
+
+def test_opponent_value_estimate_scales_with_dealer_streak():
+    # Dealing into the dealer settles the bilateral premium, so the defender's
+    # loss-magnitude read must be +1 for a dealer at streak 0 and +2 more per
+    # repeat — the exact gradient that makes a streaking dealer scarier.
+    river = parse_river("1m3m5p")
+    peer = OpponentView(list(river), [], None)
+    base = ev.opponent_value_estimate(peer)
+    values = [
+        ev.opponent_value_estimate(OpponentView(list(river), [], None, is_dealer=True, dealer_streak=streak))
+        for streak in range(4)
+    ]
+    assert values[0] - base == ev.OPPONENT_DEALER_TAI
+    assert [value - values[0] for value in values] == [0, 2, 4, 6]
+
+
+def test_deal_in_ev_rises_against_dealer():
+    # The risk term that drives folding must respond: the same danger tile is a
+    # larger expected loss when the modeled opponent is the streaking dealer.
+    opponent_peer = OpponentView(parse_river("123456789m"), [], None)
+    opponent_dealer = OpponentView(parse_river("123456789m"), [], None, is_dealer=True, dealer_streak=2)
+    tile = _tile("5s")
+    visible = _visible_with_opponent(opponent_peer)
+    peer_risk = ev.deal_in_ev(tile, opponent_peer, visible, POST_DRAW, None)
+    dealer_risk = ev.deal_in_ev(tile, opponent_dealer, visible, POST_DRAW, None)
+    assert dealer_risk > peer_risk

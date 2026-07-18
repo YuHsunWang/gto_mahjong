@@ -76,6 +76,10 @@ class Player:
     melds: list[tuple[int, int, int]] = field(default_factory=list)
     declared_at: int | None = None
     discards: int = 0
+    # Set on the DEALER_SEAT player only: dealership is table state, carried
+    # here so every observer's view can price the 連莊 premium without
+    # threading a game parameter through each danger/EV call chain.
+    dealer_streak: int = 0
 
     @property
     def declared(self) -> bool:
@@ -136,6 +140,7 @@ class DecisionSnapshot:
     turn: int
     drawn_tile: int
     wall_remaining: int = 0  # live-wall tiles left to draw (observable in play)
+    dealer_streak: int = 0  # the table's 連莊 count (dealer is always seat 0)
 
 
 def _public_counts(players: list[Player]) -> tuple[int, ...]:
@@ -149,8 +154,12 @@ def _public_counts(players: list[Player]) -> tuple[int, ...]:
     return tuple(counts)
 
 
-def _view(player: Player) -> OpponentView:
-    return OpponentView(list(player.river), list(player.melds), player.declared_at)
+def _view(player: Player, seat: int) -> OpponentView:
+    return OpponentView(
+        list(player.river), list(player.melds), player.declared_at,
+        is_dealer=seat == DEALER_SEAT,
+        dealer_streak=player.dealer_streak if seat == DEALER_SEAT else 0,
+    )
 
 
 def _decision_snapshot(player_index: int, drawn_tile: int, players: list[Player], wall_remaining: int = 0) -> DecisionSnapshot:
@@ -161,11 +170,12 @@ def _decision_snapshot(player_index: int, drawn_tile: int, players: list[Player]
         hand=tuple(player.hand),
         river=tuple(player.river),
         melds=tuple(player.melds),
-        opponents=tuple((index, _view(other)) for index, other in enumerate(players) if index != player_index),
+        opponents=tuple((index, _view(other, index)) for index, other in enumerate(players) if index != player_index),
         public_counts=_public_counts(players),
         turn=player.discards + 1,
         drawn_tile=drawn_tile,
         wall_remaining=wall_remaining,
+        dealer_streak=players[DEALER_SEAT].dealer_streak,
     )
 
 
@@ -200,7 +210,7 @@ def _assert_conservation(players: list[Player], wall: list[int], dead: list[int]
 
 def _danger_for(player_index: int, tile: int, post_hand: list[int], players: list[Player]) -> float:
     visible = _public_counts(players)
-    return danger_score(tile, _view(players[player_index]), visible, tuple(post_hand)).score
+    return danger_score(tile, _view(players[player_index], player_index), visible, tuple(post_hand)).score
 
 
 @lru_cache(maxsize=1)
@@ -221,7 +231,7 @@ def _ev_aware_discard(player_index: int, analyses: tuple[DiscardAnalysis, ...], 
     """Choose from M2's top candidates plus the raw minimum-danger discard."""
     player = players[player_index]
     visible = _public_counts(players)
-    opponents = [(index, _view(other)) for index, other in enumerate(players) if index != player_index]
+    opponents = [(index, _view(other, index)) for index, other in enumerate(players) if index != player_index]
     danger_by_candidate: dict[int, dict[int, float]] = {}
     for analysis in analyses:
         post = list(player.hand)
@@ -399,10 +409,13 @@ def play_game(
     """Play one deterministic-seeded game and retain every discard event in memory."""
     if len(policies) != 4 or any(policy not in POLICIES for policy in policies):
         raise ValueError("policies must name four entries from POLICIES")
+    if not isinstance(dealer_streak, int) or isinstance(dealer_streak, bool) or dealer_streak < 0:
+        raise ValueError("dealer_streak must be a non-negative integer")
     rng = Random(seed)
     tiles = [tile for tile in range(34) for _ in range(4)]
     rng.shuffle(tiles)
     players = [Player(policy) for policy in policies]
+    players[DEALER_SEAT].dealer_streak = dealer_streak
     for _ in range(16):
         for player in players:
             player.hand[tiles.pop()] += 1
@@ -474,7 +487,7 @@ def play_game(
             if index != current:
                 for entry in other.river:
                     other_counts[entry.tile] += 1
-        score = fold_score(_view(player), other_counts)
+        score = fold_score(_view(player, current), other_counts)
         if len(player.river) >= 3:
             event["fold_window"] = True
             event["fold_score"] = score

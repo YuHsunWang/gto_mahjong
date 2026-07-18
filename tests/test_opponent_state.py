@@ -73,6 +73,16 @@ def test_unknown_origin_is_neutral_and_recent_tedashi_marks_wait_change():
     assert "recent_tedashi_multiplier" in changed.signals
 
 
+def test_opponent_view_rejects_streak_without_dealer():
+    # Parity with scoring.WinContext: a 連莊 count only makes sense for the
+    # dealer, so a non-dealer view carrying one is a wiring bug we reject early.
+    assert OpponentView([0], [], None, is_dealer=True, dealer_streak=2).dealer_streak == 2
+    with pytest.raises(ValueError, match="dealer_streak requires"):
+        OpponentView([0], [], None, dealer_streak=1)
+    with pytest.raises(ValueError, match="non-negative"):
+        OpponentView([0], [], None, is_dealer=True, dealer_streak=-1)
+
+
 def test_migi_declaration_validation_tenpai_fold_and_hard_safety():
     assert OpponentView([0], [], 0).declared_at == 0
     assert OpponentView([0, 1], [], 1).declared_at == 1

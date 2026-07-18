@@ -20,6 +20,13 @@ OPPONENT_DECLARED_TAI = 8
 OPPONENT_DRAGON_TRIPLET_TAI = 1
 OPPONENT_FLUSH_READ_TAI = 4
 OPPONENT_ALL_TRIPLETS_TAI = 4
+# Dealing into the dealer settles the bilateral premium (莊 + 連莊拉莊), so the
+# defender's loss-magnitude estimate mirrors scoring.DEALER_TAI /
+# STREAK_TAI_PER_WIN. Kept as separate constants so the defensive read can be
+# tuned (or zeroed for an unaware-baseline experiment) without touching the
+# settlement rule; read live as module attributes.
+OPPONENT_DEALER_TAI = 1
+OPPONENT_STREAK_TAI_PER_WIN = 2
 DEAL_IN_FALLBACK_RATE = 0.02
 DECLARED_FACTOR = 2.0
 BASELINE_TENPAI_RATE = 0.25
@@ -126,6 +133,13 @@ def _template(template: WinContext | WinValueContext | None) -> tuple[WinContext
 
 
 def _score_value(hand: tuple[int, ...], winning_tile: int, template: WinContext | WinValueContext | None, migi: bool | None = None) -> int:
+    # The acting player's OWN dealer/streak premium is honored via the template
+    # (self-draw here). Honest approximation: a non-dealer winner collects the
+    # bilateral premium only when the payer is the dealer (ron off dealer, or
+    # the dealer's tsumo leg), which this symmetric win estimate does NOT model
+    # — so a non-dealer's win EV is under-counted by at most P/3 of one win
+    # (P = DEALER_TAI + STREAK_TAI_PER_WIN*streak). Modeling it needs a
+    # per-target win distribution; deferred, and flagged in docs/experiments.
     context, melds = _template(template)
     return score_hand(
         hand,
@@ -200,6 +214,8 @@ def opponent_value_estimate(opponent: OpponentView) -> float:
         tai += OPPONENT_FLUSH_READ_TAI
     if len(opponent.melds) >= 3 and all(meld[0] == meld[1] == meld[2] for meld in opponent.melds):
         tai += OPPONENT_ALL_TRIPLETS_TAI
+    if opponent.is_dealer:
+        tai += OPPONENT_DEALER_TAI + OPPONENT_STREAK_TAI_PER_WIN * opponent.dealer_streak
     return float(BASE_UNITS + tai)
 
 

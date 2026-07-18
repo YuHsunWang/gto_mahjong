@@ -66,6 +66,23 @@ def test_filter_constraints_hold_for_several_seeded_positions():
         assert position.candidate_ev_gap >= EV_GAP_MIN
 
 
+def test_dealer_opponent_view_flags_seat_zero():
+    # The seat->dealer mapping is the load-bearing wiring for every downstream
+    # dealer-aware EV: the seat-0 opponent's view must report is_dealer, and no
+    # other seat may. (A non-dealer human position always has a dealer opponent.)
+    for seed in (1, 2, 3):
+        position = generate_position(seed)
+        if position.is_dealer:
+            continue  # human is the dealer; no opponent carries the flag
+        for opponent in position.opponents:
+            assert opponent.view().is_dealer == (opponent.seat == 0)
+        dealer_opponents = [opp for opp in position.opponents if opp.seat == 0]
+        assert len(dealer_opponents) == 1 and dealer_opponents[0].view().is_dealer
+        break
+    else:
+        raise AssertionError("no non-dealer human position found in seeds 1-3")
+
+
 def test_snapshot_is_public_information_only_and_counts_every_visible_tile(position):
     assert all(not hasattr(opponent, "hand") for opponent in position.opponents)
     assert _observed_counts(position) == position.visible_counts

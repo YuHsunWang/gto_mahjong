@@ -140,13 +140,21 @@ class QuizOpponent:
     declared_at: int | None
     tenpai_estimate: float
     fold_estimate: float
+    dealer_streak: int = 0  # nonzero only when this opponent is the dealer
 
     @property
     def declared(self) -> bool:
         return self.declared_at is not None
 
+    @property
+    def is_dealer(self) -> bool:
+        return self.seat == DEALER_SEAT
+
     def view(self) -> OpponentView:
-        return OpponentView(list(self.river), list(self.melds), self.declared_at)
+        return OpponentView(
+            list(self.river), list(self.melds), self.declared_at,
+            is_dealer=self.is_dealer, dealer_streak=self.dealer_streak,
+        )
 
 
 @dataclass(frozen=True)
@@ -167,6 +175,7 @@ class QuizPosition:
     draws_remaining: int
     wall_remaining: int
     candidate_ev_gap: float
+    dealer_streak: int = 0  # the table's 連莊 count (dealer is always seat 0)
 
     @property
     def is_dealer(self) -> bool:
@@ -267,6 +276,7 @@ def _opponents_from(snapshot: DecisionSnapshot) -> tuple[QuizOpponent, ...]:
                 view.declared_at,
                 tenpai_score(frozen_view, snapshot.turn).score,
                 fold_score(frozen_view, _river_counts(snapshot.opponents, seat, snapshot.river)),
+                dealer_streak=snapshot.dealer_streak if seat == DEALER_SEAT else 0,
             )
         )
     return tuple(opponents)
@@ -295,6 +305,7 @@ def _position_from(snapshot: DecisionSnapshot, seed: int) -> QuizPosition:
         draws_remaining=max(1, ceil(snapshot.wall_remaining / 4)),
         wall_remaining=snapshot.wall_remaining,
         candidate_ev_gap=0.0,
+        dealer_streak=snapshot.dealer_streak,
     )
 
 
@@ -303,9 +314,16 @@ def _evaluation_seed(position: QuizPosition) -> int:
 
 
 def _score_template(position: QuizPosition) -> WinValueContext:
-    # The dealer earns an extra tai on a win, so the human's own win value
-    # depends on whether this seat is the dealer.
-    return WinValueContext(WinContext(winning_tile=0, dealer=position.is_dealer), position.own_melds)
+    # The dealer earns an extra tai on a win (plus 連莊拉莊 per repeat), so the
+    # human's own win value depends on whether this seat is the dealer.
+    return WinValueContext(
+        WinContext(
+            winning_tile=0,
+            dealer=position.is_dealer,
+            dealer_streak=position.dealer_streak if position.is_dealer else 0,
+        ),
+        position.own_melds,
+    )
 
 
 @lru_cache(maxsize=256)

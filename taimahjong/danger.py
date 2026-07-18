@@ -85,12 +85,22 @@ class OpponentView:
     river: list[int | RiverEntry]
     melds: list[tuple[int, int, int]]
     declared_at: int | None = None
+    # Dealer identity of THIS opponent (seat 0 at the table). The shape
+    # heuristics in this module stay seat-blind; these fields exist for the
+    # EV layer's loss-magnitude estimate (a streaking dealer's win is worth
+    # more, so dealing into them must cost more).
+    is_dealer: bool = False
+    dealer_streak: int = 0
 
     def __post_init__(self) -> None:
         if self.declared_at is not None and (
             not isinstance(self.declared_at, int) or isinstance(self.declared_at, bool) or self.declared_at not in (0, 1)
         ):
             raise ValueError("declared_at must be 0 or 1 for the migi declaration window")
+        if not isinstance(self.dealer_streak, int) or isinstance(self.dealer_streak, bool) or self.dealer_streak < 0:
+            raise ValueError("dealer_streak must be a non-negative integer")
+        if self.dealer_streak and not self.is_dealer:
+            raise ValueError("dealer_streak requires is_dealer=True")
 
     def validate(self) -> None:
         """Validate tile indices and public multiplicities in this view."""
