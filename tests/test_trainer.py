@@ -126,6 +126,34 @@ def test_evaluate_call_is_deterministic_and_refines_best_and_chosen():
     assert best.verdict == "best" and best.ev_delta == 0.0 and best.marginal is False
 
 
+def test_call_ev_credits_dealer_tai_for_dealer_seat():
+    # Seat 0 is the dealer, so a win there is worth an extra 莊 tai. The call-EV
+    # path (pass/option value) must credit it just like the discard grader does;
+    # a regression that drops the dealer flag understates the human's win EV and
+    # biases the pass-vs-call ev_delta that decides borderline call verdicts.
+    from taimahjong.ev import WinValueContext, estimate_win_value
+    from taimahjong.quiz import _evaluation_seed
+    from taimahjong.scoring import WinContext
+    from taimahjong.trainer import _pass_ev
+
+    decision = _first_call()
+    assert decision is not None, "expected a call decision in seeds 1-19"
+    position = decision.position
+    assert position.is_dealer, "human_seat 0 is the dealer in the trainer model"
+    base = _evaluation_seed(position)
+
+    def win_ev(dealer: bool) -> float:
+        return estimate_win_value(
+            position.hand, position.draws_remaining, len(position.own_melds),
+            position.public_counts, 200, base,
+            WinValueContext(WinContext(winning_tile=0, dealer=dealer), position.own_melds),
+        ).expected_win_ev
+
+    dealer_ev, non_dealer_ev = win_ev(True), win_ev(False)
+    assert dealer_ev > non_dealer_ev, "this position has win chance, so the 莊 tai must move the EV"
+    assert _pass_ev(decision, base, 200) == dealer_ev
+
+
 def test_taking_a_call_opens_hand_and_game_terminates():
     for seed in range(1, 20):
         gen = play_trainer(seed, human_seat=0)

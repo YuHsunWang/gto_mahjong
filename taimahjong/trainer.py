@@ -224,7 +224,7 @@ def _pass_ev(decision: TrainerCallDecision, base_seed: int, sims: int) -> float:
     return estimate_win_value(
         position.hand, position.draws_remaining, len(position.own_melds),
         position.public_counts, sims, base_seed,
-        WinValueContext(WinContext(winning_tile=0), position.own_melds),
+        WinValueContext(WinContext(winning_tile=0, dealer=position.is_dealer), position.own_melds),
     ).expected_win_ev
 
 
@@ -240,7 +240,7 @@ def _option_rank(decision: TrainerCallDecision, option: CallOption, base_seed: i
     ranked = ev_rank(
         post, [opponent.view() for opponent in position.opponents], position.public_counts,
         len(melds), position.draws_remaining, sims, base_seed,
-        WinValueContext(WinContext(winning_tile=0), melds), top_k=EV_TOP_K,
+        WinValueContext(WinContext(winning_tile=0, dealer=position.is_dealer), melds), top_k=EV_TOP_K,
     )
     playable = [entry for entry in ranked if not entry.is_fold]
     if not playable:
@@ -260,7 +260,7 @@ def _refine_option(decision: TrainerCallDecision, option: CallOption, discard: i
     entry = evaluate_discard(
         post, discard, [opponent.view() for opponent in position.opponents],
         position.public_counts, len(melds), position.draws_remaining,
-        sims, base_seed, WinValueContext(WinContext(winning_tile=0), melds),
+        sims, base_seed, WinValueContext(WinContext(winning_tile=0, dealer=position.is_dealer), melds),
     )
     return entry.net_ev
 

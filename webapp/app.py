@@ -372,7 +372,7 @@ def show_quiz() -> None:
     if result is None:
         return
     message = _verdict_message(result.verdict, result.marginal, result.ev_delta)
-    {"best": st.success, "good": st.info, "inaccuracy": st.warning, "mistake": st.error}[result.verdict](message)
+    _show_verdict(result.verdict, message)
     st.dataframe(ev_rows(result.ranked), use_container_width=True, hide_index=True)
     st.markdown("**說明**")
     st.text(explain(result))
@@ -438,6 +438,11 @@ def _verdict_message(verdict: str, marginal: bool, ev_delta: float) -> str:
     return f"判定：{_verdict_label(verdict, marginal)} · EV 差 {ev_delta:.1f} 台"
 
 
+def _show_verdict(verdict: str, message: str) -> None:
+    """Render a graded message with the Streamlit tone matching the verdict."""
+    {"best": st.success, "good": st.info, "inaccuracy": st.warning, "mistake": st.error}[verdict](message)
+
+
 def show_trainer_call(item: TrainerCallDecision) -> None:
     """Call decision: same GTO-Wizard flow as discards — choose, see EV, advance."""
     position = item.position
@@ -483,7 +488,7 @@ def show_trainer_call(item: TrainerCallDecision) -> None:
     verdict, delta = result.verdict, result.ev_delta
     chosen = "過（不鳴）" if choice is None else _call_label(item.options[choice])
     message = f"你選擇：{chosen} · {_verdict_message(verdict, result.marginal, delta)}"
-    {"best": st.success, "good": st.info, "inaccuracy": st.warning, "mistake": st.error}[verdict](message)
+    _show_verdict(verdict, message)
     if evaluation.best_index is None:
         st.caption(f"最佳：過（不鳴），EV {result.best_ev:.1f} 台")
     else:
@@ -578,7 +583,7 @@ def show_trainer() -> None:
     assert feedback is not None
     st.markdown(hand_view(position.hand, position.drawn_tile, feedback.chosen.discard), unsafe_allow_html=True)
     message = f"你切 {face_text(feedback.chosen.discard)} · {_verdict_message(feedback.verdict, feedback.marginal, feedback.ev_delta)}"
-    {"best": st.success, "good": st.info, "inaccuracy": st.warning, "mistake": st.error}[feedback.verdict](message)
+    _show_verdict(feedback.verdict, message)
     # Only point to a different "best" tile when it actually beats the player's
     # pick; a noisy near-tie can leave ev_delta<=0 (verdict best) with the tiles
     # differing, and naming a lower-EV tile "best" there would contradict itself.
