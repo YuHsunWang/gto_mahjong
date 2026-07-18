@@ -245,7 +245,7 @@ def _evaluate_discard(position: QuizPosition, tile: int) -> EVRankEntry:
         len(position.own_melds),
         position.public_counts,
         EV_SIMS,
-        _evaluation_seed(position) + tile * 1_000_003,
+        _evaluation_seed(position),
         _score_template(position),
     )
     losses = tuple(deal_in_ev(tile, opponent.view(), position.public_counts, tuple(post), None) for opponent in position.opponents)

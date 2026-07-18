@@ -49,7 +49,12 @@ def test_trainer_positions_are_gradeable():
     assert decisions, "seed 3 should present at least one human decision"
     result = grade(decisions[0], _discard_drawn(decisions[0]))
     assert result.verdict in {"best", "good", "inaccuracy", "mistake"}
-    assert result.ev_delta >= 0.0
+    # The ranked quiz shortlist can omit a legal chosen discard; grade() then
+    # evaluates it directly and classifies it as best if its EV is higher.
+    if result.verdict == "best":
+        assert result.ev_delta <= 0.0
+    else:
+        assert result.ev_delta > 0.0
 
 
 def test_trainer_rejects_illegal_discard():

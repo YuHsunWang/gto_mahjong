@@ -137,7 +137,7 @@ def test_zero_hazard_attack_ev_is_exactly_the_pre_m7_value():
     sample = entries[0]
     post = list(POST_DRAW)
     post[sample.discard] -= 1
-    previous = estimate_win_value(tuple(post), 3, visible=(0,) * 34, sims=80, seed=19 + sample.discard * 1_000_003)
+    previous = estimate_win_value(tuple(post), 3, visible=(0,) * 34, sims=80, seed=19)
     assert sample.attack_ev == previous.expected_win_ev
     assert sample.survival_adjusted_p_win == previous.p_win
 

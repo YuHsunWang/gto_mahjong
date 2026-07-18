@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, replace
 from math import ceil, comb
 
@@ -255,13 +256,16 @@ def ev_rank(
     selected = selected[: top_k + 2]
 
     survival = survival_by_turn(turns, views)
+    # CRN (common random numbers) reduces variance in differences between
+    # candidates: identical randomness cancels shared sampling noise. Each
+    # absolute EV still has Monte Carlo error that only more sims reduces.
+    base_seed = random.randrange(2**64) if seed is None else seed
     entries: list[EVRankEntry] = []
     for analysis, _ in selected:
         post = list(hand)
         post[analysis.discard] -= 1
-        candidate_seed = None if seed is None else seed + analysis.discard * 1_000_003
         attack = _discounted_win_estimate(
-            tuple(post), turns, melds_declared, seen, sims, candidate_seed, context_template, survival,
+            tuple(post), turns, melds_declared, seen, sims, base_seed, context_template, survival,
         )
         losses = tuple(deal_in_ev(analysis.discard, view, seen, tuple(post), calibration) for view in views)
         risk = sum(losses)
