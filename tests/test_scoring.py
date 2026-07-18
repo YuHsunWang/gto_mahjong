@@ -127,3 +127,59 @@ def test_max_decomposition_is_chosen():
     hand = parse_tiles("111222333m456p55s678s")
     result = score_hand(hand, (), WinContext(winning_tile=_tile("5s"), self_draw=True))
     assert "three concealed triplets (三暗刻)" in _names(result)
+
+
+# --- Phase 2b Stage 1: kong scoring ---
+
+def test_kong_bloom_on_self_draw_adds_one_tai():
+    # 4 concealed runs + pair + one concealed kong; win by self-draw on the wall.
+    hand = parse_tiles("234567m234p234s55s")  # 14 tiles = 4 sets + pair
+    context = WinContext(winning_tile=_tile("2s"), self_draw=True, kong_bloom=True)
+    result = score_hand(hand, (), context, kongs=((_tile("1z"), True),))
+    names = _names(result)
+    assert "kong bloom (槓上開花)" in names
+    assert "concealed hand (門清)" in names  # a concealed kong keeps 門清
+    assert "self-draw (自摸)" in names
+    assert result.total_tai == 3  # 門清1 + 自摸1 + 槓上開花1 (waits 2s/5s, no 獨聽)
+
+
+def test_robbing_the_kong_on_ron_adds_one_tai_and_open_kong_breaks_menqing():
+    hand = parse_tiles("234567m234p234s55s")
+    context = WinContext(winning_tile=_tile("2s"), robbed_kong=True)
+    result = score_hand(hand, (), context, kongs=((_tile("1z"), False),))  # open kong
+    names = _names(result)
+    assert "robbing the kong (搶槓)" in names
+    assert "concealed hand (門清)" not in names  # open kong breaks 門清
+
+
+def test_concealed_kongs_count_toward_concealed_triplets():
+    # 1 concealed triplet + 2 concealed kongs = 三暗刻.
+    hand = parse_tiles("111m234567p55s")  # 11 tiles = 3 sets + pair (declared_sets=2)
+    context = WinContext(winning_tile=_tile("1m"), self_draw=True)
+    result = score_hand(hand, (), context, kongs=((_tile("1z"), True), (_tile("2z"), True)))
+    assert "three concealed triplets (三暗刻)" in _names(result)
+
+
+def test_open_kong_does_not_count_as_concealed_triplet():
+    hand = parse_tiles("111m234567p55s")
+    context = WinContext(winning_tile=_tile("1m"), self_draw=True)
+    result = score_hand(hand, (), context, kongs=((_tile("1z"), True), (_tile("2z"), False)))
+    names = _names(result)
+    assert "three concealed triplets (三暗刻)" not in names  # only 1 triplet + 1 concealed kong
+    assert "concealed hand (門清)" not in names  # the open kong breaks it
+
+
+def test_kong_counts_as_triplet_for_all_triplets():
+    hand = parse_tiles("111222333444m55m")  # 14 tiles, all triplets + pair
+    context = WinContext(winning_tile=_tile("5m"), self_draw=True)
+    result = score_hand(hand, (), context, kongs=((_tile("1z"), False),))
+    assert "all triplets (碰碰胡)" in _names(result)
+
+
+def test_kong_size_validation_and_context_rules():
+    with pytest.raises(ValueError):  # wrong concealed size for one declared kong
+        score_hand(parse_tiles("234567m234p234s5s"), (), WinContext(winning_tile=_tile("2s")), kongs=((_tile("1z"), True),))
+    with pytest.raises(ValueError):  # 槓上開花 must be a self-draw
+        WinContext(winning_tile=0, kong_bloom=True)
+    with pytest.raises(ValueError):  # 搶槓 must be a ron
+        WinContext(winning_tile=0, self_draw=True, robbed_kong=True)

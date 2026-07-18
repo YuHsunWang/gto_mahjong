@@ -52,6 +52,12 @@ BIG_WINDS_TAI = 16
 HEAVENLY_TAI = 16
 EARTHLY_TAI = 8
 MIGI_TAI = DECLARED_TAI
+# House rule (2026-07-18): open and concealed kongs score no tai on their own;
+# only winning on the replacement tile (槓上開花) and robbing a kong (搶槓) do.
+OPEN_KONG_TAI = 0
+CONCEALED_KONG_TAI = 0
+KONG_BLOOM_TAI = 1
+ROBBED_KONG_TAI = 1
 
 WIND_TILES = frozenset(range(27, 31))
 DRAGON_TILES = frozenset(range(31, 34))
@@ -70,7 +76,9 @@ class WinContext:
     earthly: bool = False
     round_wind: int | None = None
     seat_wind: int | None = None
-    extra: tuple[tuple[str, int], ...] = ()  # reserved: flowers, kongs, ...
+    kong_bloom: bool = False  # 槓上開花: self-draw on a kong's replacement tile
+    robbed_kong: bool = False  # 搶槓: ron on an opponent's added-kong tile
+    extra: tuple[tuple[str, int], ...] = ()  # reserved: flowers, ...
 
     def __post_init__(self) -> None:
         if not 0 <= self.winning_tile < 34:
@@ -81,6 +89,10 @@ class WinContext:
             raise ValueError("dealer_streak requires dealer=True")
         if self.heavenly and self.earthly:
             raise ValueError("a win cannot be both heavenly and earthly")
+        if self.kong_bloom and not self.self_draw:
+            raise ValueError("kong_bloom (槓上開花) is a self-draw win")
+        if self.robbed_kong and self.self_draw:
+            raise ValueError("robbed_kong (搶槓) is a ron win")
         for wind in (self.round_wind, self.seat_wind):
             if wind is not None and wind not in WIND_TILES:
                 raise ValueError("winds must be wind tile indexes (1z-4z)")
@@ -170,10 +182,15 @@ def _score_decomposition(
     single_wait: bool,
     suits_present: set[int],
     honors_present: bool,
+    kong_sets: list[tuple[str, int]] = (),
+    concealed_kong_count: int = 0,
+    open_kong_count: int = 0,
 ) -> ScoreResult:
     items: list[tuple[str, int]] = []
     win = context.winning_tile
-    all_sets = concealed_sets + meld_sets
+    # Kongs score like triplets for every pattern; concealed kongs also count
+    # toward concealed-triplet tai (三/四/五暗刻).
+    all_sets = concealed_sets + meld_sets + list(kong_sets)
 
     concealed_triplets = sum(1 for kind, tile in concealed_sets if kind == "tri")
     if not context.self_draw and concealed_triplets:
@@ -184,6 +201,7 @@ def _score_decomposition(
         in_triplet = any(kind == "tri" and tile == win for kind, tile in concealed_sets)
         if in_triplet and not in_run and pair != win:
             concealed_triplets -= 1  # the ron tile completed this triplet openly
+    concealed_triplets += concealed_kong_count
 
     if context.heavenly:
         items.append(("heavenly (天胡)", HEAVENLY_TAI))
@@ -195,10 +213,15 @@ def _score_decomposition(
         items.append(("dealer (莊家)", DEALER_TAI))
     if context.dealer_streak:
         items.append((f"dealer streak x{context.dealer_streak} (連莊拉莊)", STREAK_TAI_PER_WIN * context.dealer_streak))
-    if not meld_sets:
+    if not meld_sets and not open_kong_count:
+        # Concealed kongs keep the hand 門清; only open calls break it.
         items.append(("concealed hand (門清)", MENQING_TAI))
     if context.self_draw:
         items.append(("self-draw (自摸)", SELF_DRAW_TAI))
+    if context.kong_bloom:
+        items.append(("kong bloom (槓上開花)", KONG_BLOOM_TAI))
+    if context.robbed_kong:
+        items.append(("robbing the kong (搶槓)", ROBBED_KONG_TAI))
     if single_wait:
         items.append(("single wait (獨聽)", SINGLE_WAIT_TAI))
     if len(meld_sets) == 5 and not context.self_draw:
@@ -252,36 +275,54 @@ def score_hand(
     concealed: tuple[int, ...] | list[int],
     melds: list[tuple[int, int, int]] | tuple[tuple[int, int, int], ...] = (),
     context: WinContext | None = None,
+    kongs: tuple[tuple[int, bool], ...] = (),
 ) -> ScoreResult:
-    """Score a complete winning hand: concealed tiles include the winning tile."""
+    """Score a complete winning hand: concealed tiles include the winning tile.
+
+    ``kongs`` lists declared kongs as ``(tile, concealed)`` pairs; each counts
+    as one completed set (like a triplet) and its four tiles live outside
+    ``concealed``. A concealed kong (暗槓) also counts toward concealed-triplet
+    tai; an open kong does not, and it breaks 門清.
+    """
     if context is None:
         raise ValueError("a WinContext with the winning tile is required")
     checked = validate_counts(concealed)
     meld_sets = [_classify_meld(tuple(meld)) for meld in melds]
-    if len(meld_sets) > 5:
-        raise ValueError("at most five melds can be declared")
-    expected = 17 - 3 * len(meld_sets)
+    for tile, _ in kongs:
+        if not 0 <= tile < 34:
+            raise ValueError("kong tiles must be tile indexes 0-33")
+    declared_sets = len(meld_sets) + len(kongs)
+    if declared_sets > 5:
+        raise ValueError("at most five sets can be declared")
+    kong_sets = [("tri", tile) for tile, _ in kongs]
+    concealed_kong_count = sum(1 for _, concealed_flag in kongs if concealed_flag)
+    open_kong_count = len(kongs) - concealed_kong_count
+
+    expected = 17 - 3 * declared_sets
     if sum(checked) != expected:
-        raise ValueError(f"concealed hand has {sum(checked)} tiles; expected {expected} for {len(meld_sets)} meld(s)")
+        raise ValueError(f"concealed hand has {sum(checked)} tiles; expected {expected} for {declared_sets} declared set(s)")
     if checked[context.winning_tile] == 0:
         raise ValueError("the winning tile must be part of the concealed hand")
 
-    splits = _decompositions(checked, 5 - len(meld_sets))
+    splits = _decompositions(checked, 5 - declared_sets)
     if not splits:
         raise ValueError("hand is not a winning hand")
 
     pre_win = list(checked)
     pre_win[context.winning_tile] -= 1
-    single_wait = len(_winning_kinds(pre_win, len(meld_sets))) == 1
+    single_wait = len(_winning_kinds(pre_win, declared_sets)) == 1
 
     meld_tiles = [tile for kind, start in meld_sets for tile in ((start, start, start) if kind == "tri" else (start, start + 1, start + 2))]
-    every_tile = [tile for tile in range(34) if checked[tile]] + meld_tiles
+    every_tile = [tile for tile in range(34) if checked[tile]] + meld_tiles + [tile for tile, _ in kongs]
     suits_present = {tile // 9 for tile in every_tile if tile < 27}
     honors_present = any(tile >= 27 for tile in every_tile)
 
     best: ScoreResult | None = None
     for pair, concealed_sets in splits:
-        result = _score_decomposition(pair, concealed_sets, meld_sets, context, single_wait, suits_present, honors_present)
+        result = _score_decomposition(
+            pair, concealed_sets, meld_sets, context, single_wait, suits_present, honors_present,
+            kong_sets, concealed_kong_count, open_kong_count,
+        )
         if best is None or result.total_tai > best.total_tai:
             best = result
     assert best is not None
