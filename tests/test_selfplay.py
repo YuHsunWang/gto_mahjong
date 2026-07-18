@@ -13,8 +13,9 @@ from taimahjong.calibration import (
     table_document,
     write_merged_table,
 )
-from taimahjong.selfplay import Player, _choose_discard, head_to_head, play_game, play_games
+from taimahjong.selfplay import Player, _choose_discard, _settlement, head_to_head, play_game, play_games
 from taimahjong.shanten import shanten
+from taimahjong.tiles import parse_tiles
 
 
 def test_fixed_seed_is_deterministic_and_conserves_tiles():
@@ -38,22 +39,60 @@ def test_smoke_batch_has_each_terminal_path_and_valid_wins():
 
 
 def test_point_accounting_conserves_and_charges_the_actual_loser():
+    # 雙向計 makes the dealer's leg asymmetric when a non-dealer wins:
+    # conservation is the invariant, per-leg equality is not.
     games = play_games(50, 20260717)
     assert all(sum(game.point_deltas) == 0 for game in games)
     for game in games:
+        premium = game.dealer_premium
         if game.outcome == "ron":
             assert game.discarder == game.events[-1]["seat"]
-            assert game.point_deltas[game.winner] == game.value_units
-            assert game.point_deltas[game.discarder] == -game.value_units
+            assert premium == (0 if game.winner == 0 or game.discarder != 0 else 1)
+            assert game.point_deltas[game.winner] == game.value_units + premium
+            assert game.point_deltas[game.discarder] == -(game.value_units + premium)
         elif game.outcome == "tsumo":
-            assert game.point_deltas[game.winner] == 3 * game.value_units
-            assert all(
-                delta == -game.value_units
-                for seat, delta in enumerate(game.point_deltas)
-                if seat != game.winner
-            )
+            assert premium == (0 if game.winner == 0 else 1)
+            assert game.point_deltas[game.winner] == 3 * game.value_units + premium
+            for seat, delta in enumerate(game.point_deltas):
+                if seat == game.winner:
+                    continue
+                expected = game.value_units + (premium if seat == 0 else 0)
+                assert delta == -expected
         else:
             assert game.point_deltas == (0, 0, 0, 0)
+
+
+def _ron_settlement(winner, discarder, dealer_streak=0):
+    """Settle a fixed pinghu ron so only the seats/streak vary across calls."""
+    players = [Player("attack") for _ in range(4)]
+    winning = parse_tiles("123456789m123p11678s")
+    tile = next(index for index, count in enumerate(parse_tiles("6s")) if count)
+    return _settlement("ron", winner, discarder, players, winning, tile, dealer_streak)
+
+
+def test_non_dealer_ron_off_dealer_adds_bilateral_premium_even_at_streak_zero():
+    # Intentional behavior change (雙向計): the dealer's payment leg carries
+    # DEALER_TAI even at streak 0, so the same hand ron'd off the dealer pays
+    # exactly one unit more than ron'd off a non-dealer.
+    off_dealer, value = _ron_settlement(winner=1, discarder=0)
+    off_peer, same_value = _ron_settlement(winner=1, discarder=2)
+    assert value == same_value
+    assert off_dealer[1] == off_peer[1] + 1
+    assert off_dealer[0] == -(value + 1)
+    assert sum(off_dealer) == sum(off_peer) == 0
+
+
+def test_streak_raises_dealer_leg_by_two_per_repeat():
+    # 連N拉N: each dealer repeat adds STREAK_TAI_PER_WIN=2 to the bilateral
+    # premium, so dealing in as the streaking dealer gets linearly costlier —
+    # the exact gradient the defense model and trainer must teach.
+    legs = [_ron_settlement(winner=1, discarder=0, dealer_streak=streak)[0] for streak in range(3)]
+    assert [deltas[1] - legs[0][1] for deltas in legs] == [0, 2, 4]
+    # A dealer winner's streak is baked into the hand value instead, never the leg.
+    dealer_win, dealer_value = _ron_settlement(winner=0, discarder=2, dealer_streak=2)
+    base_win, base_value = _ron_settlement(winner=0, discarder=2, dealer_streak=0)
+    assert dealer_value == base_value + 4
+    assert dealer_win[0] == dealer_value
 
 
 def test_ev_aware_is_deterministic_and_chooses_the_safe_known_case():

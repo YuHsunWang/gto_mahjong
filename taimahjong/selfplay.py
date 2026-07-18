@@ -16,7 +16,7 @@ from typing import Callable
 from .calibration import Calibration
 from .danger import OpponentView, RiverEntry, danger_score, fold_score, tenpai_score
 from .ev import BASELINE_TENPAI_RATE, DECLARED_FACTOR, opponent_value_estimate
-from .scoring import BASE_UNITS, WinContext, score_hand
+from .scoring import BASE_UNITS, DEALER_TAI, STREAK_TAI_PER_WIN, WinContext, score_hand
 from .shanten import shanten
 from .ukeire import DiscardAnalysis
 
@@ -93,11 +93,14 @@ class GameResult:
     winning_melds: int = 0
     point_deltas: tuple[int, int, int, int] = (0, 0, 0, 0)
     value_units: int = 0
+    dealer_streak: int = 0
+    dealer_premium: int = 0  # units added to the dealer's leg for a non-dealer winner
 
     def summary(self) -> tuple:
         return (
             self.outcome, self.winner, self.discarder, self.turns,
             tuple(tuple(sorted(event.items())) for event in self.events), self.point_deltas, self.value_units,
+            self.dealer_streak, self.dealer_premium,
         )
 
 
@@ -278,6 +281,21 @@ def _choose_discard(player_index: int, drawn_tile: int | None, players: list[Pla
     return min(ranked)[2], True
 
 
+def _dealer_leg_premium(outcome: str, winner: int | None, discarder: int | None, dealer_streak: int) -> int:
+    """Extra units on the dealer's payment leg when a non-dealer wins.
+
+    Premium in tai == premium in value units: value_units = BASE_UNITS +
+    total tai, and the premium is extra tai on an already-scored win.  A
+    dealer winner gets 0 here because their premium is baked into the hand
+    value by ``score_hand`` (every leg pays it).
+    """
+    if winner is None or winner == DEALER_SEAT:
+        return 0
+    if outcome == "ron" and discarder != DEALER_SEAT:
+        return 0
+    return DEALER_TAI + STREAK_TAI_PER_WIN * dealer_streak
+
+
 def _settlement(
     outcome: str,
     winner: int | None,
@@ -285,36 +303,46 @@ def _settlement(
     players: list[Player],
     winning_hand: tuple[int, ...] | None,
     winning_tile: int | None,
+    dealer_streak: int = 0,
 ) -> tuple[tuple[int, int, int, int], int]:
     """Score a terminal game using M5a, with deliberate bot-table omissions.
 
-    No winds, dealer streak, heavenly/earthly values, or dealer payment
-    doubling are modeled.  Ron is paid solely by the actual discarder; tsumo
-    uses Taiwanese three-opponent equal payments.
+    No winds, heavenly/earthly values, or dealer payment doubling are
+    modeled.  Ron is paid solely by the actual discarder; tsumo uses
+    Taiwanese three-opponent equal payments.
+
+    The dealer premium (莊 + 連莊拉莊) is bilateral: a dealer winner bakes it
+    into the hand value via ``score_hand`` (every payment leg involves the
+    dealer, so a uniform per-leg value is exact), while a non-dealer winner's
+    hand is scored without it and the premium is added only to the dealer's
+    payment leg — ron off the dealer, or the dealer's share of a tsumo.
     """
     if outcome == "draw":
         return (0, 0, 0, 0), 0
     assert winner is not None and winning_hand is not None and winning_tile is not None
+    dealer_won = winner == DEALER_SEAT
     value = score_hand(
         winning_hand,
         players[winner].melds,
         WinContext(
             winning_tile=winning_tile,
             self_draw=outcome == "tsumo",
-            dealer=winner == DEALER_SEAT,
+            dealer=dealer_won,
+            dealer_streak=dealer_streak if dealer_won else 0,
             migi_declared=players[winner].declared,
         ),
     ).value_units
+    premium = _dealer_leg_premium(outcome, winner, discarder, dealer_streak)
     deltas = [0, 0, 0, 0]
     if outcome == "ron":
         assert discarder is not None
-        deltas[winner] += value
-        deltas[discarder] -= value
+        deltas[winner] += value + premium
+        deltas[discarder] -= value + premium
     else:
-        deltas[winner] += 3 * value
+        deltas[winner] += 3 * value + premium
         for seat in range(4):
             if seat != winner:
-                deltas[seat] -= value
+                deltas[seat] -= value + (premium if seat == DEALER_SEAT else 0)
     assert sum(deltas) == 0
     return tuple(deltas), value
 
@@ -366,6 +394,7 @@ def play_game(
     seed: int | None = None,
     policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious"),
     snapshot_hook: Callable[[DecisionSnapshot], None] | None = None,
+    dealer_streak: int = 0,
 ) -> GameResult:
     """Play one deterministic-seeded game and retain every discard event in memory."""
     if len(policies) != 4 or any(policy not in POLICIES for policy in policies):
@@ -393,17 +422,18 @@ def play_game(
         drawn_tile: int | None = None
         if needs_draw:
             if not wall:
-                points, value = _settlement("draw", None, None, players, None, None)
-                return GameResult(events, "draw", None, None, actions, point_deltas=points, value_units=value)
+                points, value = _settlement("draw", None, None, players, None, None, dealer_streak)
+                return GameResult(events, "draw", None, None, actions, point_deltas=points, value_units=value, dealer_streak=dealer_streak)
             drawn_tile = wall.pop()
             player.hand[drawn_tile] += 1
             _assert_conservation(players, wall, dead)
             if _cached_shanten(tuple(player.hand), len(player.melds)) == -1:
                 assert _cached_shanten(tuple(player.hand), len(player.melds)) == -1
                 winning_hand = tuple(player.hand)
-                points, value = _settlement("tsumo", current, None, players, winning_hand, drawn_tile)
+                points, value = _settlement("tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak)
                 return GameResult(
                     events, "tsumo", current, None, actions, winning_hand, len(player.melds), points, value,
+                    dealer_streak, _dealer_leg_premium("tsumo", current, None, dealer_streak),
                 )
             if snapshot_hook is not None and not player.declared:
                 snapshot_hook(_decision_snapshot(current, drawn_tile, players, len(wall)))
@@ -472,9 +502,10 @@ def play_game(
             winning_hand[tile] += 1
             assert _cached_shanten(tuple(winning_hand), len(players[winner].melds)) == -1
             winning = tuple(winning_hand)
-            points, value = _settlement("ron", winner, current, players, winning, tile)
+            points, value = _settlement("ron", winner, current, players, winning, tile, dealer_streak)
             return GameResult(
                 events, "ron", winner, current, actions, winning, len(players[winner].melds), points, value,
+                dealer_streak, _dealer_leg_premium("ron", winner, current, dealer_streak),
             )
 
         # Pon takes priority; ties use closest player downstream. Chi is next-seat only.
@@ -512,14 +543,14 @@ def play_game(
             needs_draw = True
 
 
-def play_games(games: int, seed: int | None = None, policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious")) -> list[GameResult]:
+def play_games(games: int, seed: int | None = None, policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious"), dealer_streak: int = 0) -> list[GameResult]:
     if not isinstance(games, int) or isinstance(games, bool) or games < 0:
         raise ValueError("games must be a non-negative integer")
     rng = Random(seed)
-    return [play_game(rng.randrange(2**63), policies) for _ in range(games)]
+    return [play_game(rng.randrange(2**63), policies, dealer_streak=dealer_streak) for _ in range(games)]
 
 
-def head_to_head(games: int, seed: int) -> HeadToHeadResult:
+def head_to_head(games: int, seed: int, dealer_streak: int = 0) -> HeadToHeadResult:
     """Run alternating-seat ev_aware/attack games and summarize point EV.
 
     Consecutive fixed seeds make a full comparison reproducible.  Even games
@@ -536,7 +567,7 @@ def head_to_head(games: int, seed: int) -> HeadToHeadResult:
     differences: list[float] = []
     for index in range(games):
         policies = paired_policies[index % 2]
-        game = play_game(seed + index, policies)
+        game = play_game(seed + index, policies, dealer_streak=dealer_streak)
         ev_points = sum(game.point_deltas[seat] for seat, policy in enumerate(policies) if policy == "ev_aware") / 2
         attack_points = sum(game.point_deltas[seat] for seat, policy in enumerate(policies) if policy == "attack") / 2
         deltas.append((ev_points, attack_points))

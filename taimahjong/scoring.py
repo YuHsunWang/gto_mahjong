@@ -213,6 +213,9 @@ def _score_decomposition(
         items.append(("earthly (地胡)", EARTHLY_TAI))
     if context.migi_declared:
         items.append(("migi declaration (宣告聽牌)", MIGI_TAI))
+    # These dealer items apply to a DEALER WINNER only. When a non-dealer wins,
+    # the bilateral premium on the dealer's payment leg is added by the caller's
+    # settlement (selfplay._dealer_leg_premium) — never both.
     if context.dealer:
         items.append(("dealer (莊家)", DEALER_TAI))
     if context.dealer_streak:
