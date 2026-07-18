@@ -285,6 +285,8 @@ def render_position(position: QuizPosition, offered_tile: int | None = None) -> 
         for opp in opps
     )
     st.markdown(f'<div class="mj-seatbar">{seatbar}</div>', unsafe_allow_html=True)
+    role = "你是莊家（莊 +1 台）" if position.is_dealer else f"你在座位 {position.seat}"
+    st.caption(f"牌牆剩 {position.wall_remaining} 張（約可再摸 {position.draws_remaining} 巡）　·　{role}")
 
     if offered_tile is not None:
         center_inner = f'<div class="mj-zsub">可鳴</div>{tile_div(offered_tile, "mj-sm", "mj-draw")}'

@@ -132,6 +132,7 @@ class DecisionSnapshot:
     public_counts: tuple[int, ...]
     turn: int
     drawn_tile: int
+    wall_remaining: int = 0  # live-wall tiles left to draw (observable in play)
 
 
 def _public_counts(players: list[Player]) -> tuple[int, ...]:
@@ -149,7 +150,7 @@ def _view(player: Player) -> OpponentView:
     return OpponentView(list(player.river), list(player.melds), player.declared_at)
 
 
-def _decision_snapshot(player_index: int, drawn_tile: int, players: list[Player]) -> DecisionSnapshot:
+def _decision_snapshot(player_index: int, drawn_tile: int, players: list[Player], wall_remaining: int = 0) -> DecisionSnapshot:
     """Copy the public table view available to ``player_index`` after drawing."""
     player = players[player_index]
     return DecisionSnapshot(
@@ -161,6 +162,7 @@ def _decision_snapshot(player_index: int, drawn_tile: int, players: list[Player]
         public_counts=_public_counts(players),
         turn=player.discards + 1,
         drawn_tile=drawn_tile,
+        wall_remaining=wall_remaining,
     )
 
 
@@ -404,7 +406,7 @@ def play_game(
                     events, "tsumo", current, None, actions, winning_hand, len(player.melds), points, value,
                 )
             if snapshot_hook is not None and not player.declared:
-                snapshot_hook(_decision_snapshot(current, drawn_tile, players))
+                snapshot_hook(_decision_snapshot(current, drawn_tile, players, len(wall)))
 
         tile, fold_active = _choose_discard(current, drawn_tile, players)
         assert player.hand[tile] > 0

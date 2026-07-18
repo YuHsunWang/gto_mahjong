@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from functools import lru_cache
+from math import ceil
 
 from .danger import OpponentView, RiverEntry, danger_score, fold_score, format_river, tenpai_score
 from .ev import EVRankEntry, WinValueContext, deal_in_ev, estimate_win_value, ev_rank
 from .scoring import WinContext
-from .selfplay import DecisionSnapshot, play_game
+from .selfplay import DEALER_SEAT, DecisionSnapshot, play_game
 from .shanten import shanten
 from .tiles import format_tiles, validate_counts
 
@@ -66,7 +67,13 @@ class QuizPosition:
     visible_counts: tuple[int, ...]
     shanten: int
     draws_remaining: int
+    wall_remaining: int
     candidate_ev_gap: float
+
+    @property
+    def is_dealer(self) -> bool:
+        """Seat 0 is the dealer in the self-play/trainer model."""
+        return self.seat == DEALER_SEAT
 
     @property
     def own_hand(self) -> tuple[int, ...]:
@@ -178,7 +185,10 @@ def _position_from(snapshot: DecisionSnapshot, seed: int) -> QuizPosition:
         public_counts=public,
         visible_counts=visible,
         shanten=shanten(hand, len(snapshot.melds)),
-        draws_remaining=max(1, 18 - snapshot.turn),
+        # Remaining draws from the actual live wall (one draw per four tiles),
+        # not a turn-count proxy: this reflects who is close to running out.
+        draws_remaining=max(1, ceil(snapshot.wall_remaining / 4)),
+        wall_remaining=snapshot.wall_remaining,
         candidate_ev_gap=0.0,
     )
 
@@ -188,7 +198,9 @@ def _evaluation_seed(position: QuizPosition) -> int:
 
 
 def _score_template(position: QuizPosition) -> WinValueContext:
-    return WinValueContext(WinContext(winning_tile=0), position.own_melds)
+    # The dealer earns an extra tai on a win, so the human's own win value
+    # depends on whether this seat is the dealer.
+    return WinValueContext(WinContext(winning_tile=0, dealer=position.is_dealer), position.own_melds)
 
 
 @lru_cache(maxsize=256)

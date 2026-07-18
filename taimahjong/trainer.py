@@ -264,7 +264,7 @@ def play_trainer(
                 return
 
         if current == human_seat and not player.declared:
-            position = _position_from(_decision_snapshot(current, drawn_tile, players), seed)
+            position = _position_from(_decision_snapshot(current, drawn_tile, players, len(wall)), seed)
             chosen = yield TrainerDecision(position)
             if not (isinstance(chosen, int) and not isinstance(chosen, bool) and 0 <= chosen < 34):
                 raise ValueError("sent discard must be a tile index 0-33")
@@ -315,7 +315,7 @@ def play_trainer(
                 is_next = (current + 1) % 4 == human_seat
                 options = _human_call_options(players[human_seat], tile, is_next)
                 if options:
-                    position = _position_from(_decision_snapshot(human_seat, tile, players), seed)
+                    position = _position_from(_decision_snapshot(human_seat, tile, players, len(wall)), seed)
                     choice = yield TrainerCallDecision(position, tile, current, options)
                     if choice is None or choice == -1:
                         top = priority(eligible - {human_seat})
