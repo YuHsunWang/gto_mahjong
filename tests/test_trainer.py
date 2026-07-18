@@ -1,38 +1,46 @@
-"""Interactive trainer generator: determinism, termination, and Phase-1 rules."""
+"""Interactive trainer generator: termination, determinism, and call decisions."""
 
 import pytest
 
 from taimahjong.quiz import grade
-from taimahjong.trainer import TrainerDecision, TrainerOutcome, play_trainer
-
-
-def _play(seed, pick):
-    """Drive one trainer game; ``pick(position) -> tile`` chooses each discard."""
-    gen = play_trainer(seed, human_seat=0)
-    item = next(gen)
-    decisions = []
-    while isinstance(item, TrainerDecision):
-        decisions.append(item.position)
-        item = gen.send(pick(item.position))
-    assert isinstance(item, TrainerOutcome)
-    return decisions, item
+from taimahjong.trainer import (
+    TrainerCallDecision,
+    TrainerDecision,
+    TrainerOutcome,
+    evaluate_call,
+    play_trainer,
+)
 
 
 def _discard_drawn(position):
-    if position.hand[position.drawn_tile]:
+    if position.drawn_tile is not None and position.hand[position.drawn_tile]:
         return position.drawn_tile
     return next(tile for tile, count in enumerate(position.hand) if count)
 
 
+def _play(seed, pick, call_pick=lambda decision: None):
+    """Drive one game; ``pick`` chooses each discard, ``call_pick`` each call
+    (default: pass every call, so the human stays concealed)."""
+    gen = play_trainer(seed, human_seat=0)
+    item = next(gen)
+    decisions = []
+    while not isinstance(item, TrainerOutcome):
+        if isinstance(item, TrainerDecision):
+            decisions.append(item.position)
+            item = gen.send(pick(item.position))
+        else:
+            item = gen.send(call_pick(item))
+    return decisions, item
+
+
 def test_trainer_games_terminate_with_valid_outcomes():
     for seed in range(1, 16):
-        decisions, outcome = _play(seed, _discard_drawn)
+        decisions, outcome = _play(seed, _discard_drawn)  # passes all calls
         assert outcome.outcome in {"tsumo", "ron", "draw"}
         assert outcome.turns > 0
-        # Human plays concealed in Phase 1: never any declared meld for seat 0.
+        # Passing every call keeps the human concealed: no declared meld.
         for position in decisions:
             assert position.own_melds == ()
-        # A dealt-in outcome must be a ron the human discarded into.
         if outcome.human_dealt_in:
             assert outcome.outcome == "ron"
 
@@ -49,8 +57,6 @@ def test_trainer_positions_are_gradeable():
     assert decisions, "seed 3 should present at least one human decision"
     result = grade(decisions[0], _discard_drawn(decisions[0]))
     assert result.verdict in {"best", "good", "inaccuracy", "mistake"}
-    # The ranked quiz shortlist can omit a legal chosen discard; grade() then
-    # evaluates it directly and classifies it as best if its EV is higher.
     if result.verdict == "best":
         assert result.ev_delta <= 0.0
     else:
@@ -59,7 +65,7 @@ def test_trainer_positions_are_gradeable():
 
 def test_trainer_rejects_illegal_discard():
     gen = play_trainer(5, human_seat=0)
-    position = next(gen).position
+    position = next(gen).position  # dealer's first action is always a discard
     missing = next(tile for tile, count in enumerate(position.hand) if count == 0)
     with pytest.raises(ValueError):
         gen.send(missing)
@@ -70,3 +76,70 @@ def test_trainer_validates_arguments():
         next(play_trainer(1, human_seat=4))
     with pytest.raises(ValueError):
         next(play_trainer(True))
+
+
+# --- Phase 2a: pon/chi call decisions ---
+
+def _first_call(seed_range=range(1, 20)):
+    """Return the first TrainerCallDecision offered, passing everything before."""
+    for seed in seed_range:
+        gen = play_trainer(seed, human_seat=0)
+        item = next(gen)
+        while not isinstance(item, TrainerOutcome):
+            if isinstance(item, TrainerCallDecision):
+                return item
+            item = gen.send(_discard_drawn(item.position) if isinstance(item, TrainerDecision) else None)
+    return None
+
+
+def test_trainer_offers_and_evaluates_call_decisions():
+    decision = _first_call()
+    assert decision is not None, "expected a call decision in seeds 1-19"
+    assert decision.options, "a call decision must offer at least one legal call"
+    assert all(option.kind in {"pon", "chi"} for option in decision.options)
+    # Every consumed tile is actually held; the meld includes the offered tile.
+    for option in decision.options:
+        for consumed in option.consumed:
+            assert decision.position.hand[consumed] > 0
+        assert decision.offered_tile in option.meld
+    evaluation = evaluate_call(decision)
+    assert len(evaluation.option_evs) == len(decision.options)
+    assert evaluation.best_index is None or 0 <= evaluation.best_index < len(decision.options)
+    verdict, delta = evaluation.verdict_for(None)
+    assert verdict in {"best", "good", "inaccuracy", "mistake"}
+    assert delta >= 0.0
+
+
+def test_taking_a_call_opens_hand_and_game_terminates():
+    for seed in range(1, 20):
+        gen = play_trainer(seed, human_seat=0)
+        item = next(gen)
+        took = saw_open = False
+        while not isinstance(item, TrainerOutcome):
+            if isinstance(item, TrainerCallDecision) and not took:
+                took = True
+                item = gen.send(0)  # take the first offered call
+            elif isinstance(item, TrainerDecision):
+                if took and item.position.own_melds:
+                    saw_open = True
+                item = gen.send(_discard_drawn(item.position))
+            else:
+                item = gen.send(None)
+        if took:
+            assert saw_open, "after calling, a later discard view should show the meld"
+            assert item.outcome in {"tsumo", "ron", "draw"}
+            return
+    pytest.fail("no call was offered to take in seeds 1-19")
+
+
+def test_trainer_rejects_invalid_call_choice():
+    for seed in range(1, 20):
+        gen = play_trainer(seed, human_seat=0)
+        item = next(gen)
+        while not isinstance(item, TrainerOutcome):
+            if isinstance(item, TrainerCallDecision):
+                with pytest.raises(ValueError):
+                    gen.send(999)  # out-of-range option index
+                return
+            item = gen.send(_discard_drawn(item.position) if isinstance(item, TrainerDecision) else None)
+    pytest.fail("no call decision in seeds 1-19")
