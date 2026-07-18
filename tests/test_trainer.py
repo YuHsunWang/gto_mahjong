@@ -105,9 +105,25 @@ def test_trainer_offers_and_evaluates_call_decisions():
     evaluation = evaluate_call(decision)
     assert len(evaluation.option_evs) == len(decision.options)
     assert evaluation.best_index is None or 0 <= evaluation.best_index < len(decision.options)
-    verdict, delta = evaluation.verdict_for(None)
-    assert verdict in {"best", "good", "inaccuracy", "mistake"}
-    assert delta >= 0.0
+    result = evaluation.verdict_for(None)
+    assert result.verdict in {"best", "good", "inaccuracy", "mistake"}
+    # Verdict rests on best/chosen re-estimated (escalated near a boundary); like
+    # the discard grader, ev_delta <= 0 exactly when chosen is the best action.
+    assert (result.ev_delta <= 0.0) == (result.verdict == "best")
+
+
+def test_evaluate_call_is_deterministic_and_refines_best_and_chosen():
+    decision = _first_call()
+    assert decision is not None, "expected a call decision in seeds 1-19"
+    a = evaluate_call(decision)
+    b = evaluate_call(decision)
+    # Fixed CRN base seed -> identical refined best and verdict for passing.
+    assert a.best_ev == b.best_ev
+    assert a.best_index == b.best_index
+    assert a.verdict_for(None) == b.verdict_for(None)
+    # Choosing the best action yields exactly zero delta (same refined estimate).
+    best = a.verdict_for(a.best_index)
+    assert best.verdict == "best" and best.ev_delta == 0.0 and best.marginal is False
 
 
 def test_taking_a_call_opens_hand_and_game_terminates():

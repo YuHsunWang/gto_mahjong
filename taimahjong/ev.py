@@ -283,6 +283,45 @@ def ev_rank(
     return sorted(entries, key=lambda entry: (entry.is_fold, -entry.net_ev, entry.discard))
 
 
+def evaluate_discard(
+    counts17: tuple[int, ...] | list[int],
+    discard: int,
+    opponents: tuple[OpponentView, ...] | list[OpponentView],
+    visible: tuple[int, ...] | list[int],
+    melds_declared: int = 0,
+    turns: int = 10,
+    sims: int = 400,
+    seed: int | None = None,
+    context_template: WinContext | WinValueContext | None = None,
+    calibration: Calibration | None = None,
+) -> EVRankEntry:
+    """Net-EV of one discard using the exact discounted-attack, survival, and
+    CRN-seed logic of :func:`ev_rank`'s per-candidate body.
+
+    This lets a caller re-estimate an already-selected candidate at a higher
+    ``sims`` budget while sharing the ranking's CRN ``seed`` — so the difference
+    between two re-estimated candidates stays variance-reduced, but each one's
+    absolute Monte Carlo error shrinks ~``sqrt(cheap_sims / sims)``. It does not
+    re-rank or re-simulate the whole candidate set.
+    """
+    hand = validate_counts(counts17)
+    seen = validate_counts(visible)
+    views = tuple(opponents)
+    survival = survival_by_turn(turns, views)
+    base_seed = random.randrange(2**64) if seed is None else seed
+    post = list(hand)
+    post[discard] -= 1
+    attack = _discounted_win_estimate(
+        tuple(post), turns, melds_declared, seen, sims, base_seed, context_template, survival,
+    )
+    losses = tuple(deal_in_ev(discard, view, seen, tuple(post), calibration) for view in views)
+    risk = sum(losses)
+    return EVRankEntry(
+        discard, attack.p_win, attack.mean_value_units, attack.discounted_attack_ev,
+        losses, risk, attack.net_ev - risk, attack.survival_adjusted_p_win, attack.p_draw,
+    )
+
+
 def declaration_ev(
     counts16: tuple[int, ...] | list[int],
     visible: tuple[int, ...] | list[int] | None,

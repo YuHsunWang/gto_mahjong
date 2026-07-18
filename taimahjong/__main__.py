@@ -9,7 +9,7 @@ from pathlib import Path
 from .calibration import Calibration, counts_from_games, format_report, load_table, write_merged_table
 from .danger import OpponentView, fold_score, parse_river, rank_discards
 from .ev import declaration_ev, ev_rank, remaining_draws
-from .quiz import explain, generate_position, grade
+from .quiz import best_discard, explain, generate_position, grade
 from .scoring import BASE_UNITS, WinContext, score_hand
 from .selfplay import POLICIES, play_games
 from .shanten import shanten
@@ -145,9 +145,10 @@ def main() -> None:
             next_seed = 0 if args.seed is None else args.seed
             for _ in range(args.quiz_batch):
                 position = generate_position(next_seed)
-                probe = next(tile for tile, count in enumerate(position.hand) if count)
-                best = grade(position, probe).best
-                print(f"seed {position.seed}: best {_tile_name(best.discard)}")
+                # The cheap ranking already names the best discard; no need to pay
+                # grade()'s REFINE_SIMS re-estimation just to print one tile.
+                discard = best_discard(position)
+                print(f"seed {position.seed}: best {_tile_name(discard)}")
                 next_seed = position.seed + 1
             return
         if args.quiz:
@@ -158,8 +159,9 @@ def main() -> None:
             answer = args.answer if args.answer is not None else input("Discard tile: ")
             chosen = _single_tile(answer)
             quiz_grade = grade(position, chosen)
-            print(f"Verdict: {quiz_grade.verdict}")
-            print(f"EV delta: {quiz_grade.ev_delta:.2f} tai")
+            marginal_note = " (marginal — hugs a verdict boundary)" if quiz_grade.marginal else ""
+            print(f"Verdict: {quiz_grade.verdict}{marginal_note}")
+            print(f"EV delta: {quiz_grade.ev_delta:.1f} tai")
             print(explain(quiz_grade))
             return
         if args.answer:

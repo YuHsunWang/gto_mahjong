@@ -397,8 +397,13 @@ successive seeds, up to `MAX_ATTEMPTS = 80`. A position must have shanten at
 most `SHANTEN_MAX = 2`, be at least `MIN_TURN = 5`, contain an opponent with
 two melds, a declaration, or tenpai estimate at least 0.40, and have an EV
 spread of at least `EV_GAP_MIN = 0.8` tai between the best and worst evaluated
-candidates. EV uses a fixed 24 simulations per candidate and a seed derived
-from the position seed, so the seed fully reproduces the position and grade.
+candidates. The table is first ranked with 24 simulations per candidate, then
+the rank-best and chosen discards are re-estimated with 200 simulations under
+the same CRN seed. A result close to a verdict boundary and near tenpai is
+re-estimated once more at 800 simulations. `QuizGrade.refined_sims` records
+which verdict budget decided the result; `marginal` (UI: 「邊緣」) discloses a
+final result that still hugs a boundary. A seed derived from the position seed
+fully reproduces the position, budgets, and grade.
 
 Use a supplied answer for a scriptable check, or omit it to answer one prompt
 interactively:
@@ -410,9 +415,9 @@ python3 -m taimahjong --quiz-batch 5 --seed 1
 ```
 
 Verdicts are `best` (zero EV loss), `good` (under `GOOD_DELTA = 0.3` tai),
-`inaccuracy` (under 1.0 tai), and `mistake` (1.0 tai or more). The explanation
-uses the same EV table as `--ev`, then identifies the actual win-EV or
-opponent-loss component that mattered most.
+`inaccuracy` (under 1.0 tai), and `mistake` (1.0 tai or more). CLI EV output
+uses one decimal place. The explanation uses the same EV table as `--ev`, then
+identifies the actual win-EV or opponent-loss component that mattered most.
 
 Example transcript:
 
@@ -428,13 +433,13 @@ Opponent 2: river 1.z | melds - | declared no | tenpai 0.17 | fold 0.00
 Opponent 3: river 2.4.z | melds 666p | declared no | tenpai 0.33 | fold 0.00
 Visible counts: 456789m12226668899p2444599s12224455666z
 Verdict: best
-EV delta: 0.00 tai
+EV delta: 0.0 tai
 Discard  Net EV  P(win)  E[win value]  E[loss]
-9s         0.82   0.208          5.20     0.27
-5z         0.48   0.125          5.00     0.14
-4s         0.33   0.125          5.67     0.37
-8p         0.13   0.125          5.00     0.50
-9p        -0.14   0.042          6.00     0.39
+9s          0.8   0.208           5.2      0.3
+5z          0.5   0.125           5.0      0.1
+4s          0.3   0.125           5.7      0.4
+8p          0.1   0.125           5.0      0.5
+9p         -0.1   0.042           6.0      0.4
 Best 9s: higher win EV by 0.46 tai than the next-ranked choice.
 Chosen 9s: matches the best's higher win-EV component.
 ```

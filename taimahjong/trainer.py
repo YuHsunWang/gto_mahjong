@@ -17,11 +17,12 @@ Phase 1 scope (deliberate, documented):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from random import Random
 
-from .ev import WinValueContext, estimate_win_value, ev_rank
-from .quiz import EV_SIMS, EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
+from . import quiz  # budget/adaptive constants read live (quiz.*) so tests can monkeypatch them
+from .ev import WinValueContext, estimate_win_value, evaluate_discard, ev_rank
+from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
 from .scoring import WinContext
 from .selfplay import (
     Player,
@@ -67,27 +68,75 @@ class TrainerCallDecision:
 
 
 @dataclass(frozen=True)
-class CallEvaluation:
-    """EV of each call option plus passing, GTO-Wizard style."""
+class CallVerdict(quiz.Verdict):
+    """A call choice's :class:`~taimahjong.quiz.Verdict` plus the best action's EV
+    at the verdict's final budget (for display consistency)."""
 
-    pass_ev: float
-    option_evs: tuple[float, ...]  # aligned with the decision's options
-    best_index: int | None  # index into options, or None if passing is best
     best_ev: float
 
-    def verdict_for(self, choice: int | None) -> tuple[str, float]:
-        """Return (verdict, ev_delta) for a chosen option index or pass."""
-        chosen_ev = self.pass_ev if choice is None else self.option_evs[choice]
-        delta = self.best_ev - chosen_ev
-        if delta <= 0.0:
-            verdict = "best"
-        elif delta < 0.3:
-            verdict = "good"
-        elif delta < 1.0:
-            verdict = "inaccuracy"
-        else:
-            verdict = "mistake"
-        return verdict, delta
+
+@dataclass(frozen=True)
+class CallEvaluation:
+    """EV of each call option plus passing, GTO-Wizard style.
+
+    ``pass_ev`` and ``option_evs`` are the cheap EV_SIMS estimates that rank the
+    actions and populate the table. ``best_ev`` is the *best* action re-estimated
+    at REFINE_SIMS; :meth:`verdict_for` re-estimates the chosen action at the
+    same budget and CRN base seed, escalating both to ESCALATE_SIMS when the
+    ev_delta lands on a verdict boundary — the same adaptive scheme as the
+    discard grader. ``decision``/``base_seed`` are carried so the chosen action
+    can be refined on demand."""
+
+    pass_ev: float
+    option_evs: tuple[float, ...]  # cheap EV_SIMS estimates, aligned with options
+    best_index: int | None  # index into options, or None if passing ranks best
+    best_ev: float  # best action re-estimated at ``best_ev_sims``
+    best_ev_sims: int  # budget that produced ``best_ev``
+    decision: "TrainerCallDecision" = field(compare=False, repr=False)
+    base_seed: int = 0
+    # Each option's cheap-best post-call discard; refine re-estimates just that
+    # single discard (not the whole post-call ranking), so a call refine costs
+    # the same one-discard budget as a discard refine.
+    option_best_discards: tuple[int | None, ...] = ()
+
+    def _action_ev(self, choice: int | None, sims: int) -> float:
+        """Re-estimate one action (pass or an option) at ``sims`` under the seed."""
+        if choice is None:
+            return _refine_pass(self.decision, self.base_seed, sims)
+        return _refine_option(
+            self.decision, self.decision.options[choice],
+            self.option_best_discards[choice], self.base_seed, sims,
+        )
+
+    def _action_shanten(self, choice: int | None) -> int:
+        """Shanten of the hand refined for this action — post-call for an option
+        (a call strictly advances the hand), the concealed hand for a pass. The
+        cost gate keys on this, not the pre-call hand."""
+        if choice is None:
+            return self.decision.position.shanten
+        post, melds = _post_call(self.decision.position, self.decision.options[choice])
+        return _cached_shanten(post, len(melds))
+
+    def verdict_for(self, choice: int | None) -> CallVerdict:
+        """Grade a call choice via the shared adaptive resolver: the best and
+        chosen actions re-estimated at REFINE_SIMS, escalated to ESCALATE_SIMS
+        only when the ev_delta hugs a boundary and both actions are near tenpai."""
+        if choice == self.best_index:
+            # Same action, same CRN seed: an exact tie, never escalated.
+            tie = quiz.Verdict.exact_tie(self.best_ev_sims)
+            return CallVerdict(tie.verdict, tie.ev_delta, tie.refined_sims, tie.marginal, self.best_ev)
+
+        def estimate(sims: int) -> tuple[float, float]:
+            # Reuse only the budget that actually produced self.best_ev.
+            best_ev = self.best_ev if sims == self.best_ev_sims else self._action_ev(self.best_index, sims)
+            return best_ev - self._action_ev(choice, sims), best_ev
+
+        # Gate on whichever refined hand is farther from tenpai (a call advances
+        # the hand, so the pre-call shanten would under-count), keeping both
+        # actions' escalation cheap.
+        gate_shanten = max(self._action_shanten(self.best_index), self._action_shanten(choice))
+        outcome, best_ev = quiz.resolve_adaptive(estimate, gate_shanten)
+        return CallVerdict(outcome.verdict, outcome.ev_delta, outcome.refined_sims, outcome.marginal, best_ev)
 
 
 @dataclass(frozen=True)
@@ -161,8 +210,71 @@ def _apply_call(player: Player, discarder: Player, option: CallOption) -> None:
     player.melds.append(option.meld)
 
 
+def _post_call(position: QuizPosition, option: CallOption) -> tuple[tuple[int, ...], tuple[tuple[int, int, int], ...]]:
+    """The concealed hand and meld set after declaring ``option`` (hand opens)."""
+    post = list(position.hand)
+    for consumed in option.consumed:
+        post[consumed] -= 1
+    return tuple(post), position.own_melds + (option.meld,)
+
+
+def _pass_ev(decision: TrainerCallDecision, base_seed: int, sims: int) -> float:
+    """Self-draw win EV of keeping the concealed hand (the 'pass' pseudo-option)."""
+    position = decision.position
+    return estimate_win_value(
+        position.hand, position.draws_remaining, len(position.own_melds),
+        position.public_counts, sims, base_seed,
+        WinValueContext(WinContext(winning_tile=0), position.own_melds),
+    ).expected_win_ev
+
+
+def _refine_pass(decision: TrainerCallDecision, base_seed: int, sims: int) -> float:
+    """Re-estimate the pass action at ``sims`` under the shared CRN seed."""
+    return _pass_ev(decision, base_seed, sims)
+
+
+def _option_rank(decision: TrainerCallDecision, option: CallOption, base_seed: int, sims: int) -> tuple[float, int | None]:
+    """Cheap best post-call discard EV of declaring ``option``, and its tile."""
+    position = decision.position
+    post, melds = _post_call(position, option)
+    ranked = ev_rank(
+        post, [opponent.view() for opponent in position.opponents], position.public_counts,
+        len(melds), position.draws_remaining, sims, base_seed,
+        WinValueContext(WinContext(winning_tile=0), melds), top_k=EV_TOP_K,
+    )
+    playable = [entry for entry in ranked if not entry.is_fold]
+    if not playable:
+        return 0.0, None
+    best = max(playable, key=lambda entry: entry.net_ev)
+    return best.net_ev, best.discard
+
+
+def _refine_option(decision: TrainerCallDecision, option: CallOption, discard: int | None, base_seed: int, sims: int) -> float:
+    """Re-estimate declaring ``option`` at ``sims`` by re-scoring just its
+    cheap-best post-call discard — the single deciding candidate, exactly as the
+    discard grader refines one tile rather than re-ranking the whole set."""
+    if discard is None:
+        return 0.0
+    position = decision.position
+    post, melds = _post_call(position, option)
+    entry = evaluate_discard(
+        post, discard, [opponent.view() for opponent in position.opponents],
+        position.public_counts, len(melds), position.draws_remaining,
+        sims, base_seed, WinValueContext(WinContext(winning_tile=0), melds),
+    )
+    return entry.net_ev
+
+
 def evaluate_call(decision: TrainerCallDecision, seed: int | None = None) -> CallEvaluation:
     """EV of each call option and of passing, under shared random numbers.
+
+    Two-stage, mirroring the discard grader: every action is ranked cheaply at
+    EV_SIMS (CRN base seed) to pick the best and each option's best post-call
+    discard, then only the two actions a verdict depends on — the best and the
+    chosen (via :meth:`CallEvaluation.verdict_for`) — are re-estimated at
+    REFINE_SIMS under the same seed by re-scoring that one deciding discard. This
+    cuts verdict noise ~sqrt(EV_SIMS/REFINE_SIMS) without paying the high budget
+    on every option.
 
     Approximations (documented, Phase 2a): calling opens the hand (loses 門清
     and the migi option) and lets the player act now; its value is the best
@@ -170,38 +282,20 @@ def evaluate_call(decision: TrainerCallDecision, seed: int | None = None) -> Cal
     value is the self-draw win EV of continuing, with no immediate discard risk.
     Tempo and the pass branch's future deal-in risk are not fully modelled.
     """
-    position = decision.position
-    base_seed = _evaluation_seed(position) if seed is None else seed
-    opponents = [opponent.view() for opponent in position.opponents]
+    base_seed = _evaluation_seed(decision.position) if seed is None else seed
 
-    pass_ev = estimate_win_value(
-        position.hand, position.draws_remaining, len(position.own_melds),
-        position.public_counts, EV_SIMS, base_seed,
-        WinValueContext(WinContext(winning_tile=0), position.own_melds),
-    ).expected_win_ev
-
-    option_evs: list[float] = []
-    for option in decision.options:
-        post = list(position.hand)
-        for consumed in option.consumed:
-            post[consumed] -= 1
-        melds = position.own_melds + (option.meld,)
-        ranked = ev_rank(
-            tuple(post), opponents, position.public_counts, len(melds),
-            position.draws_remaining, EV_SIMS, base_seed,
-            WinValueContext(WinContext(winning_tile=0), melds), top_k=EV_TOP_K,
-        )
-        best = max((entry.net_ev for entry in ranked if not entry.is_fold), default=0.0)
-        option_evs.append(best)
+    pass_ev = _pass_ev(decision, base_seed, quiz.EV_SIMS)
+    ranked = [_option_rank(decision, option, base_seed, quiz.EV_SIMS) for option in decision.options]
+    option_evs = tuple(ev for ev, _ in ranked)
+    option_best_discards = tuple(tile for _, tile in ranked)
 
     best_option_ev = max(option_evs, default=float("-inf"))
-    if best_option_ev > pass_ev:
-        best_index = option_evs.index(best_option_ev)
-        best_ev = best_option_ev
+    best_index = option_evs.index(best_option_ev) if best_option_ev > pass_ev else None
+    if best_index is None:
+        best_ev = _refine_pass(decision, base_seed, quiz.REFINE_SIMS)
     else:
-        best_index = None
-        best_ev = pass_ev
-    return CallEvaluation(pass_ev, tuple(option_evs), best_index, best_ev)
+        best_ev = _refine_option(decision, decision.options[best_index], option_best_discards[best_index], base_seed, quiz.REFINE_SIMS)
+    return CallEvaluation(pass_ev, option_evs, best_index, best_ev, quiz.REFINE_SIMS, decision, base_seed, option_best_discards)
 
 
 def play_trainer(

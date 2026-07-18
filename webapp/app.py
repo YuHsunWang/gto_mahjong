@@ -244,12 +244,12 @@ def ev_rows(entries: tuple[EVRankEntry, ...] | list[EVRankEntry]) -> list[dict[s
     for entry in entries:
         rows.append({
             "切牌": entry.label if entry.is_fold else f"{face_text(entry.discard)} {format_tiles(tuple(1 if tile == entry.discard else 0 for tile in range(34)))}",
-            "淨 EV": round(entry.net_ev, 2),
+            "淨 EV": round(entry.net_ev, 1),
             "P(自摸和)": round(entry.p_win, 3),
             "存活後 P(和)": round(entry.survival_adjusted_p_win, 3),
             "P(流局)": round(entry.p_draw, 3),
-            "E[和牌值]": "-" if entry.mean_win_value is None else round(entry.mean_win_value, 2),
-            "E[放銃]": round(entry.risk_ev, 2),
+            "E[和牌值]": "-" if entry.mean_win_value is None else round(entry.mean_win_value, 1),
+            "E[放銃]": round(entry.risk_ev, 1),
         })
     return rows
 
@@ -371,7 +371,7 @@ def show_quiz() -> None:
     result: QuizGrade | None = st.session_state.get("quiz_grade")
     if result is None:
         return
-    message = f"判定：{result.verdict} · EV 差 {result.ev_delta:.2f} 台"
+    message = _verdict_message(result.verdict, result.marginal, result.ev_delta)
     {"best": st.success, "good": st.info, "inaccuracy": st.warning, "mistake": st.error}[result.verdict](message)
     st.dataframe(ev_rows(result.ranked), use_container_width=True, hide_index=True)
     st.markdown("**說明**")
@@ -427,6 +427,17 @@ def _call_label(option) -> str:
     return ("碰 " if option.kind == "pon" else "吃 ") + "".join(face_text(tile) for tile in option.meld)
 
 
+def _verdict_label(verdict: str, marginal: bool) -> str:
+    """A verdict that still hugs a boundary is flagged '（邊緣）': even the
+    escalated budget cannot make it certain, so the UI must not read as crisp."""
+    return f"{verdict}（邊緣）" if marginal else verdict
+
+
+def _verdict_message(verdict: str, marginal: bool, ev_delta: float) -> str:
+    """Shared verdict suffix for quiz, discard, and call feedback."""
+    return f"判定：{_verdict_label(verdict, marginal)} · EV 差 {ev_delta:.1f} 台"
+
+
 def show_trainer_call(item: TrainerCallDecision) -> None:
     """Call decision: same GTO-Wizard flow as discards — choose, see EV, advance."""
     position = item.position
@@ -457,29 +468,30 @@ def show_trainer_call(item: TrainerCallDecision) -> None:
         with st.spinner("計算 EV…"):
             evaluation = evaluate_call(item)
         choice = None if pending == "pass" else int(pending)
-        verdict, delta = evaluation.verdict_for(choice)
+        result = evaluation.verdict_for(choice)
         score = st.session_state.trainer_score
         score["decisions"] += 1
-        score["best"] += int(verdict == "best")
-        score["loss"] += delta
-        st.session_state.trainer_call_feedback = (evaluation, choice, verdict, delta)
+        score["best"] += int(result.verdict == "best")
+        score["loss"] += result.ev_loss
+        st.session_state.trainer_call_feedback = (evaluation, choice, result)
         st.rerun()
         return
 
     # State 3 — feedback: verdict, best action, per-option EV table.
     st.markdown(hand_view(position.hand), unsafe_allow_html=True)
-    evaluation, choice, verdict, delta = feedback
+    evaluation, choice, result = feedback
+    verdict, delta = result.verdict, result.ev_delta
     chosen = "過（不鳴）" if choice is None else _call_label(item.options[choice])
-    message = f"你選擇：{chosen} · 判定：{verdict} · EV 差 {delta:.2f} 台"
+    message = f"你選擇：{chosen} · {_verdict_message(verdict, result.marginal, delta)}"
     {"best": st.success, "good": st.info, "inaccuracy": st.warning, "mistake": st.error}[verdict](message)
     if evaluation.best_index is None:
-        st.caption(f"最佳：過（不鳴），EV {evaluation.pass_ev:.2f} 台")
+        st.caption(f"最佳：過（不鳴），EV {result.best_ev:.1f} 台")
     else:
         best = item.options[evaluation.best_index]
-        st.caption(f"最佳：{_call_label(best)}，EV {evaluation.option_evs[evaluation.best_index]:.2f} 台")
-    rows = [{"選項": "過（不鳴）", "EV（台）": round(evaluation.pass_ev, 3)}]
+        st.caption(f"最佳：{_call_label(best)}，EV {result.best_ev:.1f} 台")
+    rows = [{"選項": "過（不鳴）", "EV（台）": round(evaluation.pass_ev, 1)}]
     for index, option in enumerate(item.options):
-        rows.append({"選項": _call_label(option), "EV（台）": round(evaluation.option_evs[index], 3)})
+        rows.append({"選項": _call_label(option), "EV（台）": round(evaluation.option_evs[index], 1)})
     st.dataframe(rows, use_container_width=True, hide_index=True)
     st.button("繼續 ▶", type="primary", key="trainer_call_next", on_click=_trainer_call_advance)
 
@@ -557,7 +569,7 @@ def show_trainer() -> None:
         score = st.session_state.trainer_score
         score["decisions"] += 1
         score["best"] += int(result.verdict == "best")
-        score["loss"] += result.ev_delta
+        score["loss"] += result.ev_loss
         st.session_state.trainer_feedback = result
         st.rerun()
         return
@@ -565,10 +577,13 @@ def show_trainer() -> None:
     # State 3 — feedback: keep the hand visible alongside the verdict and table.
     assert feedback is not None
     st.markdown(hand_view(position.hand, position.drawn_tile, feedback.chosen.discard), unsafe_allow_html=True)
-    message = f"你切 {face_text(feedback.chosen.discard)} · 判定：{feedback.verdict} · EV 差 {feedback.ev_delta:.2f} 台"
+    message = f"你切 {face_text(feedback.chosen.discard)} · {_verdict_message(feedback.verdict, feedback.marginal, feedback.ev_delta)}"
     {"best": st.success, "good": st.info, "inaccuracy": st.warning, "mistake": st.error}[feedback.verdict](message)
-    if feedback.best.discard != feedback.chosen.discard:
-        st.caption(f"最佳切牌為 {face_text(feedback.best.discard)}（淨 EV {feedback.best.net_ev:.2f}）")
+    # Only point to a different "best" tile when it actually beats the player's
+    # pick; a noisy near-tie can leave ev_delta<=0 (verdict best) with the tiles
+    # differing, and naming a lower-EV tile "best" there would contradict itself.
+    if feedback.ev_delta > 0 and feedback.best.discard != feedback.chosen.discard:
+        st.caption(f"最佳切牌為 {face_text(feedback.best.discard)}（淨 EV {feedback.best.net_ev:.1f}）")
     st.dataframe(ev_rows(feedback.ranked), use_container_width=True, hide_index=True)
     st.button("下一手 ▶", type="primary", key="trainer_next", on_click=_trainer_advance)
 
@@ -680,7 +695,11 @@ def main() -> None:
     with score_tab:
         show_score()
     st.divider()
-    st.caption("機率以機器人自我對局校準，不代表真人牌局；進攻 EV 僅計自摸。")
+    st.caption(
+        "機率以機器人自我對局校準，不代表真人牌局；進攻 EV 僅計自摸。"
+        "EV 為蒙地卡羅估計：判定會精算最佳與所選兩手，壓在門檻上的判定會自動加碼精算；"
+        "標「（邊緣）」表示該判定仍貼著門檻、受殘餘取樣誤差影響（加模擬次數可降雜訊，但不動模型偏差）。"
+    )
 
 
 main()

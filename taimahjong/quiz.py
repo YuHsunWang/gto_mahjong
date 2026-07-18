@@ -9,11 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from math import ceil
+from typing import Callable, TypeVar
 
 from .danger import OpponentView, RiverEntry, danger_score, fold_score, format_river, tenpai_score
-from .ev import EVRankEntry, WinValueContext, deal_in_ev, estimate_win_value, ev_rank
+from .ev import EVRankEntry, WinValueContext, evaluate_discard, ev_rank
 from .scoring import WinContext
-from .selfplay import DEALER_SEAT, DecisionSnapshot, play_game
+from .selfplay import DEALER_SEAT, DecisionSnapshot, _cached_shanten, play_game
 from .shanten import shanten
 from .tiles import format_tiles, validate_counts
 
@@ -28,8 +29,105 @@ MAX_ATTEMPTS = 80
 
 # Fixed quiz evaluation budget.  The position seed is transformed below and
 # passed to every EV call, so Monte Carlo sampling remains reproducible.
+#
+# Two-stage evaluation: EV_SIMS is the cheap budget used to rank every
+# candidate and pick the list and its order (CRN stabilises that ranking).
+# REFINE_SIMS is spent only on the two candidates that decide a grade — the
+# rank-best and the one the player chose — re-estimated under the same CRN
+# base seed. That cuts the verdict/ev_delta sampling noise to ~sqrt(EV_SIMS/
+# REFINE_SIMS) without paying the high budget on all 5-7 candidates. The
+# absolute EVs still carry Monte Carlo error that only more sims can reduce.
 EV_SIMS = 24
+REFINE_SIMS = 200
 EV_TOP_K = 5
+
+# Third, adaptive stage. REFINE_SIMS leaves cross-seed ev_delta noise around
+# 0.05-0.15 tai, which is only well below the *wide* verdict boundary (1.0) but
+# not the tight one (GOOD_DELTA) — a verdict whose ev_delta sits right on a
+# boundary can still flip between CRN seeds. So when the REFINE_SIMS ev_delta
+# lands within ESCALATE_MARGIN of a boundary, re-estimate the same two
+# candidates at ESCALATE_SIMS (same CRN base seed) — spending the high budget
+# only on the verdicts it can actually change. MARGINAL_BAND flags a final
+# ev_delta still hugging a boundary: even ESCALATE_SIMS cannot make such a
+# verdict certain, so the UI labels it "邊緣" rather than pretending it is crisp.
+# These are read as module globals at call time so tests can monkeypatch them.
+ESCALATE_SIMS = 800
+ESCALATE_MARGIN = 0.15
+MARGINAL_BAND = 0.10
+# Escalation cost is dominated by Monte Carlo rollout depth: a far-from-tenpai
+# hand takes many draws to resolve each trial, so one ESCALATE_SIMS estimate on
+# a 3-shanten hand costs ~70s (vs a couple of seconds near tenpai) — and there
+# the win-EV distinction between candidates is buried in noise anyway. So only
+# near-tenpai verdicts are escalated: it is where a fine EV difference is both a
+# real teaching point and cheap to resolve. Far-from-tenpai near-ties keep the
+# REFINE_SIMS verdict (and are still flagged marginal when they hug a boundary).
+ESCALATE_MAX_SHANTEN = 1
+
+
+def verdict_for_delta(ev_delta: float) -> str:
+    """Map an EV loss (best minus chosen, in tai) to a teaching verdict."""
+    if ev_delta <= 0.0:
+        return "best"
+    if ev_delta < GOOD_DELTA:
+        return "good"
+    if ev_delta < 1.0:
+        return "inaccuracy"
+    return "mistake"
+
+
+def threshold_gap(ev_delta: float) -> float:
+    """Distance from ``ev_delta`` to the nearest verdict boundary."""
+    return min(abs(ev_delta - threshold) for threshold in (0.0, GOOD_DELTA, 1.0))
+
+
+def should_escalate(ev_delta: float, shanten: int) -> bool:
+    """Whether a boundary-hugging verdict is worth (and cheap enough for) the
+    higher ESCALATE_SIMS budget. Reads the gate constants live so tests can
+    monkeypatch them."""
+    return shanten <= ESCALATE_MAX_SHANTEN and threshold_gap(ev_delta) < ESCALATE_MARGIN
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """The adaptive-budget grading outcome shared by discard and call grading."""
+
+    verdict: str
+    ev_delta: float
+    refined_sims: int  # budget the verdict was decided at (REFINE_SIMS or ESCALATE_SIMS)
+    marginal: bool  # final ev_delta still hugs a verdict boundary
+
+    @classmethod
+    def exact_tie(cls, refined_sims: int) -> "Verdict":
+        """Return an exact tie; ``marginal=False`` deliberately overrides the
+        boundary flag because identical choices are never borderline."""
+        return cls("best", 0.0, refined_sims, False)
+
+    @property
+    def ev_loss(self) -> float:
+        """Non-negative loss suitable for accumulating player scores."""
+        return max(0.0, self.ev_delta)
+
+
+_Payload = TypeVar("_Payload")
+
+
+def resolve_adaptive(estimate: Callable[[int], tuple[float, _Payload]], shanten: int) -> tuple[Verdict, _Payload]:
+    """Grade a best-minus-chosen ev_delta under the two-stage adaptive budget.
+
+    ``estimate(sims)`` returns ``(ev_delta, payload)`` for the best and chosen
+    candidates re-estimated at ``sims`` sims (sharing the CRN base seed); the
+    payload from the budget that decided the verdict is handed back so the caller
+    keeps the final-budget estimates without recomputing. Escalation to
+    ESCALATE_SIMS happens only when the REFINE_SIMS delta hugs a boundary and the
+    hand is near tenpai. The exact-tie case (chosen IS the best) is the caller's
+    to short-circuit — it must not be escalated or flagged marginal.
+    """
+    delta, payload = estimate(REFINE_SIMS)
+    refined_sims = REFINE_SIMS
+    if should_escalate(delta, shanten):
+        delta, payload = estimate(ESCALATE_SIMS)
+        refined_sims = ESCALATE_SIMS
+    return Verdict(verdict_for_delta(delta), delta, refined_sims, threshold_gap(delta) < MARGINAL_BAND), payload
 
 
 @dataclass(frozen=True)
@@ -108,6 +206,13 @@ class QuizGrade:
     ev_delta: float
     rank_position: int | None
     verdict: str
+    refined_sims: int = REFINE_SIMS  # budget the verdict was decided at (REFINE_SIMS or ESCALATE_SIMS)
+    marginal: bool = False  # final ev_delta still hugs a verdict boundary
+
+    @property
+    def ev_loss(self) -> float:
+        """Non-negative loss suitable for accumulating player scores."""
+        return max(0.0, self.ev_delta)
 
 
 def _tile_name(tile: int) -> str:
@@ -204,7 +309,7 @@ def _score_template(position: QuizPosition) -> WinValueContext:
 
 
 @lru_cache(maxsize=256)
-def _rank(position: QuizPosition) -> tuple[EVRankEntry, ...]:
+def _rank_cached(position: QuizPosition) -> tuple[EVRankEntry, ...]:
     return tuple(entry for entry in ev_rank(
         position.hand,
         [opponent.view() for opponent in position.opponents],
@@ -216,6 +321,16 @@ def _rank(position: QuizPosition) -> tuple[EVRankEntry, ...]:
         _score_template(position),
         top_k=EV_TOP_K,
     ) if not entry.is_fold)
+
+
+def _rank(position: QuizPosition) -> tuple[EVRankEntry, ...]:
+    """Cheap EV ranking keyed independently of the display-only gap."""
+    return _rank_cached(replace(position, candidate_ev_gap=0.0))
+
+
+def best_discard(position: QuizPosition) -> int:
+    """Return the cheap ranking's best discard, equal to ``grade().best.discard``."""
+    return _rank(position)[0].discard
 
 
 def _interesting(position: QuizPosition) -> bool:
@@ -248,50 +363,66 @@ def generate_position(seed: int) -> QuizPosition:
     raise RuntimeError(f"no interesting quiz position found in {MAX_ATTEMPTS} seeded games")
 
 
-def _evaluate_discard(position: QuizPosition, tile: int) -> EVRankEntry:
-    post = list(position.hand)
-    post[tile] -= 1
-    attack = estimate_win_value(
-        tuple(post),
-        position.draws_remaining,
-        len(position.own_melds),
+def _refine(position: QuizPosition, tile: int, sims: int) -> EVRankEntry:
+    """Re-estimate one discard at ``sims`` sims, sharing the ranking's CRN base
+    seed so the best/chosen difference stays variance-reduced while its absolute
+    Monte Carlo error shrinks ~``sqrt(EV_SIMS / sims)``."""
+    return evaluate_discard(
+        position.hand,
+        tile,
+        [opponent.view() for opponent in position.opponents],
         position.public_counts,
-        EV_SIMS,
+        len(position.own_melds),
+        position.draws_remaining,
+        sims,
         _evaluation_seed(position),
         _score_template(position),
     )
-    losses = tuple(deal_in_ev(tile, opponent.view(), position.public_counts, tuple(post), None) for opponent in position.opponents)
-    risk = sum(losses)
-    return EVRankEntry(tile, attack.p_win, attack.mean_value_units, attack.expected_win_ev, losses, risk, attack.expected_win_ev - risk)
 
 
 def grade(position: QuizPosition, chosen_tile: int) -> QuizGrade:
-    """Evaluate a legal discard with the same deterministic budget as generation."""
+    """Grade a legal discard: rank candidates cheaply, decide the verdict from
+    the rank-best and chosen candidates re-estimated at REFINE_SIMS, and only
+    when that ev_delta sits on a verdict boundary re-estimate both at the higher
+    ESCALATE_SIMS — so the extra budget is spent solely on borderline verdicts."""
     if not isinstance(chosen_tile, int) or isinstance(chosen_tile, bool) or not 0 <= chosen_tile < 34:
         raise ValueError("chosen tile must be an index from 0 through 33")
     if not position.hand[chosen_tile]:
         raise ValueError("chosen tile must be present in the hand")
     ranked = tuple(_rank(position))
-    best = ranked[0]
     rank_position = next((index for index, entry in enumerate(ranked, start=1) if entry.discard == chosen_tile), None)
-    chosen = ranked[rank_position - 1] if rank_position is not None else _evaluate_discard(position, chosen_tile)
-    ev_delta = best.net_ev - chosen.net_ev
-    if ev_delta <= 0.0:
-        verdict = "best"
-    elif ev_delta < GOOD_DELTA:
-        verdict = "good"
-    elif ev_delta < 1.0:
-        verdict = "inaccuracy"
+    # The verdict comes from two same-CRN-seed estimates; the ranked table keeps
+    # its cheaper EV_SIMS values. Choosing the rank-best tile is an exact tie
+    # (ev_delta 0), never escalated or flagged marginal.
+    if chosen_tile == ranked[0].discard:
+        best = chosen = _refine(position, ranked[0].discard, REFINE_SIMS)
+        outcome = Verdict.exact_tie(REFINE_SIMS)
     else:
-        verdict = "mistake"
-    return QuizGrade(position, best, chosen, ranked, ev_delta, rank_position, verdict)
+        def estimate(sims: int) -> tuple[float, tuple[EVRankEntry, EVRankEntry]]:
+            best_entry = _refine(position, ranked[0].discard, sims)
+            chosen_entry = _refine(position, chosen_tile, sims)
+            return best_entry.net_ev - chosen_entry.net_ev, (best_entry, chosen_entry)
+
+        best_post = list(position.hand)
+        best_post[ranked[0].discard] -= 1
+        chosen_post = list(position.hand)
+        chosen_post[chosen_tile] -= 1
+        gate_shanten = max(
+            _cached_shanten(tuple(best_post), len(position.own_melds)),
+            _cached_shanten(tuple(chosen_post), len(position.own_melds)),
+        )
+        outcome, (best, chosen) = resolve_adaptive(estimate, gate_shanten)
+    return QuizGrade(
+        position, best, chosen, ranked, outcome.ev_delta, rank_position,
+        outcome.verdict, outcome.refined_sims, outcome.marginal,
+    )
 
 
 def _ev_table(entries: tuple[EVRankEntry, ...]) -> list[str]:
     lines = ["Discard  Net EV  P(win)  E[win value]  E[loss]"]
     for entry in entries:
-        value = "-" if entry.mean_win_value is None else f"{entry.mean_win_value:.2f}"
-        lines.append(f"{_tile_name(entry.discard):<7}  {entry.net_ev:>6.2f}  {entry.p_win:>6.3f}  {value:>12}  {entry.risk_ev:>7.2f}")
+        value = "-" if entry.mean_win_value is None else f"{entry.mean_win_value:.1f}"
+        lines.append(f"{_tile_name(entry.discard):<7}  {entry.net_ev:>6.1f}  {entry.p_win:>6.3f}  {value:>12}  {entry.risk_ev:>7.1f}")
     return lines
 
 
@@ -312,9 +443,13 @@ def _is_declared_safe(position: QuizPosition, tile: int, opponent_index: int) ->
 
 
 def _component_lines(grade: QuizGrade) -> tuple[str, str]:
-    if grade.best.discard == grade.chosen.discard:
-        runner_up = grade.ranked[1]
-        kind, opponent_index, difference = _dominant_difference(grade.best, runner_up)
+    if grade.ev_delta <= 0.0 or grade.best.discard == grade.chosen.discard:
+        # Compare the cheap ranked best against the cheap runner-up: both come
+        # from the same EV_SIMS ranking under one CRN seed, so their component
+        # difference is variance-reduced. grade.best is refined at a different
+        # budget, so pairing it with the cheap runner-up would mix precisions.
+        best_entry, runner_up = grade.ranked[0], grade.ranked[1]
+        kind, opponent_index, difference = _dominant_difference(best_entry, runner_up)
         if kind == "win":
             direction = "higher" if difference >= 0 else "lower"
             amount = abs(difference)
