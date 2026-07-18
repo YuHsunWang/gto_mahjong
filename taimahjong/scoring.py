@@ -76,7 +76,11 @@ class WinContext:
     earthly: bool = False
     round_wind: int | None = None
     seat_wind: int | None = None
-    kong_bloom: bool = False  # 槓上開花: self-draw on a kong's replacement tile
+    # 槓上開花: self-draw on a kong's replacement tile. House rule — only a kong
+    # whose fourth tile was self-drawn (暗槓 / 加槓) qualifies; a 大明槓 (fourth
+    # tile called off a discard) does not. The engine enforces this and only
+    # sets the flag when eligible; scoring just honours it.
+    kong_bloom: bool = False
     robbed_kong: bool = False  # 搶槓: ron on an opponent's added-kong tile
     extra: tuple[tuple[str, int], ...] = ()  # reserved: flowers, ...
 
