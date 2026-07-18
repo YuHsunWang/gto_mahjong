@@ -32,6 +32,20 @@ def test_trainer_start_then_discard_shows_verdict_and_advances():
     assert not app.exception
 
 
+def test_trainer_seat_and_streak_selection_starts_a_non_dealer_hand():
+    # The seat/streak selectors must reach play_trainer: starting as 莊的下家
+    # (seat 1) with an initial streak puts the human off the dealer seat and
+    # records both in session for the cross-hand state machine.
+    app = _app()
+    app.number_input(key="trainer_new_seed").set_value(1)
+    app.selectbox(key="trainer_new_seat").set_value(1)
+    app.number_input(key="trainer_new_streak").set_value(2)
+    app.button(key="trainer_start").click().run(timeout=90)
+    assert not app.exception
+    assert app.session_state["trainer_seat"] == 1
+    assert app.session_state["trainer_streak"] == 2
+
+
 def test_trainer_handles_call_decisions_without_error():
     """Drive the trainer a bounded number of steps; if a pon/chi is offered,
     exercise the call UI (choose then advance) and assert nothing crashes."""

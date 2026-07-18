@@ -25,6 +25,7 @@ from .ev import WinValueContext, estimate_win_value, evaluate_discard, ev_rank
 from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
 from .scoring import WinContext
 from .selfplay import (
+    DEALER_SEAT,
     Player,
     RiverEntry,
     _best_call,
@@ -150,6 +151,12 @@ class TrainerOutcome:
     discarder: int | None
     point_delta: int  # human seat's signed value-unit change
     turns: int
+    dealer_streak_in: int = 0  # 連莊 count that applied to this hand
+    # What the NEXT hand should use. The engine never moves the dealer off seat
+    # 0; when the dealer loses dealership we instead rotate the human's seat, so
+    # the player experiences sitting downstream/across/upstream of the dealer.
+    next_dealer_streak: int = 0
+    next_human_seat: int = 0
 
     @property
     def headline(self) -> str:
@@ -175,7 +182,12 @@ def _ron_winner(current: int, tile: int, players: list[Player]) -> int | None:
 
 
 def _outcome(outcome: str, winner: int | None, discarder: int | None,
-             human_seat: int, deltas: tuple[int, int, int, int], turns: int) -> TrainerOutcome:
+             human_seat: int, deltas: tuple[int, int, int, int], turns: int,
+             dealer_streak: int = 0) -> TrainerOutcome:
+    # 流局連莊: the dealer (seat 0) keeps dealership and the streak grows on a
+    # draw or a dealer win; otherwise dealership passes, which we emulate by
+    # rotating the human one seat downstream and resetting the streak.
+    dealer_keeps = outcome == "draw" or winner == DEALER_SEAT
     return TrainerOutcome(
         outcome=outcome,
         human_won=winner == human_seat,
@@ -184,6 +196,9 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
         discarder=discarder,
         point_delta=deltas[human_seat],
         turns=turns,
+        dealer_streak_in=dealer_streak,
+        next_dealer_streak=dealer_streak + 1 if dealer_keeps else 0,
+        next_human_seat=human_seat if dealer_keeps else (human_seat + 1) % 4,
     )
 
 
@@ -302,8 +317,14 @@ def play_trainer(
     seed: int,
     human_seat: int = 0,
     policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious"),
+    dealer_streak: int = 0,
 ):
     """Generator: yields a discard or call decision at each human choice point.
+
+    ``dealer_streak`` is the table's 連莊 count (the dealer is always seat 0); it
+    raises the dealer's win value and, via the opponent views, the cost of
+    dealing into the dealer. The terminal :class:`TrainerOutcome` reports the
+    streak and the next hand's streak/human seat (see :func:`_outcome`).
 
     Yields :class:`TrainerDecision` (a discard; send back a tile index) or
     :class:`TrainerCallDecision` (a pon/chi you may declare on an opponent's
@@ -323,11 +344,14 @@ def play_trainer(
         raise ValueError("seed must be an integer")
     if human_seat not in range(4):
         raise ValueError("human_seat must be 0-3")
+    if not isinstance(dealer_streak, int) or isinstance(dealer_streak, bool) or dealer_streak < 0:
+        raise ValueError("dealer_streak must be a non-negative integer")
 
     rng = Random(seed)
     tiles = [tile for tile in range(34) for _ in range(4)]
     rng.shuffle(tiles)
     players = [Player(policy) for policy in policies]
+    players[DEALER_SEAT].dealer_streak = dealer_streak
     for _ in range(16):
         for player in players:
             player.hand[tiles.pop()] += 1
@@ -346,15 +370,15 @@ def play_trainer(
 
         if needs_draw:
             if not wall:
-                deltas, _ = _settlement("draw", None, None, players, None, None)
-                yield _outcome("draw", None, None, human_seat, deltas, actions)
+                deltas, _ = _settlement("draw", None, None, players, None, None, dealer_streak)
+                yield _outcome("draw", None, None, human_seat, deltas, actions, dealer_streak)
                 return
             drawn_tile = wall.pop()
             player.hand[drawn_tile] += 1
             if _cached_shanten(tuple(player.hand), len(player.melds)) == -1:
                 winning_hand = tuple(player.hand)
-                deltas, _ = _settlement("tsumo", current, None, players, winning_hand, drawn_tile)
-                yield _outcome("tsumo", current, None, human_seat, deltas, actions)
+                deltas, _ = _settlement("tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak)
+                yield _outcome("tsumo", current, None, human_seat, deltas, actions, dealer_streak)
                 return
 
         if current == human_seat and not player.declared:
@@ -381,8 +405,8 @@ def play_trainer(
         if winner is not None:
             winning_hand = list(players[winner].hand)
             winning_hand[tile] += 1
-            deltas, _ = _settlement("ron", winner, current, players, tuple(winning_hand), tile)
-            yield _outcome("ron", winner, current, human_seat, deltas, actions)
+            deltas, _ = _settlement("ron", winner, current, players, tuple(winning_hand), tile, dealer_streak)
+            yield _outcome("ron", winner, current, human_seat, deltas, actions, dealer_streak)
             return
 
         # A call may be declared on this discard unless the discarder is a

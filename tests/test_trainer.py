@@ -7,6 +7,7 @@ from taimahjong.trainer import (
     TrainerCallDecision,
     TrainerDecision,
     TrainerOutcome,
+    _outcome,
     evaluate_call,
     play_trainer,
 )
@@ -187,3 +188,42 @@ def test_trainer_rejects_invalid_call_choice():
                 return
             item = gen.send(_discard_drawn(item.position) if isinstance(item, TrainerDecision) else None)
     pytest.fail("no call decision in seeds 1-19")
+
+
+# --- M4: 連莊 state machine and dealer-aware trainer positions ---
+
+def test_streak_increments_on_dealer_win_and_draw():
+    # 流局連莊 + a dealer win both keep the dealer on seat 0 and grow the streak;
+    # the human's seat is unchanged. This is the rule the trainer chains between
+    # hands, so it is pinned at the pure-function level.
+    won = _outcome("tsumo", 0, None, human_seat=2, deltas=(3, -1, -1, -1), turns=10, dealer_streak=1)
+    assert won.next_dealer_streak == 2 and won.next_human_seat == 2
+    drawn = _outcome("draw", None, None, human_seat=2, deltas=(0, 0, 0, 0), turns=18, dealer_streak=0)
+    assert drawn.next_dealer_streak == 1 and drawn.next_human_seat == 2
+
+
+def test_streak_resets_and_rotates_human_on_dealer_loss():
+    # A non-dealer win passes dealership; the engine keeps the dealer on seat 0
+    # and instead rotates the human one seat downstream, resetting the streak —
+    # this is how the player comes to sit in each relation to the dealer.
+    out = _outcome("ron", 1, 2, human_seat=3, deltas=(0, 5, -5, 0), turns=12, dealer_streak=3)
+    assert out.next_dealer_streak == 0 and out.next_human_seat == 0
+
+
+def test_streak_raises_dealer_opponent_value_in_a_trainer_position():
+    # Sitting as 莊的下家 (human seat 1), the dealer is an opponent. The same
+    # first position at streak 0 vs 2 must price that dealer opponent higher, so
+    # the trainer actually teaches the 連莊 premium rather than only displaying it.
+    from taimahjong.ev import opponent_value_estimate
+
+    def first_dealer_view(streak):
+        gen = play_trainer(1, human_seat=1, dealer_streak=streak)
+        item = next(gen)
+        while not isinstance(item, TrainerDecision):
+            item = gen.send(None if isinstance(item, TrainerCallDecision) else _discard_drawn(item.position))
+        dealer = next(opponent for opponent in item.position.opponents if opponent.seat == 0)
+        return dealer.view()
+
+    view0, view2 = first_dealer_view(0), first_dealer_view(2)
+    assert view0.dealer_streak == 0 and view2.dealer_streak == 2
+    assert opponent_value_estimate(view2) > opponent_value_estimate(view0)

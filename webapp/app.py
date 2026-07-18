@@ -394,16 +394,32 @@ def _trainer_scorecard() -> None:
     )
 
 
-def _trainer_start(seed: int) -> None:
-    generator = play_trainer(seed)
+def _trainer_start(seed: int, human_seat: int = 0, dealer_streak: int = 0) -> None:
+    generator = play_trainer(seed, human_seat=human_seat, dealer_streak=dealer_streak)
     st.session_state.trainer_gen = generator
     st.session_state.trainer_item = next(generator)
     st.session_state.trainer_seed = seed
+    st.session_state.trainer_seat = human_seat
+    st.session_state.trainer_streak = dealer_streak
     st.session_state.trainer_score = {"decisions": 0, "best": 0, "loss": 0.0}
     st.session_state.trainer_feedback = None
     st.session_state.trainer_pending_tile = None
     st.session_state.trainer_call_feedback = None
     st.session_state.pop("trainer_call_pending", None)
+
+
+# The human's seat choice, labelled by where the fixed seat-0 dealer sits
+# relative to them (turn order 0->1->2->3, so seat 0 is seat 1's upstream).
+_SEAT_LABELS = {0: "莊家（你自己做莊）", 1: "莊的下家", 2: "莊的對家", 3: "莊的上家"}
+# Where the dealer sits, from the human's chair.
+_DEALER_RELATION = {1: "上家", 2: "對家", 3: "下家"}
+
+
+def _seat_relation_note(human_seat: int, streak: int) -> str:
+    streak_note = f"，莊家連 {streak} 拉 {streak}（放槍給莊代價更高）" if streak else ""
+    if human_seat == 0:
+        return f"你這局做莊{streak_note}"
+    return f"莊家在你的{_DEALER_RELATION[human_seat]}{streak_note}"
 
 
 def _trainer_advance() -> None:
@@ -510,9 +526,17 @@ def show_trainer() -> None:
         if "trainer_new_seed" not in st.session_state:
             st.session_state.trainer_new_seed = random.SystemRandom().randrange(1, 1_000_000)
         seed = int(st.number_input("種子", min_value=0, step=1, key="trainer_new_seed"))
+        columns = st.columns(2)
+        with columns[0]:
+            human_seat = st.selectbox(
+                "你的座位", options=[0, 1, 2, 3], format_func=lambda seat: _SEAT_LABELS[seat], key="trainer_new_seat",
+            )
+        with columns[1]:
+            streak = int(st.number_input("初始連莊數", min_value=0, max_value=8, step=1, key="trainer_new_streak"))
+        st.caption(_seat_relation_note(int(human_seat), streak))
         if st.button("開始新局", type="primary", key="trainer_start"):
             with st.spinner("發牌中…"):
-                _trainer_start(seed)
+                _trainer_start(seed, int(human_seat), streak)
             st.rerun()
         st.info("每手切牌、以及可以吃碰時，都會即時給 EV 回饋（槓為後續階段）。")
         return
@@ -520,12 +544,17 @@ def show_trainer() -> None:
     if isinstance(item, TrainerOutcome):
         _trainer_scorecard()
         tone = st.success if item.human_won else (st.error if item.human_dealt_in else st.info)
-        tone(f"本局結束：{item.headline}　你的收支 {item.point_delta:+d} 台單位（{item.turns} 手）")
+        streak_in = f"（連莊 {item.dealer_streak_in}）" if item.dealer_streak_in else ""
+        tone(f"本局結束{streak_in}：{item.headline}　你的收支 {item.point_delta:+d} 台單位（{item.turns} 手）")
+        if item.next_human_seat != st.session_state.get("trainer_seat", 0):
+            st.warning(f"莊家易主，換座位 — 下局你是{_SEAT_LABELS[item.next_human_seat]}")
+        elif item.next_dealer_streak:
+            st.info(f"莊家連莊 — 下局連 {item.next_dealer_streak} 拉 {item.next_dealer_streak}，對莊防守要更緊")
         controls = st.columns(2)
         with controls[0]:
             if st.button("再來一局", type="primary", key="trainer_again"):
                 with st.spinner("發牌中…"):
-                    _trainer_start(int(st.session_state.trainer_seed) + 1)
+                    _trainer_start(int(st.session_state.trainer_seed) + 1, item.next_human_seat, item.next_dealer_streak)
                 st.rerun()
         with controls[1]:
             if st.button("結束", key="trainer_quit"):
