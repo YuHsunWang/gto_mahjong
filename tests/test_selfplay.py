@@ -202,12 +202,21 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
     assert calibration.document["metadata"]["danger_modifiers"] == DANGER_MODIFIERS
     assert calibration.document["metadata"]["policy_mix"] == ["attack", "cautious", "ev_aware", "ev_aware"]
     table = calibration.tables["tenpai"]
-    for turn in ("1-6", "7-12", "13+"):
+    # While hands are still developing (turns 1-12), more declared melds means a
+    # more likely tenpai, so P(tenpai) rises with melds within a turn/run bucket.
+    # This is NOT asserted for the late game (turn 13+): there, open hands that
+    # failed to complete keep tsumogiri-ing without being tenpai — and harder
+    # dealer-folding (M3) feeds that pool — so the relationship legitimately
+    # inverts. (Regenerated from seeds 30001-30040, mix attack/cautious/ev/ev.)
+    checked_buckets = 0
+    for turn in ("1-6", "7-12"):
         for run in ("0", "1-2", "3+"):
-            cells = [table[f"{melds}|{turn}|{run}"] for melds in range(6)]
-            if all(cell["observations"] >= 30 for cell in cells):
-                values = [cell["probability"] for cell in cells]
-                assert values == sorted(values)
+            populated = [table[f"{melds}|{turn}|{run}"] for melds in range(6) if table[f"{melds}|{turn}|{run}"]["observations"] >= 30]
+            if len(populated) >= 2:
+                values = [cell["probability"] for cell in populated]
+                assert values == sorted(values), f"{turn}|{run} not monotonic: {values}"
+                checked_buckets += 1
+    assert checked_buckets >= 4, "the developing-phase monotonicity check must cover several buckets"
     danger = calibration.tables["deal_in"]
     values = [danger[bucket]["probability"] for bucket in DANGER_BUCKETS]
     assert values == sorted(values)
