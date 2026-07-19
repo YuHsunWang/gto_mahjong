@@ -295,3 +295,36 @@ def test_kong_counts_as_one_declared_set_for_shanten():
     player.hand = list(parse_tiles("234567m234p234s55s"))  # 14 tiles = 17 - 3*1
     assert _declared(player) == 1
     assert shanten(tuple(player.hand), _declared(player)) == -1
+
+
+# --- M7: experiment invariants ---
+
+def test_per_seat_kong_policy_restricts_kongs_to_enabled_seats():
+    # The experiment attributes a kong lift to one seat, so a per-seat policy
+    # must let ONLY that seat kong; a leak would contaminate the EV measurement.
+    seen_seats = set()
+    for seed in range(200, 320):
+        game = play_game(seed, ("attack", "attack", "attack", "attack"), kong_policy=("all", "none", "none", "none"))
+        seen_seats.update(seat for seat, _, _ in game.kong_log)
+    assert seen_seats == {0}, f"only seat 0 may kong, saw {seen_seats}"
+
+
+def test_daiminkan_is_not_positive_ev_under_house_rule():
+    # 大明槓 scores 0 tai, breaks nothing extra, and forfeits 槓上開花, so enabling
+    # it on top of 暗槓/加槓 must not raise the actor's EV. Paired seeds (same wall)
+    # isolate the 大明槓 decision; this pins the house-rule consequence the kong
+    # experiment demonstrates. Small batch keeps the test fast; the docs report
+    # the large-sample magnitude.
+    seed, games = 40001, 200
+    def seat0_ev(kong_policy):
+        total = sum(
+            play_game(seed + offset, ("attack", "attack", "attack", "attack"),
+                      kong_policy=(kong_policy, "none", "none", "none")).point_deltas[0]
+            for offset in range(games)
+        )
+        return total / games
+    added_only = seat0_ev("concealed_added")
+    with_daiminkan = seat0_ev("all")
+    assert with_daiminkan <= added_only + 0.05, (
+        f"大明槓 should not help: all={with_daiminkan:.3f} vs concealed_added={added_only:.3f}"
+    )

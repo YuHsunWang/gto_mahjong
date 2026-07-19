@@ -111,12 +111,13 @@ class GameResult:
     kongs: tuple[tuple[int, bool], ...] = ()  # the winner's declared kongs
     kong_bloom: bool = False  # win on a kong's self-drawn replacement (槓上開花)
     robbed_kong: bool = False  # win by robbing an added kong (搶槓)
+    kong_log: tuple[tuple[int, int, bool], ...] = ()  # every declared kong: (seat, tile, concealed)
 
     def summary(self) -> tuple:
         return (
             self.outcome, self.winner, self.discarder, self.turns,
             tuple(tuple(sorted(event.items())) for event in self.events), self.point_deltas, self.value_units,
-            self.dealer_streak, self.dealer_premium, self.kongs, self.kong_bloom, self.robbed_kong,
+            self.dealer_streak, self.dealer_premium, self.kongs, self.kong_bloom, self.robbed_kong, self.kong_log,
         )
 
 
@@ -243,13 +244,13 @@ def _declare_kong(player: Player, tile: int, concealed: bool, dead: list[int]) -
     return replacement
 
 
-def _big_kong_caller(players: list[Player], discarder: int, tile: int) -> int | None:
-    """Closest downstream seat that would 大明槓 the discard under a sound read:
-    it holds three copies and the kong does not worsen its shanten."""
+def _big_kong_caller(players: list[Player], discarder: int, tile: int, seat_kong: tuple[str, str, str, str]) -> int | None:
+    """Closest downstream 'all'-policy seat that would 大明槓 the discard under a
+    sound read: it holds three copies and the kong does not worsen its shanten."""
     for offset in range(1, 4):
         index = (discarder + offset) % 4
         player = players[index]
-        if player.declared or player.hand[tile] != 3:
+        if seat_kong[index] != "all" or player.declared or player.hand[tile] != 3:
             continue
         before = _cached_shanten(tuple(player.hand), _declared(player))
         post = list(player.hand)
@@ -523,26 +524,38 @@ def _best_call(player: Player, tile: int, chi: bool) -> tuple[tuple[int, int], t
     return removed, meld
 
 
+def _seat_kong_policy(kong_policy: str | tuple[str, str, str, str], seat: int) -> str:
+    """Broadcast a single kong policy to every seat, or index a per-seat tuple.
+
+    A per-seat tuple lets an experiment enable kongs for one seat only and read
+    that seat's marginal EV against otherwise identical opponents."""
+    if isinstance(kong_policy, str):
+        return kong_policy
+    return kong_policy[seat]
+
+
 def play_game(
     seed: int | None = None,
     policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious"),
     snapshot_hook: Callable[[DecisionSnapshot], None] | None = None,
     dealer_streak: int = 0,
-    kong_policy: str = "none",
+    kong_policy: str | tuple[str, str, str, str] = "none",
 ) -> GameResult:
     """Play one deterministic-seeded game and retain every discard event in memory.
 
-    ``kong_policy`` gates kong declarations: "none" never kongs (identical to
-    the pre-kong engine); "concealed_added" takes shanten-safe 暗槓/加槓;
-    "all" additionally takes 大明槓 on a discard (which the house rule scores at
-    0 tai and denies 槓上開花 — the experiment uses it to show it is strictly bad).
+    ``kong_policy`` gates kong declarations, either a single policy for all seats
+    or a per-seat 4-tuple: "none" never kongs (identical to the pre-kong engine);
+    "concealed_added" takes shanten-safe 暗槓/加槓; "all" additionally takes 大明槓
+    on a discard (which the house rule scores at 0 tai and denies 槓上開花 — the
+    experiment uses it to show it is strictly bad).
     """
     if len(policies) != 4 or any(policy not in POLICIES for policy in policies):
         raise ValueError("policies must name four entries from POLICIES")
     if not isinstance(dealer_streak, int) or isinstance(dealer_streak, bool) or dealer_streak < 0:
         raise ValueError("dealer_streak must be a non-negative integer")
-    if kong_policy not in KONG_POLICIES:
-        raise ValueError(f"kong_policy must be one of {KONG_POLICIES}")
+    seat_kong = tuple(_seat_kong_policy(kong_policy, seat) for seat in range(4))
+    if any(policy not in KONG_POLICIES for policy in seat_kong):
+        raise ValueError(f"kong_policy entries must be among {KONG_POLICIES}")
     rng = Random(seed)
     tiles = [tile for tile in range(34) for _ in range(4)]
     rng.shuffle(tiles)
@@ -554,6 +567,7 @@ def play_game(
     dead = [tiles.pop() for _ in range(16)]
     wall = tiles
     events: list[dict] = []
+    kong_log: list[tuple[int, int, bool]] = []  # (seat, tile, concealed) per declared kong
     any_call = False
     current = 0
     needs_draw = True
@@ -568,7 +582,7 @@ def play_game(
         if needs_draw:
             if not wall:
                 points, value = _settlement("draw", None, None, players, None, None, dealer_streak)
-                return GameResult(events, "draw", None, None, actions, point_deltas=points, value_units=value, dealer_streak=dealer_streak)
+                return GameResult(events, "draw", None, None, actions, point_deltas=points, value_units=value, dealer_streak=dealer_streak, kong_log=tuple(kong_log))
             drawn_tile = wall.pop()
             player.hand[drawn_tile] += 1
             _assert_conservation(players, wall, dead)
@@ -578,13 +592,13 @@ def play_game(
                 return GameResult(
                     events, "tsumo", current, None, actions, winning_hand, _declared(player), points, value,
                     dealer_streak, _dealer_leg_premium("tsumo", current, None, dealer_streak),
-                    kongs=tuple(player.kongs),
+                    kongs=tuple(player.kongs), kong_log=tuple(kong_log),
                 )
             # Self-draw kongs (concealed / added): declare, rob-check, draw a
             # dead-wall replacement, and re-check for a 槓上開花 tsumo. A robbed
             # added kong ends the hand as the robber's ron.
-            while kong_policy != "none" and dead:
-                choice = _self_draw_kong_choice(player, kong_policy)
+            while seat_kong[current] != "none" and dead:
+                choice = _self_draw_kong_choice(player, seat_kong[current])
                 if choice is None:
                     break
                 kind_tile, concealed = choice
@@ -600,8 +614,9 @@ def play_game(
                         return GameResult(
                             events, "ron", robber, current, actions, winning, _declared(players[robber]), points, value,
                             dealer_streak, _dealer_leg_premium("ron", robber, current, dealer_streak),
-                            kongs=tuple(players[robber].kongs), robbed_kong=True,
+                            kongs=tuple(players[robber].kongs), robbed_kong=True, kong_log=tuple(kong_log),
                         )
+                kong_log.append((current, kind_tile, concealed))
                 drawn_tile = _declare_kong(player, kind_tile, concealed, dead)
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
@@ -612,7 +627,7 @@ def play_game(
                     return GameResult(
                         events, "tsumo", current, None, actions, winning_hand, _declared(player), points, value,
                         dealer_streak, _dealer_leg_premium("tsumo", current, None, dealer_streak),
-                        kongs=tuple(player.kongs), kong_bloom=True,
+                        kongs=tuple(player.kongs), kong_bloom=True, kong_log=tuple(kong_log),
                     )
             if snapshot_hook is not None and not player.declared:
                 snapshot_hook(_decision_snapshot(current, drawn_tile, players, len(wall)))
@@ -685,16 +700,18 @@ def play_game(
             return GameResult(
                 events, "ron", winner, current, actions, winning, _declared(players[winner]), points, value,
                 dealer_streak, _dealer_leg_premium("ron", winner, current, dealer_streak),
-                kongs=tuple(players[winner].kongs),
+                kongs=tuple(players[winner].kongs), kong_log=tuple(kong_log),
             )
 
-        # A discard may be konged (大明槓) under the "all" policy before pon/chi;
-        # the caller draws a replacement and no 槓上開花 applies (fourth tile came
-        # from a discard). It advances the hand like a pon but fixes a full set.
-        if kong_policy == "all" and dead and not player.declared:
-            big_caller = _big_kong_caller(players, current, tile)
+        # A discard may be konged (大明槓) by a downstream seat whose policy is
+        # "all", before pon/chi; the caller draws a replacement and no 槓上開花
+        # applies (fourth tile came from a discard). It advances the hand like a
+        # pon but fixes a full set.
+        if dead and not player.declared:
+            big_caller = _big_kong_caller(players, current, tile, seat_kong)
             if big_caller is not None:
                 player.river.pop()  # the konged tile leaves the discarder's river
+                kong_log.append((big_caller, tile, False))
                 replacement = _apply_big_kong(players[big_caller], tile, dead)
                 any_call = True
                 _assert_conservation(players, wall, dead)
@@ -704,7 +721,7 @@ def play_game(
                     return GameResult(
                         events, "tsumo", big_caller, None, actions, winning_hand, _declared(players[big_caller]), points, value,
                         dealer_streak, _dealer_leg_premium("tsumo", big_caller, None, dealer_streak),
-                        kongs=tuple(players[big_caller].kongs),
+                        kongs=tuple(players[big_caller].kongs), kong_log=tuple(kong_log),
                     )
                 current = big_caller
                 needs_draw = False
