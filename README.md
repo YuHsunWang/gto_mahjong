@@ -246,8 +246,25 @@ rule, and these simplifications—not against human Taiwanese-mahjong play.
 門清/自摸/獨聽 1, 平胡/全求人/三暗刻 2, 碰碰胡/混一色/小三元 4, 四暗刻 5,
 清一色/大三元/小四喜/五暗刻 8, 字一色/大四喜 16, 圈風/門風/三元牌刻 1);
 the migi declaration adds `DECLARED_TAI` (8); the confirmed house values for
-heavenly/earthly hands are 16/8 tai. Flowers and kongs
-are not modelled — `WinContext.extra` is the reserved pass-through slot.
+heavenly/earthly hands are 16/8 tai. Flowers are not modelled —
+`WinContext.extra` is the reserved pass-through slot.
+
+**Kong house rule (2026-07-18):** an open or concealed kong scores no tai on its
+own (`OPEN_KONG_TAI` / `CONCEALED_KONG_TAI` = 0); only winning on a kong's
+replacement tile (槓上開花) and robbing a kong (搶槓) score, 1 tai each. 槓上開花
+requires the fourth tile to have been self-drawn (暗槓 / 加槓) — a 大明槓 (fourth
+tile taken from a discard) never qualifies. A concealed kong keeps 門清 and
+counts toward concealed-triplet tai; an open kong breaks 門清. Consequently a
+大明槓 is strictly bad here (0 tai, breaks nothing extra, forfeits 槓上開花); the
+self-play experiment in [docs/experiments.md](docs/experiments.md) confirms it.
+
+**連莊 bilateral premium:** the dealer premium (莊 `DEALER_TAI` 1 + 連N拉N
+`STREAK_TAI_PER_WIN`·streak) applies to every payment leg between the dealer and
+a winner. A dealer winner bakes it into the scored hand value (every leg pays
+it); when a non-dealer wins, `selfplay._dealer_leg_premium` adds it to the
+dealer's leg only — ron off the dealer, or the dealer's share of a tsumo. Even
+at streak 0 the dealer's paying leg is one unit dearer than a peer's. 流局連莊:
+a draw or dealer win keeps the dealer on seat 0 and grows the streak.
 
 Documented stacking choices: 小三元/大三元 replace their component 三元牌刻;
 小四喜/大四喜 suppress 圈風/門風. A lone dragon triplet, and winds outside a
@@ -466,6 +483,19 @@ streamlit run webapp/app.py
 打門清（可自摸／榮和，暫不吃碰），對手正常鳴牌；你的鳴牌決策與鳴牌 EV 為
 Phase 2。所有機率仍是對機器人校準、非真人牌局。
 
+開始新局時可選座位（莊家／莊的下家／對家／上家）與初始連莊數：莊固定在座位 0，
+過莊時引擎改以「輪轉你的座位」模擬，讓你體驗坐在莊的不同相對位置。連莊會拉高
+莊的胡牌價值，也拉高放槍給莊的代價（見上方 M5a 連莊雙向規則）；「再來一局」
+依莊胡／流局續莊或閒胡過莊自動更新連莊數與座位。
+
 部署到 Streamlit Community Cloud：使用者先自行將此專案推送到 GitHub，然後在
 Community Cloud 選擇該 repository／branch，將主檔設定為 `webapp/app.py`，並以
 `requirements.txt` 作為相依清單後部署。請勿在這個專案中新增 remote 或代為推送。
+
+## M11 自對局實驗：連莊防守與槓的 EV
+
+`scripts/streak_defense.py` 與 `scripts/kong_ev.py` 用配對種子的自對局，量化
+兩個策略問題：分座位對連莊莊家的防守、以及各型槓的邊際 EV。方法、指令與數據
+見 [docs/experiments.md](docs/experiments.md)。誠實範圍：攻擊側的蒙地卡羅勝值
+以對稱方式計三家，未特別加計「胡莊多收的連莊溢價」（低估非莊家 ≤ P/3 一次胡的
+量級）；槓的 dead wall 不從活牌牆回填。

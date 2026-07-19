@@ -28,8 +28,12 @@ import taimahjong.ev as ev
 import taimahjong.selfplay as selfplay
 from taimahjong.selfplay import play_game
 
-POLICIES = ("attack", "cautious", "cautious", "cautious")
 SEAT_LABEL = {1: "downstream", 2: "across", 3: "upstream"}
+# The dealer (seat 0) always pushes; seats 1-3 share a defender policy. cautious
+# defends via a fold-gated dealer weight; ev_aware prices the dealer on every
+# discard through opponent_value_estimate — the two channels respond differently
+# to the dealer-aware toggle.
+DEFENDERS = {"cautious", "ev_aware"}
 
 
 @contextlib.contextmanager
@@ -46,13 +50,14 @@ def dealer_awareness(enabled: bool):
         ev.OPPONENT_DEALER_TAI, ev.OPPONENT_STREAK_TAI_PER_WIN, selfplay.CAUTIOUS_DEALER_BONUS = saved
 
 
-def _run(games: int, seed: int, streak: int, aware: bool) -> dict:
+def _run(games: int, seed: int, streak: int, aware: bool, defenders: str) -> dict:
+    policies = ("attack", defenders, defenders, defenders)
     points = [0, 0, 0, 0]
     deal_in_to_dealer = {1: 0, 2: 0, 3: 0}
     dealer_wins = 0
     with dealer_awareness(aware):
         for offset in range(games):
-            game = play_game(seed + offset, POLICIES, dealer_streak=streak)
+            game = play_game(seed + offset, policies, dealer_streak=streak)
             for seat in range(4):
                 points[seat] += game.point_deltas[seat]
             if game.outcome == "ron" and game.winner == 0 and game.discarder in deal_in_to_dealer:
@@ -61,6 +66,7 @@ def _run(games: int, seed: int, streak: int, aware: bool) -> dict:
     return {
         "streak": streak,
         "dealer_aware": aware,
+        "defenders": defenders,
         "games": games,
         "dealer_point_ev": points[0] / games,
         "dealer_win_rate": dealer_wins / games,
@@ -79,8 +85,9 @@ def main() -> None:
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--streak", type=int, required=True)
     parser.add_argument("--dealer-aware", choices=("on", "off"), required=True)
+    parser.add_argument("--defenders", choices=sorted(DEFENDERS), default="cautious")
     args = parser.parse_args()
-    print(json.dumps(_run(args.games, args.seed, args.streak, args.dealer_aware == "on")))
+    print(json.dumps(_run(args.games, args.seed, args.streak, args.dealer_aware == "on", args.defenders)))
 
 
 if __name__ == "__main__":
