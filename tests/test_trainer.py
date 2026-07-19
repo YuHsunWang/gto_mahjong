@@ -4,11 +4,15 @@ import pytest
 
 from taimahjong.quiz import grade
 from taimahjong.trainer import (
+    KongOption,
     TrainerCallDecision,
     TrainerDecision,
+    TrainerKongDecision,
     TrainerOutcome,
     _outcome,
+    _human_kong_options,
     evaluate_call,
+    evaluate_kong,
     play_trainer,
 )
 
@@ -190,6 +194,92 @@ def test_trainer_rejects_invalid_call_choice():
     pytest.fail("no call decision in seeds 1-19")
 
 
+# --- M6: self-draw kong decisions ---
+
+def test_kong_options_are_legal_and_shanten_safe():
+    """Only four-in-hand 暗槓 and a pon's drawn fourth 加槓 may be offered, and
+    either must preserve or improve shanten."""
+    from taimahjong.selfplay import Player, _cached_shanten, _declared
+
+    concealed = Player("attack")
+    for tile, count in ((0, 1), (5, 1), (9, 3), (11, 1), (16, 4), (17, 2), (21, 1), (22, 1), (23, 1), (24, 1), (29, 1)):
+        concealed.hand[tile] = count
+    options = _human_kong_options(concealed)
+    assert options == (KongOption("concealed", 16, 3),)
+    assert options[0].post_shanten <= _cached_shanten(tuple(concealed.hand), _declared(concealed))
+
+    added = Player("attack")
+    added.melds.append((9, 9, 9))
+    for tile, count in ((1, 1), (3, 1), (4, 1), (8, 3), (9, 1), (12, 1), (15, 1), (18, 1), (24, 2), (25, 1), (26, 1)):
+        added.hand[tile] = count
+    assert _human_kong_options(added) == (KongOption("added", 9, 3),)
+
+    unsound = Player("attack")
+    for tile, count in enumerate((4, 3, 3, 3, 3, 1)):
+        unsound.hand[tile] = count
+    assert _human_kong_options(unsound) == ()
+
+
+def test_kong_verdict_is_adaptive_and_deterministic(monkeypatch):
+    """Kong grading keeps the call grader's CRN/adaptive-budget contract rather
+    than assigning a fixed, noisy grade to a replacement-draw choice."""
+    from dataclasses import replace
+    import taimahjong.trainer as trainer
+    from taimahjong.selfplay import _cached_shanten
+
+    position = next(play_trainer(1)).position
+    hand = [0] * 34
+    for tile, count in ((0, 1), (5, 1), (9, 3), (11, 1), (16, 4), (17, 2), (21, 1), (22, 1), (23, 1), (24, 1), (29, 1)):
+        hand[tile] = count
+    hand_tuple = tuple(hand)
+    position = replace(
+        position, hand=hand_tuple, own_melds=(), public_counts=(0,) * 34,
+        visible_counts=hand_tuple, shanten=_cached_shanten(hand_tuple, 0), draws_remaining=1,
+    )
+    decision = TrainerKongDecision(position, (KongOption("concealed", 16, 3),))
+    monkeypatch.setattr(trainer.quiz, "EV_SIMS", 1)
+    monkeypatch.setattr(trainer.quiz, "REFINE_SIMS", 2)
+    monkeypatch.setattr(trainer.quiz, "ESCALATE_SIMS", 3)
+    calls = []
+    original = trainer.quiz.resolve_adaptive
+
+    def traced(estimate, shanten):
+        calls.append(shanten)
+        return original(estimate, shanten)
+
+    monkeypatch.setattr(trainer.quiz, "resolve_adaptive", traced)
+    a = evaluate_kong(decision, seed=41)
+    b = evaluate_kong(decision, seed=41)
+    choice = 0 if a.best_index is None else None
+    assert a == b
+    assert a.verdict_for(choice) == b.verdict_for(choice)
+    assert calls == [max(position.shanten, 3), max(position.shanten, 3)]
+
+
+def test_human_added_kong_can_be_robbed_and_skip_reaches_discard(monkeypatch):
+    """A selected 加槓 checks 搶槓 before mutation; declining it simply reaches
+    the trainer's normal discard prompt."""
+    import taimahjong.trainer as trainer
+
+    forced = (KongOption("added", 0, 0),)
+    monkeypatch.setattr(trainer, "_human_kong_options", lambda player: forced)
+    monkeypatch.setattr(trainer, "_settlement", lambda *args, **kwargs: ((-5, 5, 0, 0), 5))
+
+    skipped = play_trainer(1)
+    item = next(skipped)
+    assert isinstance(item, TrainerKongDecision)
+    assert isinstance(skipped.send(None), TrainerDecision)
+
+    monkeypatch.setattr(trainer, "_robbing_winner", lambda players, konger, tile: 1)
+    robbed = play_trainer(1)
+    item = next(robbed)
+    assert isinstance(item, TrainerKongDecision)
+    outcome = robbed.send(0)
+    assert outcome.robbed_kong is True
+    assert outcome.human_dealt_in is True
+    assert outcome.headline == "被搶槓…"
+
+
 # --- M4: 連莊 state machine and dealer-aware trainer positions ---
 
 def test_streak_increments_on_dealer_win_and_draw():
@@ -220,7 +310,7 @@ def test_streak_raises_dealer_opponent_value_in_a_trainer_position():
         gen = play_trainer(1, human_seat=1, dealer_streak=streak)
         item = next(gen)
         while not isinstance(item, TrainerDecision):
-            item = gen.send(None if isinstance(item, TrainerCallDecision) else _discard_drawn(item.position))
+            item = gen.send(None if isinstance(item, (TrainerCallDecision, TrainerKongDecision)) else _discard_drawn(item.position))
         dealer = next(opponent for opponent in item.position.opponents if opponent.seat == 0)
         return dealer.view()
 

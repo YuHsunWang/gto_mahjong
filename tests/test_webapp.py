@@ -3,6 +3,7 @@
 from streamlit.testing.v1 import AppTest
 
 from taimahjong.quiz import generate_position, grade
+from taimahjong.trainer import KongOption, KongVerdict, TrainerKongDecision, play_trainer
 
 
 APP = "webapp/app.py"
@@ -73,6 +74,35 @@ def test_trainer_handles_call_decisions_without_error():
     # The call UI is exercised opportunistically; reaching it is not guaranteed
     # within the step budget, so absence is acceptable, a crash is not.
     _ = exercised_call
+
+
+def test_trainer_kong_decision_reaches_feedback_without_error(monkeypatch):
+    """The dedicated 暗槓／加槓 renderer follows the same choose -> grade ->
+    feedback flow as calls; a lightweight evaluator keeps this UI test focused."""
+    import taimahjong.trainer as trainer
+
+    position = next(play_trainer(1)).position
+    decision = TrainerKongDecision(
+        position, (KongOption("concealed", position.drawn_tile, position.shanten),),
+    )
+
+    class FakeEvaluation:
+        pass_ev = 1.0
+        option_evs = (1.5,)
+        best_index = 0
+        best_ev = 1.5
+
+        def verdict_for(self, choice):
+            return KongVerdict("good", 0.2, 200, False, self.best_ev)
+
+    monkeypatch.setattr(trainer, "evaluate_kong", lambda item: FakeEvaluation())
+    app = _app()
+    app.session_state["trainer_item"] = decision
+    app.session_state["trainer_score"] = {"decisions": 0, "best": 0, "loss": 0.0}
+    app.run(timeout=60)
+    app.button(key="trainer_kong_0").click().run(timeout=60)
+    assert not app.exception
+    assert any(button.key == "trainer_kong_next" for button in app.button)
 
 
 def test_quiz_fixed_seed_best_discard_shows_verdict():

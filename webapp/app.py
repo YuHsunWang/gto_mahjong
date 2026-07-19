@@ -22,8 +22,10 @@ from taimahjong.tiles import SUIT_OFFSETS, format_tiles, parse_tiles
 from taimahjong.trainer import (
     TrainerCallDecision,
     TrainerDecision,
+    TrainerKongDecision,
     TrainerOutcome,
     evaluate_call,
+    evaluate_kong,
     play_trainer,
 )
 
@@ -406,6 +408,8 @@ def _trainer_start(seed: int, human_seat: int = 0, dealer_streak: int = 0) -> No
     st.session_state.trainer_pending_tile = None
     st.session_state.trainer_call_feedback = None
     st.session_state.pop("trainer_call_pending", None)
+    st.session_state.trainer_kong_feedback = None
+    st.session_state.pop("trainer_kong_pending", None)
 
 
 # The human's seat choice, labelled by where the fixed seat-0 dealer sits
@@ -439,8 +443,21 @@ def _trainer_call_advance() -> None:
     st.session_state.pop("trainer_call_pending", None)
 
 
+def _trainer_kong_advance() -> None:
+    """Send the chosen kong (option index) or skip (None) into the generator."""
+    pending = st.session_state.trainer_kong_pending
+    choice = None if pending == "skip" else int(pending)
+    st.session_state.trainer_item = st.session_state.trainer_gen.send(choice)
+    st.session_state.trainer_kong_feedback = None
+    st.session_state.pop("trainer_kong_pending", None)
+
+
 def _call_label(option) -> str:
     return ("碰 " if option.kind == "pon" else "吃 ") + "".join(face_text(tile) for tile in option.meld)
+
+
+def _kong_label(option) -> str:
+    return ("暗槓 " if option.kind == "concealed" else "加槓 ") + face_text(option.tile)
 
 
 def _verdict_label(verdict: str, marginal: bool) -> str:
@@ -517,6 +534,58 @@ def show_trainer_call(item: TrainerCallDecision) -> None:
     st.button("繼續 ▶", type="primary", key="trainer_call_next", on_click=_trainer_call_advance)
 
 
+def show_trainer_kong(item: TrainerKongDecision) -> None:
+    """Kong decision: choose, receive shared-EV feedback, then advance."""
+    position = item.position
+    render_position(position)
+    pending = st.session_state.get("trainer_kong_pending")
+    feedback = st.session_state.get("trainer_kong_feedback")
+
+    if pending is None and feedback is None:
+        st.markdown(hand_view(position.hand, position.drawn_tile), unsafe_allow_html=True)
+        st.caption("剛摸入的牌可形成不惡化向聽數的槓 — 要宣告嗎？")
+        columns = st.columns(len(item.options) + 1, gap="small")
+        for index, option in enumerate(item.options):
+            with columns[index]:
+                if st.button(_kong_label(option), key=f"trainer_kong_{index}"):
+                    st.session_state.trainer_kong_pending = index
+                    st.rerun()
+        with columns[-1]:
+            if st.button("不槓", key="trainer_kong_skip"):
+                st.session_state.trainer_kong_pending = "skip"
+                st.rerun()
+        return
+
+    if feedback is None:
+        st.markdown(hand_view(position.hand, position.drawn_tile), unsafe_allow_html=True)
+        st.caption("計算槓的 EV 中…")
+        with st.spinner("計算 EV…"):
+            evaluation = evaluate_kong(item)
+        choice = None if pending == "skip" else int(pending)
+        result = evaluation.verdict_for(choice)
+        score = st.session_state.trainer_score
+        score["decisions"] += 1
+        score["best"] += int(result.verdict == "best")
+        score["loss"] += result.ev_loss
+        st.session_state.trainer_kong_feedback = (evaluation, choice, result)
+        st.rerun()
+        return
+
+    st.markdown(hand_view(position.hand, position.drawn_tile), unsafe_allow_html=True)
+    evaluation, choice, result = feedback
+    chosen = "不槓" if choice is None else _kong_label(item.options[choice])
+    _show_verdict(result.verdict, f"你選擇：{chosen} · {_verdict_message(result.verdict, result.marginal, result.ev_delta)}")
+    if evaluation.best_index is None:
+        st.caption(f"最佳：不槓，EV {result.best_ev:.1f} 台")
+    else:
+        st.caption(f"最佳：{_kong_label(item.options[evaluation.best_index])}，EV {result.best_ev:.1f} 台")
+    rows = [{"選項": "不槓", "EV（台）": round(evaluation.pass_ev, 1)}]
+    for index, option in enumerate(item.options):
+        rows.append({"選項": _kong_label(option), "EV（台）": round(evaluation.option_evs[index], 1)})
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.button("繼續 ▶", type="primary", key="trainer_kong_next", on_click=_trainer_kong_advance)
+
+
 def show_trainer() -> None:
     st.subheader("實戰")
     st.caption("一局打到底，每一手切牌都即時給你 EV 回饋與計分（GTO Wizard 式）。")
@@ -538,7 +607,7 @@ def show_trainer() -> None:
             with st.spinner("發牌中…"):
                 _trainer_start(seed, int(human_seat), streak)
             st.rerun()
-        st.info("每手切牌、以及可以吃碰時，都會即時給 EV 回饋（槓為後續階段）。")
+        st.info("每手切牌，以及可吃碰或可宣告不惡化向聽數的暗槓／加槓時，都會即時給 EV 回饋。")
         return
 
     if isinstance(item, TrainerOutcome):
@@ -564,6 +633,10 @@ def show_trainer() -> None:
         return
 
     _trainer_scorecard()
+
+    if isinstance(item, TrainerKongDecision):
+        show_trainer_kong(item)
+        return
 
     if isinstance(item, TrainerCallDecision):
         show_trainer_call(item)
