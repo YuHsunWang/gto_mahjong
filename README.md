@@ -461,19 +461,27 @@ Best 9s: higher win EV by 0.46 tai than the next-ranked choice.
 Chosen 9s: matches the best's higher win-EV component.
 ```
 
-## M9 Streamlit 教學介面
+## M9 Web 教學介面（W1–W3：FastAPI + SPA）
 
-安裝 UI 層唯一相依套件後，在專案根目錄啟動：
+安裝相依套件後，在專案根目錄啟動 API 與網頁：
 
 ```bash
 pip install -r requirements.txt
-streamlit run webapp/app.py
+uvicorn server.api:app
+# 瀏覽 http://127.0.0.1:8000/
 ```
 
-手機瀏覽器可直接在牌桌旁使用，四個分頁：單題（抽一題練切牌）、實戰
-（一局打到底、每手 EV 回饋）、切牌分析（輸入緊湊記法與對手河牌）、算台
-（逐項台數）。牌局以雀魂式十字河呈現：四家牌河朝中心聚集、手牌在近端。
-核心引擎沒有 Streamlit 相依，UI 只直接呼叫既有 Python API。
+單頁應用（`server/static/`，無建置步驟的原生 ES modules）提供三種訓練模式與
+兩個工具：整場（一局打到底、每個切牌／鳴牌／槓決策即時 EV 評分）、單手（抽
+一題練切牌）、殘局（牌牆將盡的高壓局面，自動標記進攻／防守題）、切牌分析、
+算台。牌桌為雀魂式十字河（四家牌河朝中心聚集、手牌在近端），回饋為 GTO
+Wizard 式（判定徽章、EV 差、最佳解標記、可展開的 EV 排名表）；各模式答題
+紀錄存在瀏覽器 localStorage，首頁顯示每模式的最佳率走勢。桌面固定顯示
+「本桌無花牌」。JSON API 見 `server/api.py`（`/api/quiz`、`/api/endgame`、
+`/api/trainer`、`/api/ev/rank`、`/api/score`）。
+
+核心引擎沒有 Web 相依，API 層只直接呼叫既有 Python API。原 Streamlit 版
+（`webapp/app.py`）已於 2026-07-20 在 SPA 達功能對等後退役。
 
 ### 實戰訓練器（M10，Phase 1）
 
@@ -488,9 +496,8 @@ Phase 2。所有機率仍是對機器人校準、非真人牌局。
 莊的胡牌價值，也拉高放槍給莊的代價（見上方 M5a 連莊雙向規則）；「再來一局」
 依莊胡／流局續莊或閒胡過莊自動更新連莊數與座位。
 
-部署到 Streamlit Community Cloud：使用者先自行將此專案推送到 GitHub，然後在
-Community Cloud 選擇該 repository／branch，將主檔設定為 `webapp/app.py`，並以
-`requirements.txt` 作為相依清單後部署。請勿在這個專案中新增 remote 或代為推送。
+本工具定位為單人本機使用（trainer 對局狀態存在 API 行程記憶體內），
+不做雲端部署。請勿在這個專案中新增 remote 或代為推送。
 
 ## M11 自對局實驗：連莊防守與槓的 EV
 

@@ -173,3 +173,11 @@ def _tile(text: str) -> int:
 
 def test_health(client):
     assert client.get("/api/health").json() == {"status": "ok"}
+
+
+def test_static_spa_is_served_at_root(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "台灣麻將教室" in response.text
+    assert client.get("/js/main.js").status_code == 200
+    assert client.get("/style.css").status_code == 200
