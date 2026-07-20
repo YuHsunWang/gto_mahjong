@@ -1,11 +1,13 @@
-// Tile faces drawn as DOM elements from the current design (Noto Serif TC
-// faces on bone), matching the engine's 0-33 tile indexing.
+// Tile faces drawn as SVG from extracted Noto Serif TC outlines and pip layouts,
+// matching the engine's 0-33 tile indexing.
+
+import { TILE_GLYPHS } from './tile-faces.js';
 
 const NUMERALS = '一二三四五六七八九';
 const SUIT_CHARS = '萬筒條';
 const HONOR_FACES = ['東', '南', '西', '北', '白', '發', '中'];
 
-const HONOR_COLORS = ['var(--wind)', 'var(--wind)', 'var(--wind)', 'var(--wind)', 'var(--bone-shadow)', 'var(--green)', 'var(--red)'];
+const HONOR_COLORS = ['var(--wind)', 'var(--wind)', 'var(--wind)', 'var(--wind)', null, 'var(--green)', 'var(--red)'];
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -79,6 +81,48 @@ function suitFaceSvg(suit, rank) {
   return svg;
 }
 
+function glyphPath(svg, glyph, fill, transform = null) {
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', TILE_GLYPHS[glyph].path);
+  path.setAttribute('fill', fill);
+  if (transform) path.setAttribute('transform', transform);
+  svg.append(path);
+}
+
+function honorFaceSvg(glyph, fill) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 1000 1200');
+  svg.classList.add('face');
+  glyphPath(svg, glyph, fill, 'translate(0 100)');
+  return svg;
+}
+
+function manFaceSvg(rank) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 1000 1600');
+  svg.classList.add('face');
+  glyphPath(svg, NUMERALS[rank - 1], 'var(--red)', 'translate(100 40) scale(.8)');
+  glyphPath(svg, SUIT_CHARS[0], 'var(--blue)', 'translate(100 760) scale(.8)');
+  return svg;
+}
+
+function whiteDragonFaceSvg() {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 30 42');
+  svg.classList.add('face');
+  const frame = document.createElementNS(SVG_NS, 'rect');
+  frame.setAttribute('x', '4.5');
+  frame.setAttribute('y', '5');
+  frame.setAttribute('width', '21');
+  frame.setAttribute('height', '32');
+  frame.setAttribute('rx', '2.5');
+  frame.setAttribute('fill', 'none');
+  frame.setAttribute('stroke', 'var(--blue)');
+  frame.setAttribute('stroke-width', '1.25');
+  svg.append(frame);
+  return svg;
+}
+
 export function faceText(tile) {
   if (tile < 27) return NUMERALS[tile % 9] + SUIT_CHARS[Math.floor(tile / 9)];
   return HONOR_FACES[tile - 27];
@@ -95,26 +139,16 @@ export function tileEl(tile, { size = 'lg', classes = [], as = 'div' } = {}) {
   el.className = ['tile', size, ...classes].join(' ');
   el.title = faceText(tile);
   if (as === 'button') el.type = 'button';
-  if (tile === 31) return el; // white dragon: blank face like the real tile
+  if (tile === 31) {
+    el.append(whiteDragonFaceSvg());
+    return el;
+  }
   if (tile < 27) {
     const suit = Math.floor(tile / 9);
     const rank = (tile % 9) + 1;
-    if (suit === 0) { // 萬 stays a character tile, like the real thing
-      const top = document.createElement('span');
-      top.style.color = 'var(--red)';
-      top.textContent = NUMERALS[tile % 9];
-      const bottom = document.createElement('span');
-      bottom.style.color = 'var(--blue)';
-      bottom.textContent = SUIT_CHARS[0];
-      el.append(top, bottom);
-    } else {
-      el.append(suitFaceSvg(suit, rank));
-    }
+    el.append(suit === 0 ? manFaceSvg(rank) : suitFaceSvg(suit, rank));
   } else {
-    const face = document.createElement('span');
-    face.style.color = HONOR_COLORS[tile - 27];
-    face.textContent = HONOR_FACES[tile - 27];
-    el.append(face);
+    el.append(honorFaceSvg(HONOR_FACES[tile - 27], HONOR_COLORS[tile - 27]));
   }
   return el;
 }

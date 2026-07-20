@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>麻將牌面預覽</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { padding: 24px; }
+    main { max-width: 900px; margin: auto; }
+    .tile-grid { display: grid; grid-template-columns: repeat(9, max-content); gap: 8px; align-items: end; }
+    .tile-grid.small { gap: 5px; }
+    .tile-grid .tile { margin: 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>34 種麻將牌面</h1>
+    <h2>大牌</h2>
+    <div class="tile-grid" id="large-tiles"></div>
+    <h2>小牌</h2>
+    <div class="tile-grid small" id="small-tiles"></div>
+  </main>
+  <script type="module">
+    import { tileEl } from '/js/tiles.js';
+    for (const size of ['lg', 'sm']) {
+      const grid = document.getElementById(size === 'lg' ? 'large-tiles' : 'small-tiles');
+      for (let tile = 0; tile < 34; tile += 1) grid.append(tileEl(tile, { size }));
+    }
+  </script>
+</body>
+</html>
