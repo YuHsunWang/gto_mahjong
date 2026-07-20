@@ -6,6 +6,7 @@ import { post, showError, randomSeed } from './api.js';
 import { feltEl, handEl, computingEl, faceText } from './table.js';
 import { verdictEl, evDetailsEl, bestLineEl, VERDICT_LABELS } from './feedback.js';
 import { record } from './stats.js';
+import { schemeToggle, schemeParams } from './scheme.js';
 
 const TAG_LABELS = { attack: '進攻題（推）', defense: '防守題（守）' };
 
@@ -65,7 +66,7 @@ export function drillScreen(root, { apiBase, mode, title }) {
     chosenTile = tile;
     render();
     try {
-      const body = await post(`${apiBase}/grade`, { seed, tile });
+      const body = await post(`${apiBase}/grade`, { seed, tile, ...schemeParams() });
       gradeResult = body.grade;
       record(mode, gradeResult.verdict, gradeResult.ev_loss);
       phase = 'feedback';
@@ -104,6 +105,12 @@ export function drillScreen(root, { apiBase, mode, title }) {
 
     const inFeedback = phase === 'feedback';
     root.append(feltEl(position));
+
+    // Switching the 底/台 scheme re-grades the same tile, so you see how the
+    // verdict/EV move under a different payout convention on the same position.
+    root.append(schemeToggle(() => {
+      if (phase === 'feedback' && chosenTile !== null) gradeTile(chosenTile);
+    }));
 
     if (phase === 'awaiting') {
       const hint = document.createElement('div');

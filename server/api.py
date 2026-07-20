@@ -37,8 +37,10 @@ from taimahjong.danger import OpponentView, RiverEntry, fold_score, parse_river,
 from taimahjong.endgame import EndgamePosition, generate_endgame_position
 from taimahjong.ev import EVRankEntry, ev_rank, remaining_draws
 from taimahjong.quiz import QuizGrade, QuizPosition, explain, generate_position, grade
-from taimahjong.scoring import BASE_UNITS, WinContext, score_hand
+from taimahjong.scoring import BASE_UNITS, DEFAULT_SCHEME, ScoringScheme, WinContext, score_hand
 from taimahjong.tiles import parse_tiles
+from taimahjong.shanten import shanten
+from taimahjong.ukeire import discard_analysis, ukeire
 from taimahjong.trainer import (
     TrainerCallDecision,
     TrainerDecision,
@@ -178,6 +180,25 @@ def _grade_payload(result: QuizGrade) -> dict[str, Any]:
 # Quiz + endgame drills (stateless: the seed reproduces the position)
 
 
+# 底/台 payout scheme. Absent → the house default (底3台1). Both fields must be
+# present together; bounds keep a stray value from making the EV nonsensical.
+class SchemeRequest(BaseModel):
+    base_units: int | None = None
+    tai_units: int | None = None
+
+
+def _scheme(request: "SchemeRequest | GradeRequest | TrainerActRequest | EvRankRequest") -> ScoringScheme:
+    base = getattr(request, "base_units", None)
+    tai = getattr(request, "tai_units", None)
+    if base is None and tai is None:
+        return DEFAULT_SCHEME
+    if base is None or tai is None:
+        raise HTTPException(status_code=422, detail="base_units and tai_units must be given together")
+    if not (0 <= base <= 100) or not (1 <= tai <= 100):
+        raise HTTPException(status_code=422, detail="base_units 0-100 and tai_units 1-100")
+    return ScoringScheme(base, tai)
+
+
 class SeedRequest(BaseModel):
     seed: int | None = None
 
@@ -185,6 +206,8 @@ class SeedRequest(BaseModel):
 class GradeRequest(BaseModel):
     seed: int
     tile: int
+    base_units: int | None = None
+    tai_units: int | None = None
 
 
 @lru_cache(maxsize=128)
@@ -218,7 +241,7 @@ def quiz_new(request: SeedRequest) -> dict[str, Any]:
 @app.post("/api/quiz/grade")
 def quiz_grade(request: GradeRequest) -> dict[str, Any]:
     position = _engine(_quiz_position, request.seed)
-    return {"grade": _grade_payload(_engine(grade, position, request.tile))}
+    return {"grade": _grade_payload(_engine(grade, position, request.tile, _scheme(request)))}
 
 
 @app.post("/api/endgame/new")
@@ -230,7 +253,7 @@ def endgame_new(request: SeedRequest) -> dict[str, Any]:
 @app.post("/api/endgame/grade")
 def endgame_grade(request: GradeRequest) -> dict[str, Any]:
     drill = _engine(_endgame_position, request.seed)
-    return {"grade": _grade_payload(_engine(grade, drill.position, request.tile)), "tag": drill.tag}
+    return {"grade": _grade_payload(_engine(grade, drill.position, request.tile, _scheme(request))), "tag": drill.tag}
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +287,8 @@ class TrainerActRequest(BaseModel):
     action: str  # "discard" | "kong" | "call"
     tile: int | None = None  # discard only
     option: int | None = None  # kong/call: option index, or None to skip/pass
+    base_units: int | None = None
+    tai_units: int | None = None
 
 
 def _decision_payload(item: Any) -> dict[str, Any]:
@@ -371,13 +396,14 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
         item = session.current
         if isinstance(item, TrainerOutcome):
             raise HTTPException(status_code=409, detail="hand is already over")
+        scheme = _scheme(request)
 
         if isinstance(item, TrainerDecision):
             if request.action != "discard" or request.tile is None:
                 raise HTTPException(status_code=422, detail="current decision expects action=discard with a tile")
             # grade() validates the tile before anything is sent into the
             # generator — a bad send would terminate the game generator.
-            result = _engine(grade, item.position, request.tile)
+            result = _engine(grade, item.position, request.tile, scheme)
             _record(session, result.verdict, result.ev_loss)
             session.feedback = {"kind": "discard", "chosen_tile": request.tile, **_grade_payload(result)}
             session.current = session.generator.send(request.tile)
@@ -385,7 +411,7 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
             if request.action != "kong":
                 raise HTTPException(status_code=422, detail="current decision expects action=kong")
             choice = _validate_option(item.options, request.option)
-            evaluation = evaluate_kong(item)
+            evaluation = evaluate_kong(item, scheme=scheme)
             result = evaluation.verdict_for(choice)
             _record(session, result.verdict, result.ev_loss)
             session.feedback = {
@@ -406,7 +432,7 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
             if request.action != "call":
                 raise HTTPException(status_code=422, detail="current decision expects action=call")
             choice = _validate_option(item.options, request.option)
-            evaluation = evaluate_call(item)
+            evaluation = evaluate_call(item, scheme=scheme)
             result = evaluation.verdict_for(choice)
             _record(session, result.verdict, result.ev_loss)
             session.feedback = {
@@ -443,6 +469,8 @@ class EvRankRequest(BaseModel):
     turns: int = 0  # 0 = derive from the visible pool
     sims: int = 400
     seed: int = 7
+    base_units: int | None = None
+    tai_units: int | None = None
 
 
 class ScoreRequest(BaseModel):
@@ -475,6 +503,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
         entries = ev_rank(
             counts, [] if opponent is None else [opponent], visible,
             turns=turns, sims=request.sims, seed=request.seed, calibration=_calibration(),
+            scheme=_scheme(request),
         )
         payload: dict[str, Any] = {"turns": turns, "entries": [_entry_payload(entry) for entry in entries]}
         if opponent is not None:
@@ -508,6 +537,63 @@ def score_endpoint(request: ScoreRequest) -> dict[str, Any]:
             "value_units": result.value_units,
             "base_units": BASE_UNITS,
         }
+
+    return _engine(run)
+
+
+# ---------------------------------------------------------------------------
+# Tile acceptance (進張) for the teaching section — pure efficiency, no EV/Monte
+# Carlo, so it is fast and deterministic.
+
+
+class UkeireRequest(BaseModel):
+    hand: str
+    melds_declared: int = 0
+    visible: str = ""
+
+
+def _ukeire_tiles(accepted: dict[int, int]) -> list[dict[str, int]]:
+    return [{"tile": tile, "copies": copies} for tile, copies in sorted(accepted.items())]
+
+
+@app.post("/api/ukeire")
+def ukeire_endpoint(request: UkeireRequest) -> dict[str, Any]:
+    """Shanten + tile acceptance for a hand.
+
+    A post-draw hand (17 tiles minus 3 per declared meld) returns the ranked
+    per-discard analysis (which tile to cut); a pre-draw hand (16 minus 3 per
+    meld) returns the current hand's acceptance (used to compare call shapes).
+    """
+    def run() -> dict[str, Any]:
+        counts = parse_tiles(request.hand)
+        seen = None if not request.visible.strip() else parse_tiles(request.visible)
+        melds = request.melds_declared
+        total = sum(counts)
+        if total == 17 - 3 * melds:
+            analyses = discard_analysis(counts, melds, seen)
+            return {
+                "mode": "discard",
+                "discards": [
+                    {
+                        "discard": a.discard,
+                        "shanten_after": a.shanten_after,
+                        "total": a.total,
+                        "ukeire": _ukeire_tiles(a.ukeire),
+                    }
+                    for a in analyses
+                ],
+            }
+        if total == 16 - 3 * melds:
+            accepted = ukeire(counts, melds, seen)
+            return {
+                "mode": "accept",
+                "shanten": shanten(counts, melds),
+                "total": sum(accepted.values()),
+                "ukeire": _ukeire_tiles(accepted),
+            }
+        raise ValueError(
+            f"hand has {total} tiles; expected {17 - 3 * melds} (post-draw) or {16 - 3 * melds} (pre-draw) for {melds} declared meld(s)"
+        )
 
     return _engine(run)
 

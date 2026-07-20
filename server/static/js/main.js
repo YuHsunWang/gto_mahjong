@@ -3,6 +3,7 @@
 import { drillScreen } from './quiz.js';
 import { trainerScreen } from './trainer.js';
 import { analyzeScreen, scoreScreen } from './tools.js';
+import { lessonsScreen } from './lessons.js';
 import { summary, accuracySeries, sparklineEl } from './stats.js';
 import { tileEl } from './tiles.js';
 
@@ -86,6 +87,14 @@ function homeScreen(root) {
   MODES.forEach((mode) => cards.append(modeCard(mode)));
   root.append(cards);
 
+  const teach = document.createElement('a');
+  teach.className = 'card teach-card';
+  teach.href = '#/lessons';
+  teach.innerHTML = '<div class="card-head"><span class="card-name">教學</span>'
+    + '<span class="card-en">Basics</span></div>'
+    + '<div class="card-desc">幾個基本牌效觀念（孤張、聽面、吃碰取捨…），每題有引擎進張佐證。</div>';
+  root.append(teach);
+
   const tools = document.createElement('div');
   tools.className = 'tools-row';
   [['#/analyze', '切牌分析', '任意局面 EV 排名'], ['#/score', '算台', '和牌台數計算']].forEach(([hash, name, desc]) => {
@@ -124,6 +133,7 @@ const ROUTES = {
   '#/quiz': (root) => drillScreen(root, { apiBase: '/api/quiz', mode: 'quiz', title: '單手練習' }),
   '#/endgame': (root) => drillScreen(root, { apiBase: '/api/endgame', mode: 'endgame', title: '殘局練習' }),
   '#/trainer': trainerScreen,
+  '#/lessons': lessonsScreen,
   '#/analyze': analyzeScreen,
   '#/score': scoreScreen,
 };

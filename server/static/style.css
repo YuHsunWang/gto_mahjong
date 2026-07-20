@@ -292,6 +292,36 @@ button {
   margin: 8px 0 2px;
 }
 
+/* 底/台 scheme segmented toggle */
+.scheme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 8px 0 2px;
+}
+
+.scheme-caption { color: var(--ink-faint); font-size: 12px; }
+
+.scheme-toggle button {
+  background: var(--panel);
+  color: var(--ink-dim);
+  border: 1px solid rgba(217, 194, 230, .28);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12.5px;
+  font-family: var(--serif);
+}
+
+.scheme-toggle button.active {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: #241300;
+  font-weight: 800;
+}
+
+.scheme-toggle button:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+
 /* ---------- call / kong prompt ---------- */
 
 .callbar {
@@ -601,6 +631,71 @@ details.evwrap summary {
 .card .card-stats b { color: var(--ink); }
 .card .spark { flex: 1 1 auto; text-align: right; }
 .card .spark svg { vertical-align: middle; }
+
+.teach-card { margin-top: 10px; }
+.teach-card .card-en { color: var(--ink-faint); font-size: 11px; margin-left: 8px; }
+
+/* teaching lesson screen */
+.lesson-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: linear-gradient(150deg, var(--felt-1), var(--felt-0));
+  border: 1px solid rgba(217, 194, 230, .2);
+  border-radius: 14px;
+  padding: 13px 16px;
+  color: var(--ink);
+}
+.lesson-card:hover { border-color: var(--gold); }
+
+.lesson-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  justify-content: center;
+  background: linear-gradient(var(--felt-1), var(--felt-0));
+  border: 8px solid var(--wood);
+  border-radius: 14px;
+  padding: 10px 6px;
+  margin: 4px 0 10px;
+}
+
+.lesson-question { font-size: 14.5px; margin: 8px 2px 6px; }
+
+.lesson-answer {
+  background: rgba(46, 158, 91, .16);
+  border: 1px solid rgba(46, 158, 91, .5);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.lesson-points { margin-top: 10px; }
+.lesson-points p {
+  position: relative;
+  color: var(--ink-dim);
+  font-size: 13.5px;
+  line-height: 1.65;
+  margin: 0 0 10px;
+  padding-left: 26px;
+}
+.lesson-point-n {
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--gold);
+  color: #241300;
+  font-size: 11px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 
 .tools-row { display: flex; gap: 10px; margin-top: 14px; }
 .tools-row .card { flex: 1 1 0; padding: 10px 14px; }

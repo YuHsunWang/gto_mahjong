@@ -8,7 +8,7 @@ from math import ceil, comb
 
 from .calibration import Calibration
 from .danger import OpponentView, _flush_suit, danger_score, fold_score, tenpai_score
-from .scoring import BASE_UNITS, WinContext, score_hand
+from .scoring import BASE_UNITS, DEFAULT_SCHEME, ScoringScheme, WinContext, score_hand
 from .shanten import shanten
 from .simulate import winning_trials
 from .tiles import validate_counts
@@ -132,7 +132,7 @@ def _template(template: WinContext | WinValueContext | None) -> tuple[WinContext
     raise ValueError("context_template must be WinContext or WinValueContext")
 
 
-def _score_value(hand: tuple[int, ...], winning_tile: int, template: WinContext | WinValueContext | None, migi: bool | None = None) -> int:
+def _score_value(hand: tuple[int, ...], winning_tile: int, template: WinContext | WinValueContext | None, migi: bool | None = None, scheme: ScoringScheme = DEFAULT_SCHEME) -> int:
     # The acting player's OWN dealer/streak premium is honored via the template
     # (self-draw here). Honest approximation: a non-dealer winner collects the
     # bilateral premium only when the payer is the dealer (ron off dealer, or
@@ -145,7 +145,7 @@ def _score_value(hand: tuple[int, ...], winning_tile: int, template: WinContext 
         hand,
         list(melds),
         replace(context, winning_tile=winning_tile, self_draw=True, migi_declared=context.migi_declared if migi is None else migi),
-    ).value_units
+    ).value_in(scheme)
 
 
 def estimate_win_value(
@@ -156,6 +156,7 @@ def estimate_win_value(
     sims: int = 400,
     seed: int | None = None,
     context_template: WinContext | WinValueContext | None = None,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
 ) -> WinValueEstimate:
     """Estimate self-draw P(win), conditional win value, and their product."""
     if turns == 0:
@@ -163,7 +164,7 @@ def estimate_win_value(
     wins = winning_trials(counts16, turns, melds_declared, visible, sims, seed)
     if not wins:
         return WinValueEstimate(0.0, None, 0.0)
-    values = [_score_value(trial.hand, trial.winning_tile, context_template) for trial in wins]
+    values = [_score_value(trial.hand, trial.winning_tile, context_template, scheme=scheme) for trial in wins]
     mean = sum(values) / len(values)
     return WinValueEstimate(len(wins) / sims, mean, len(wins) / sims * mean)
 
@@ -177,12 +178,13 @@ def _discounted_win_estimate(
     seed: int | None,
     context_template: WinContext | WinValueContext | None,
     survival: tuple[float, ...],
+    scheme: ScoringScheme = DEFAULT_SCHEME,
 ) -> WinValueEstimate:
     """Score simulated first-win increments and weight each by survival."""
     if not turns:
         return WinValueEstimate(0.0, None, 0.0, p_draw=1.0, net_ev=DRAW_VALUE)
     wins = winning_trials(counts16, turns, melds_declared, visible, sims, seed)
-    values = [_score_value(trial.hand, trial.winning_tile, context_template) for trial in wins]
+    values = [_score_value(trial.hand, trial.winning_tile, context_template, scheme=scheme) for trial in wins]
     if not wins:
         return WinValueEstimate(0.0, None, 0.0, p_draw=survival[-1], net_ev=survival[-1] * DRAW_VALUE)
     mean = sum(values) / len(values)
@@ -203,8 +205,12 @@ def _discounted_win_estimate(
     )
 
 
-def opponent_value_estimate(opponent: OpponentView) -> float:
-    """Return an UNCALIBRATED tai-unit value from public opponent state only."""
+def opponent_value_estimate(opponent: OpponentView, scheme: ScoringScheme = DEFAULT_SCHEME) -> float:
+    """Return an UNCALIBRATED chip-unit value from public opponent state only.
+
+    Uses the same 底/台 ``scheme`` as the attack side, so a scheme swap rescales
+    a deal-in loss consistently with a win's value.
+    """
     opponent.validate()
     tai = OPPONENT_DECLARED_TAI if opponent.declared_at is not None else 0
     tai += OPPONENT_DRAGON_TRIPLET_TAI * sum(
@@ -216,7 +222,7 @@ def opponent_value_estimate(opponent: OpponentView) -> float:
         tai += OPPONENT_ALL_TRIPLETS_TAI
     if opponent.is_dealer:
         tai += OPPONENT_DEALER_TAI + OPPONENT_STREAK_TAI_PER_WIN * opponent.dealer_streak
-    return float(BASE_UNITS + tai)
+    return float(scheme.value(tai))
 
 
 def deal_in_ev(
@@ -225,8 +231,9 @@ def deal_in_ev(
     visible: tuple[int, ...] | list[int],
     own_hand: tuple[int, ...] | list[int],
     calibration: Calibration | None,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
 ) -> float:
-    """Approximate expected tai-unit loss for one discard against one opponent."""
+    """Approximate expected chip-unit loss for one discard against one opponent."""
     assessment = danger_score(tile, opponent, visible, own_hand)
     if opponent.declared_at is not None and "declared_safe" in assessment.modifiers:
         return 0.0
@@ -238,7 +245,7 @@ def deal_in_ev(
         factor = DECLARED_FACTOR
     else:
         factor = min(3.0, max(0.25, tenpai_score(opponent, len(opponent.river)).score / BASELINE_TENPAI_RATE))
-    return probability * factor * opponent_value_estimate(opponent)
+    return probability * factor * opponent_value_estimate(opponent, scheme)
 
 
 def ev_rank(
@@ -252,6 +259,7 @@ def ev_rank(
     context_template: WinContext | WinValueContext | None = None,
     calibration: Calibration | None = None,
     top_k: int = 5,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
 ) -> list[EVRankEntry]:
     """Rank an efficient candidate set by self-draw EV less deal-in losses."""
     if top_k < 1:
@@ -281,9 +289,9 @@ def ev_rank(
         post = list(hand)
         post[analysis.discard] -= 1
         attack = _discounted_win_estimate(
-            tuple(post), turns, melds_declared, seen, sims, base_seed, context_template, survival,
+            tuple(post), turns, melds_declared, seen, sims, base_seed, context_template, survival, scheme,
         )
-        losses = tuple(deal_in_ev(analysis.discard, view, seen, tuple(post), calibration) for view in views)
+        losses = tuple(deal_in_ev(analysis.discard, view, seen, tuple(post), calibration, scheme) for view in views)
         risk = sum(losses)
         entries.append(EVRankEntry(
             analysis.discard, attack.p_win, attack.mean_value_units, attack.discounted_attack_ev,
@@ -310,6 +318,7 @@ def evaluate_discard(
     seed: int | None = None,
     context_template: WinContext | WinValueContext | None = None,
     calibration: Calibration | None = None,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
 ) -> EVRankEntry:
     """Net-EV of one discard using the exact discounted-attack, survival, and
     CRN-seed logic of :func:`ev_rank`'s per-candidate body.
@@ -328,9 +337,9 @@ def evaluate_discard(
     post = list(hand)
     post[discard] -= 1
     attack = _discounted_win_estimate(
-        tuple(post), turns, melds_declared, seen, sims, base_seed, context_template, survival,
+        tuple(post), turns, melds_declared, seen, sims, base_seed, context_template, survival, scheme,
     )
-    losses = tuple(deal_in_ev(discard, view, seen, tuple(post), calibration) for view in views)
+    losses = tuple(deal_in_ev(discard, view, seen, tuple(post), calibration, scheme) for view in views)
     risk = sum(losses)
     return EVRankEntry(
         discard, attack.p_win, attack.mean_value_units, attack.discounted_attack_ev,

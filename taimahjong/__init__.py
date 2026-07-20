@@ -30,7 +30,7 @@ from .ev import (
     remaining_draws,
     survival_by_turn,
 )
-from .scoring import BASE_UNITS, ScoreResult, WinContext, score_hand
+from .scoring import BASE_UNITS, DEFAULT_SCHEME, SCHEME_3_1, SCHEME_5_2, ScoreResult, ScoringScheme, WinContext, score_hand
 from .shanten import shanten
 from .simulate import SimResult, WinningTrial, win_probability, winning_trials
 from .tiles import format_tiles, parse_tiles
@@ -38,6 +38,10 @@ from .ukeire import DiscardAnalysis, discard_analysis, ukeire
 
 __all__ = [
     "BASE_UNITS",
+    "DEFAULT_SCHEME",
+    "SCHEME_3_1",
+    "SCHEME_5_2",
+    "ScoringScheme",
     "DangerAssessment",
     "DangerDiscardAnalysis",
     "Calibration",

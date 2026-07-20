@@ -58,6 +58,25 @@ def test_quiz_grade_rejects_a_tile_not_in_hand(client):
     assert response.status_code == 422
 
 
+def test_quiz_grade_honors_the_scoring_scheme(client):
+    position = client.post("/api/quiz/new", json={"seed": 1}).json()["position"]
+    tile = _some_hand_tile(position)
+    body = {"seed": position["seed"], "tile": tile}
+    default = client.post("/api/quiz/grade", json=body).json()["grade"]
+    three_one = client.post("/api/quiz/grade", json={**body, "base_units": 3, "tai_units": 1}).json()["grade"]
+    five_two = client.post("/api/quiz/grade", json={**body, "base_units": 5, "tai_units": 2}).json()["grade"]
+    top = lambda grade: grade["ranked"][0]["net_ev"]
+    # An absent scheme means the house default (底3台1); 底5台2 must move the EV.
+    assert top(default) == pytest.approx(top(three_one))
+    assert top(five_two) != pytest.approx(top(three_one))
+
+
+def test_grade_rejects_a_half_specified_scheme(client):
+    position = client.post("/api/quiz/new", json={"seed": 1}).json()["position"]
+    body = {"seed": position["seed"], "tile": _some_hand_tile(position), "base_units": 5}
+    assert client.post("/api/quiz/grade", json=body).status_code == 422
+
+
 def test_endgame_new_meets_the_pressure_filter(client, monkeypatch):
     # Cheap-budget EV gaps are noisy, so pin the gap floor low: the test is the
     # filter plumbing (wall/shanten/declared + tag), not the tuning value.
@@ -169,6 +188,32 @@ def _tile(text: str) -> int:
 
     counts = parse_tiles(text)
     return next(tile for tile, count in enumerate(counts) if count)
+
+
+def test_ukeire_discard_mode_ranks_the_best_cut(client):
+    # A 17-tile post-draw hand returns per-discard analysis. This hand's only
+    # tenpai-reaching cut is 九萬 (index 8), so it must top the shanten-sorted list.
+    response = client.post("/api/ukeire", json={"hand": "119m456m123p789p456s78s"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "discard"
+    best = body["discards"][0]
+    assert best["discard"] == 8 and best["shanten_after"] == 0
+    assert best["total"] > 0 and best["ukeire"]
+
+
+def test_ukeire_accept_mode_for_a_called_shape(client):
+    # A 13-tile hand with one declared meld returns the current acceptance,
+    # used by the chi/pon compare lesson.
+    response = client.post("/api/ukeire", json={"hand": "4678s123m789m22p1z", "melds_declared": 1})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "accept"
+    assert body["shanten"] >= 0 and body["total"] >= 0
+
+
+def test_ukeire_rejects_a_wrong_size_hand(client):
+    assert client.post("/api/ukeire", json={"hand": "123m"}).status_code == 422
 
 
 def test_health(client):

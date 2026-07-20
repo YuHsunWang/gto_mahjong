@@ -7,6 +7,7 @@ import { tileEl } from './tiles.js';
 import { feltEl, handEl, computingEl, faceText } from './table.js';
 import { verdictEl, evDetailsEl, bestLineEl, scorebarEl } from './feedback.js';
 import { record } from './stats.js';
+import { schemeToggle, schemeParams } from './scheme.js';
 
 const SESSION_KEY = 'mj-trainer-sid';
 const SEAT_LABELS = { 0: '莊家（你自己做莊）', 1: '莊的下家', 2: '莊的對家', 3: '莊的上家' };
@@ -79,7 +80,7 @@ export function trainerScreen(root) {
     phase = 'acting';
     render(computingText);
     try {
-      state = await post(`/api/trainer/${state.session_id}/act`, { step: state.step, ...move });
+      state = await post(`/api/trainer/${state.session_id}/act`, { step: state.step, ...move, ...schemeParams() });
       feedback = state.feedback;
       record('trainer', feedback.verdict, feedback.ev_loss);
       phase = 'feedback';
@@ -270,6 +271,9 @@ export function trainerScreen(root) {
 
   function decisionScreen(decision) {
     const fragment = document.createDocumentFragment();
+    // In the trainer a graded decision has already advanced the game, so the
+    // scheme applies from the next decision onward (no retroactive re-grade).
+    fragment.append(schemeToggle(() => {}));
     if (decision.type === 'discard') {
       fragment.append(feltEl(decision.position));
       const hint = document.createElement('div');

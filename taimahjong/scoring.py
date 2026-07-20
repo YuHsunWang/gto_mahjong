@@ -64,6 +64,40 @@ DRAGON_TILES = frozenset(range(31, 34))
 
 
 @dataclass(frozen=True)
+class ScoringScheme:
+    """House 底/台 payout convention: a win is worth ``base_units`` plus
+    ``tai_units`` per 台.
+
+    Changing the 底:台 ratio shifts the value of a flat win relative to a big
+    hand (a larger 底 rewards just-winning; a larger 台 rewards building), so a
+    scheme can change EV-optimal play — the reason the trainer lets you pick
+    one. It is a payout convention, orthogonal to a hand's tai, so it is passed
+    alongside :class:`WinContext` rather than stored in it.
+    """
+
+    base_units: int
+    tai_units: int = 1
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.base_units, int) or isinstance(self.base_units, bool) or self.base_units < 0:
+            raise ValueError("base_units must be a non-negative integer")
+        if not isinstance(self.tai_units, int) or isinstance(self.tai_units, bool) or self.tai_units < 1:
+            raise ValueError("tai_units must be a positive integer")
+
+    def value(self, total_tai: int) -> int:
+        """Win value in chip units: 底 + 每台 × 台數."""
+        return self.base_units + self.tai_units * total_tai
+
+
+# 底3台1 is the house default and equals the BASE_UNITS model (value_units).
+# Self-play, calibration, and the CLI all keep this scheme; only the teaching
+# EV path lets the user swap in another.
+SCHEME_3_1 = ScoringScheme(BASE_UNITS, 1)
+SCHEME_5_2 = ScoringScheme(5, 2)
+DEFAULT_SCHEME = SCHEME_3_1
+
+
+@dataclass(frozen=True)
 class WinContext:
     """Everything about the win that is not visible in the tiles."""
 
@@ -109,8 +143,12 @@ class ScoreResult:
 
     @property
     def value_units(self) -> int:
-        """Win value in tai-equivalent units: 底 + 台."""
+        """Win value under the house default scheme (底3台1): 底 + 台."""
         return BASE_UNITS + self.total_tai
+
+    def value_in(self, scheme: "ScoringScheme") -> int:
+        """Win value under an explicit 底/台 scheme."""
+        return scheme.value(self.total_tai)
 
 
 def _classify_meld(meld: tuple[int, int, int]) -> tuple[str, int]:
