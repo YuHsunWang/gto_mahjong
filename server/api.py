@@ -132,6 +132,7 @@ def _position_payload(position: QuizPosition) -> dict[str, Any]:
                 "fold_estimate": opponent.fold_estimate,
                 "is_dealer": opponent.is_dealer,
                 "dealer_streak": opponent.dealer_streak,
+                "hand_count": opponent.hand_count,
             }
             for opponent in position.opponents
         ],

@@ -218,6 +218,11 @@ button {
   padding: 0 5px;
 }
 
+.seat-lamp .handcount {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+
 .seat-lamp .declared {
   color: var(--gold);
   font-weight: 700;
@@ -494,6 +499,43 @@ details.evwrap summary {
 
 .tag-chip.attack { background: rgba(192, 44, 44, .25); color: #f0a0a0; border: 1px solid rgba(192, 44, 44, .6); }
 .tag-chip.defense { background: rgba(42, 79, 162, .25); color: #9fc0f0; border: 1px solid rgba(42, 79, 162, .6); }
+
+/* Landscape phones: the table needs portrait height to fit the felt + hand +
+   feedback without endless scrolling. No web API can force-rotate the screen
+   (iOS Safari has none; Android Chrome only inside fullscreen), so this is a
+   full-screen prompt instead of a broken layout. Height cap targets phones
+   only — tablets/desktops in landscape (>560px tall) pass through untouched. */
+.rotate-hint {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: var(--bg);
+  color: var(--ink-dim);
+  text-align: center;
+  padding: 24px;
+}
+
+.rotate-hint svg { color: var(--gold); animation: rotate-hint-tilt 1.6s ease-in-out infinite; }
+.rotate-hint p { margin: 0; font-size: 15px; }
+
+@keyframes rotate-hint-tilt {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-90deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rotate-hint svg { animation: none; }
+}
+
+@media screen and (orientation: landscape) and (max-height: 560px) {
+  .rotate-hint { display: flex; }
+  body > .app, body > .toast { display: none; }
+}
 
 .toast {
   position: fixed;

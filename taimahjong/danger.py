@@ -91,6 +91,10 @@ class OpponentView:
     # more, so dealing into them must cost more).
     is_dealer: bool = False
     dealer_streak: int = 0
+    # Concealed tile count. Publicly observable in a real game (you can count
+    # face-down tiles) even though their identity is hidden, so this is not a
+    # leak of concealed information — purely a UI/teaching convenience.
+    hand_count: int = 0
 
     def __post_init__(self) -> None:
         if self.declared_at is not None and (
@@ -101,6 +105,8 @@ class OpponentView:
             raise ValueError("dealer_streak must be a non-negative integer")
         if self.dealer_streak and not self.is_dealer:
             raise ValueError("dealer_streak requires is_dealer=True")
+        if not isinstance(self.hand_count, int) or isinstance(self.hand_count, bool) or self.hand_count < 0:
+            raise ValueError("hand_count must be a non-negative integer")
 
     def validate(self) -> None:
         """Validate tile indices and public multiplicities in this view."""

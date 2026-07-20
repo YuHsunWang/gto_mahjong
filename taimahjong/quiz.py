@@ -132,7 +132,8 @@ def resolve_adaptive(estimate: Callable[[int], tuple[float, _Payload]], shanten:
 
 @dataclass(frozen=True)
 class QuizOpponent:
-    """One opponent's public state, with no concealed-hand field."""
+    """One opponent's public state: no concealed *tiles*, but hand_count (the
+    number of tiles held) is publicly observable in a real game."""
 
     seat: int
     river: tuple[RiverEntry, ...]
@@ -141,6 +142,7 @@ class QuizOpponent:
     tenpai_estimate: float
     fold_estimate: float
     dealer_streak: int = 0  # nonzero only when this opponent is the dealer
+    hand_count: int = 0
 
     @property
     def declared(self) -> bool:
@@ -154,6 +156,7 @@ class QuizOpponent:
         return OpponentView(
             list(self.river), list(self.melds), self.declared_at,
             is_dealer=self.is_dealer, dealer_streak=self.dealer_streak,
+            hand_count=self.hand_count,
         )
 
 
@@ -277,6 +280,7 @@ def _opponents_from(snapshot: DecisionSnapshot) -> tuple[QuizOpponent, ...]:
                 tenpai_score(frozen_view, snapshot.turn).score,
                 fold_score(frozen_view, _river_counts(snapshot.opponents, seat, snapshot.river)),
                 dealer_streak=snapshot.dealer_streak if seat == DEALER_SEAT else 0,
+                hand_count=view.hand_count,
             )
         )
     return tuple(opponents)

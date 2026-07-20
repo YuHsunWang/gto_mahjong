@@ -178,6 +178,7 @@ def _view(player: Player, seat: int) -> OpponentView:
         list(player.river), list(player.melds) + kong_triplets, player.declared_at,
         is_dealer=seat == DEALER_SEAT,
         dealer_streak=player.dealer_streak if seat == DEALER_SEAT else 0,
+        hand_count=sum(player.hand),
     )
 
 

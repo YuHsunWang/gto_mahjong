@@ -23,7 +23,7 @@ function meldsEl(melds) {
   return el;
 }
 
-function seatLamp(seat, { declared = false, isDealer = false, streak = 0, tenpai = null, fold = null, you = false, pos = '' } = {}) {
+function seatLamp(seat, { declared = false, isDealer = false, streak = 0, tenpai = null, fold = null, you = false, pos = '', handCount = null } = {}) {
   const el = document.createElement('div');
   el.className = `seat-lamp ${pos}`;
   const wind = document.createElement('span');
@@ -34,6 +34,12 @@ function seatLamp(seat, { declared = false, isDealer = false, streak = 0, tenpai
     const label = document.createElement('span');
     label.textContent = '你';
     el.append(label);
+  }
+  if (handCount !== null) {
+    const count = document.createElement('span');
+    count.className = 'handcount';
+    count.textContent = `手牌${handCount}`;
+    el.append(count);
   }
   if (declared) {
     const lamp = document.createElement('span');
@@ -115,6 +121,7 @@ export function feltEl(position, { offeredTile = null, ownRiverHighlight = false
     streak: opponent.dealer_streak,
     tenpai: opponent.tenpai_estimate,
     fold: opponent.fold_estimate,
+    handCount: opponent.hand_count,
     pos,
   });
   if (top) felt.append(lampFor(top, 'pos-top'));
