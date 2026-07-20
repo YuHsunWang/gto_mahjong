@@ -278,20 +278,21 @@ export function trainerScreen(root) {
       fragment.append(hint, handEl(decision.position.hand, {
         drawnTile: decision.position.drawn_tile,
         onDiscard: (tile) => act({ action: 'discard', tile }, `你切 ${faceText(tile)}，計算 EV 中…`),
+        melds: decision.position.own_melds,
       }));
     } else if (decision.type === 'kong') {
       fragment.append(feltEl(decision.position));
       const hint = document.createElement('div');
       hint.className = 'hand-hint';
       hint.textContent = '剛摸入的牌可形成不惡化向聽的槓 — 要宣告嗎？';
-      fragment.append(hint, handEl(decision.position.hand, { drawnTile: decision.position.drawn_tile }));
+      fragment.append(hint, handEl(decision.position.hand, { drawnTile: decision.position.drawn_tile, melds: decision.position.own_melds }));
       fragment.append(optionButtons(decision));
     } else if (decision.type === 'call') {
       fragment.append(feltEl(decision.position, { offeredTile: decision.offered_tile }));
       const hint = document.createElement('div');
       hint.className = 'hand-hint';
       hint.textContent = `對手 ${decision.discarder} 打出 ${faceText(decision.offered_tile)} — 要鳴牌嗎？`;
-      fragment.append(hint, handEl(decision.position.hand));
+      fragment.append(hint, handEl(decision.position.hand, { melds: decision.position.own_melds }));
       fragment.append(optionButtons(decision));
     }
     return fragment;
@@ -310,6 +311,7 @@ export function trainerScreen(root) {
       fragment.append(handEl(decision.position.hand, {
         drawnTile: decision.position.drawn_tile,
         marks: { cut: feedback.chosen_tile, best: showBest ? bestTile : null },
+        melds: decision.position.own_melds,
       }));
       fragment.append(verdictEl(feedback.verdict, feedback.marginal, feedback.ev_delta, `你切 ${faceText(feedback.chosen_tile)}`));
       if (showBest) fragment.append(bestLineEl(`最佳切牌：${faceText(bestTile)}（淨 EV ${feedback.best.net_ev.toFixed(1)}，綠框標示）`));
@@ -327,6 +329,7 @@ export function trainerScreen(root) {
           : kongLabel(decision.options[feedback.choice]));
       fragment.append(handEl(decision.position.hand, {
         drawnTile: isCall ? null : decision.position.drawn_tile,
+        melds: decision.position.own_melds,
       }));
       fragment.append(verdictEl(feedback.verdict, feedback.marginal, feedback.ev_delta, `你選擇：${chosenLabel}`));
       const bestLabel = feedback.best_index === null
@@ -367,6 +370,7 @@ export function trainerScreen(root) {
       }));
       root.append(handEl(decision.position.hand, {
         drawnTile: decision.type === 'call' ? null : decision.position.drawn_tile,
+        melds: decision.position.own_melds,
       }));
       root.append(computingEl(computingText || '計算 EV 中…'));
       return;

@@ -102,9 +102,9 @@ export function feltEl(position, { offeredTile = null, ownRiverHighlight = false
   felt.append(centerBox(position, { offeredTile }));
   felt.append(opponentZone('right', right));
 
+  // Own melds live beside the hand tray, not on the felt (user call, 2026-07-20).
   const bottom = document.createElement('div');
   bottom.className = 'zone bottom';
-  if (position.own_melds.length) bottom.append(meldsEl(position.own_melds));
   bottom.append(riverEl(position.own_river, { highlightLast: ownRiverHighlight }));
   felt.append(bottom);
 
@@ -133,7 +133,7 @@ export function feltEl(position, { offeredTile = null, ownRiverHighlight = false
 //   onDiscard: enable tap-to-discard (confirm-tap unless the one-tap setting is on)
 //   drawnTile: separated with a gap + gold frame
 //   marks: {cut: tile, best: tile} for the feedback state
-export function handEl(handCounts, { drawnTile = null, onDiscard = null, marks = {} } = {}) {
+export function handEl(handCounts, { drawnTile = null, onDiscard = null, marks = {}, melds = [] } = {}) {
   const row = document.createElement('div');
   row.className = 'handrow';
   const counts = [...handCounts];
@@ -179,6 +179,19 @@ export function handEl(handCounts, { drawnTile = null, onDiscard = null, marks =
     }
     row.append(el);
   });
+
+  // Declared melds (吃/碰/槓) sit apart at the right edge of the tray.
+  if (melds.length) {
+    const rack = document.createElement('div');
+    rack.className = 'hand-melds';
+    melds.forEach((meld) => {
+      const group = document.createElement('div');
+      group.className = 'hand-meld';
+      meld.forEach((tile) => group.append(tileEl(tile, { size: 'sm' })));
+      rack.append(group);
+    });
+    row.append(rack);
+  }
   return row;
 }
 

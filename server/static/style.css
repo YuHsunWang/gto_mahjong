@@ -151,7 +151,7 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .tile.landed { animation: none; }
-  .handrow .tile { transition: none; }
+  .handrow > .tile { transition: none; }
 }
 
 /* ---------- felt table ---------- */
@@ -253,7 +253,7 @@ button {
   padding: 12px 6px 9px;
 }
 
-.handrow .tile {
+.handrow > .tile {
   flex: 1 1 0;
   max-width: 44px;
   min-width: 0;
@@ -266,6 +266,19 @@ button {
 .handrow button.tile:disabled { cursor: default; }
 .handrow .tile.lifted { transform: translateY(-9px); outline: 3px solid var(--gold); outline-offset: 1px; }
 .handrow .gap { flex: 0 0 10px; }
+
+/* declared melds: separated group at the tray's right edge */
+.hand-melds {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  margin-left: 14px;
+  padding-left: 10px;
+  border-left: 1px solid rgba(217, 194, 230, .25);
+  flex: 0 0 auto;
+}
+
+.hand-meld { display: flex; gap: 1px; }
 
 .hand-hint {
   text-align: center;
