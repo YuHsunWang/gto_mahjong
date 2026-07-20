@@ -3,6 +3,7 @@
 // sessionStorage so a page reload resumes the same hand.
 
 import { post, get, showError, randomSeed } from './api.js';
+import { tileEl } from './tiles.js';
 import { feltEl, handEl, computingEl, faceText } from './table.js';
 import { verdictEl, evDetailsEl, bestLineEl, scorebarEl } from './feedback.js';
 import { record } from './stats.js';
@@ -170,12 +171,7 @@ export function trainerScreen(root) {
       if (isCall) {
         const preview = document.createElement('span');
         preview.className = 'preview';
-        option.meld.forEach((tile) => {
-          const mini = document.createElement('span');
-          mini.className = 'tile sm';
-          mini.textContent = faceText(tile);
-          preview.append(mini);
-        });
+        option.meld.forEach((tile) => preview.append(tileEl(tile, { size: 'sm' })));
         button.append(preview);
       }
       button.addEventListener('click', () => act(

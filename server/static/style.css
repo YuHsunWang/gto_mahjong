@@ -133,16 +133,8 @@ button {
 /* In-felt tiles shrink so three river rows + melds fit their grid cell. */
 .felt .tile.sm { width: 23px; height: 32px; font-size: 10.5px; box-shadow: 0 1px 0 var(--bone-shadow); }
 
-.tile-back {
-  display: inline-flex;
-  flex: 0 0 auto;
-  width: 11px;
-  height: 16px;
-  border-radius: 2px;
-  background: linear-gradient(160deg, #6b3f78, #513059 55%, #45203a);
-  border: 1px solid #2f1638;
-  box-shadow: 0 1px 0 #1d0d24;
-}
+/* Graphic suit faces (筒 dots / 條 bamboo) scale with the tile. */
+.tile svg.face { width: 82%; height: 88%; display: block; }
 
 .tile.drawn { outline: 3px solid var(--gold); outline-offset: 1px; }
 .tile.cut { outline: 2px solid var(--red); outline-offset: 1px; opacity: .55; }
@@ -194,7 +186,6 @@ button {
   justify-content: center;
 }
 
-.opp-rack { display: flex; gap: 1px; }
 .opp-melds { display: flex; gap: 1px; margin-bottom: 1px; }
 
 /* Seat lamps sit upright in the felt corners, outside the rotated zones. */

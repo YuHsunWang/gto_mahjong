@@ -1,7 +1,7 @@
 // The felt: four rivers converging on the centre box, Mahjong-Soul style.
 // Renders a W1 position payload; the interactive hand is rendered separately.
 
-import { tileEl, tileBackEl, countsToTiles, faceText } from './tiles.js';
+import { tileEl, countsToTiles, faceText } from './tiles.js';
 
 const WINDS = ['東', '南', '西', '北'];
 
@@ -50,14 +50,11 @@ function seatLamp(seat, { declared = false, isDealer = false, streak = 0, tenpai
 }
 
 function opponentZone(cssClass, opponent) {
+  // No hidden-hand rack: the centre box already reports the wall count, and
+  // concealed hands carry no information worth pixels (user call, 2026-07-20).
   const zone = document.createElement('div');
   zone.className = `zone ${cssClass}`;
   if (!opponent) return zone;
-  const rack = document.createElement('div');
-  rack.className = 'opp-rack';
-  const hidden = Math.max(0, 16 - 3 * opponent.melds.length);
-  for (let i = 0; i < hidden; i += 1) rack.append(tileBackEl());
-  zone.append(rack);
   if (opponent.melds.length) zone.append(meldsEl(opponent.melds));
   zone.append(riverEl(opponent.river));
   return zone;
