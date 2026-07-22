@@ -1,3 +1,5 @@
+> 🌐 **English** ｜ [繁體中文](README.zh-TW.md)
+
 # Taiwanese Mahjong shanten and ukeire (M2)
 
 This package calculates regular-hand shanten for Taiwanese 16-tile mahjong.
@@ -465,60 +467,77 @@ Best 9s: higher win EV by 0.46 tai than the next-ranked choice.
 Chosen 9s: matches the best's higher win-EV component.
 ```
 
-## M9 Web 教學介面（W1–W3：FastAPI + SPA）
+## M9 web teaching UI (W1–W3: FastAPI + SPA)
 
-安裝相依套件後，在專案根目錄啟動 API 與網頁：
+After installing dependencies, start the API and web page from the project root:
 
 ```bash
 pip install -r requirements.txt
 uvicorn server.api:app
-# 瀏覽 http://127.0.0.1:8000/
+# open http://127.0.0.1:8000/
 ```
 
-單頁應用（`server/static/`，無建置步驟的原生 ES modules）提供三種訓練模式、
-一個教學專區與兩個工具：整場（一局打到底、每個切牌／鳴牌／槓決策即時 EV
-評分）、單手（抽一題練切牌）、殘局（牌牆將盡的高壓局面，自動標記進攻／防守
-題）、教學、切牌分析、算台。牌桌為雀魂式十字河（四家牌河朝中心聚集、手牌在
-近端），回饋為 GTO Wizard 式（判定徽章、EV 差、最佳解標記、可展開的 EV 排名
-表）；各模式答題紀錄存在瀏覽器 localStorage，首頁顯示每模式的最佳率走勢。桌
-面固定顯示「本桌無花牌」。JSON API 見 `server/api.py`（`/api/quiz`、
-`/api/endgame`、`/api/trainer`、`/api/ev/rank`、`/api/score`、`/api/ukeire`）。
+The single-page app (`server/static/`, native ES modules with no build step) offers
+three training modes, a lessons area, and two tools: full game (play one hand to the
+end, every discard/call/kong decision scored by EV in real time), single hand (draw
+one discard problem), endgame (high-pressure spots as the wall runs low, auto-tagged
+attack/defense), lessons, discard analysis, and scoring. The table is a
+Mahjong-Soul-style cross-shaped river (all four rivers converge toward the center,
+your hand at the near edge); feedback is GTO-Wizard-style (verdict badge, EV delta,
+best-answer marker, expandable EV ranking table). Each mode's answer history is kept in
+browser localStorage, and the home page shows each mode's best-rate trend. The table
+permanently notes "no flowers at this table." The JSON API is in `server/api.py`
+(`/api/quiz`, `/api/endgame`, `/api/trainer`, `/api/ev/rank`, `/api/score`,
+`/api/ukeire`).
 
-**底/台計分方案（`taimahjong.scoring.ScoringScheme`）**：練習模式的牌桌上可切
-換底3台1 ⇄ 底5台2。底:台比例會改變「先求胡」與「拚大牌」的權衡，因此可能改變
-最佳切牌——切換即重新評分（同一種子出同一局面，只有評分吃選定方案）。底3台1
-是家規預設，等同舊 `BASE_UNITS` 模型；自對局、校準與 CLI 一律維持預設，不受
-影響。誠實範圍：守備側對手價值仍是未校準啟發式，故切方案後多數決策變化小、
-集中在邊緣局面。
+**底/台 scoring scheme (`taimahjong.scoring.ScoringScheme`):** the practice table can
+switch 底3台1 ⇄ 底5台2. The 底:台 ratio changes the trade-off between "win first" and
+"go for a big hand," so it can change the best discard — switching re-scores immediately
+(the same seed yields the same position; only scoring honors the chosen scheme). 底3台1
+is the house default and equals the old `BASE_UNITS` model; self-play, calibration, and
+the CLI always keep the default and are unaffected. Honest scope: the defensive-side
+opponent value is still an uncalibrated heuristic, so most decisions change little after
+a scheme switch — the effect concentrates on marginal spots.
 
-**教學專區（`server/static/js/lessons.js`）**：幾則手寫的基本牌效題（孤張進聽、
-同聽選寬、急聽 vs 寬型、吃碰的門清取捨），每題用 `/api/ukeire`（純進張、確定
-性、無蒙地卡羅）即時佐證，切牌題顯示逐切向聽／進張排名並標出正解，吃碰題並排
-比較兩種選擇的進張。
+**Lessons (`server/static/js/lessons.js`):** a few hand-written basic-efficiency
+problems (lone-tile to tenpai, choosing the wider of equal waits, urgent-tenpai vs wide
+shape, keeping 門清 on a call), each backed live by `/api/ukeire` (pure acceptance,
+deterministic, no Monte Carlo). Discard problems show per-discard shanten/acceptance
+ranking with the answer marked; call problems compare the acceptance of both choices
+side by side.
 
-核心引擎沒有 Web 相依，API 層只直接呼叫既有 Python API。原 Streamlit 版
-（`webapp/app.py`）已於 2026-07-20 在 SPA 達功能對等後退役。
+The core engine has no web dependency; the API layer only calls the existing Python API
+directly. The old Streamlit version (`webapp/app.py`) was retired on 2026-07-20 once the
+SPA reached feature parity.
 
-### 實戰訓練器（M10，Phase 1）
+### Live trainer (M10, Phase 1)
 
-「實戰」分頁用 `taimahjong.trainer.play_trainer` 生成器逐手推進一局：輪到你
-切牌時暫停，你選牌後即時以 `quiz.grade` 給出 EV 判定（最佳／不錯／小失誤／
-失誤），並累計最佳率與總 EV 損失，打到胡／放槍／流局給總結。Phase 1 你這家
-打門清（可自摸／榮和，暫不吃碰），對手正常鳴牌；你的鳴牌決策與鳴牌 EV 為
-Phase 2。所有機率仍是對機器人校準、非真人牌局。
+The "live" tab uses the `taimahjong.trainer.play_trainer` generator to advance one hand
+a move at a time: it pauses when it is your turn to discard, and once you choose,
+`quiz.grade` gives an EV verdict (best / good / inaccuracy / mistake), accumulating your
+best-rate and total EV loss, then summarizes at a win / deal-in / draw. In Phase 1 you
+play 門清 (self-draw or ron allowed; no chi/pon yet) while opponents call normally; your
+own call decisions and call EV are Phase 2. All probabilities are still calibrated
+against bots, not real human play.
 
-開始新局時可選座位（莊家／莊的下家／對家／上家）與初始連莊數：莊固定在座位 0，
-過莊時引擎改以「輪轉你的座位」模擬，讓你體驗坐在莊的不同相對位置。連莊會拉高
-莊的胡牌價值，也拉高放槍給莊的代價（見上方 M5a 連莊雙向規則）；「再來一局」
-依莊胡／流局續莊或閒胡過莊自動更新連莊數與座位。
+When starting a new hand you can pick a seat (dealer / dealer's right / across / dealer's
+left) and an initial dealer streak. The dealer is fixed at seat 0; when the dealership
+passes, the engine "rotates your seat" instead, so you experience sitting in different
+positions relative to the dealer. A streak raises the value of the dealer's win and the
+cost of dealing into the dealer (see the M5a bilateral-streak rule above). "Play again"
+updates the streak and seat automatically based on a dealer win / draw (dealer keeps) or
+a non-dealer win (dealership passes).
 
-本工具定位為單人本機使用（trainer 對局狀態存在 API 行程記憶體內），
-不做雲端部署。請勿在這個專案中新增 remote 或代為推送。
+This tool is meant for single-player local use (trainer game state lives in the API
+process memory).
 
-## M11 自對局實驗：連莊防守與槓的 EV
+## M11 self-play experiments: streak defense and kong EV
 
-`scripts/streak_defense.py` 與 `scripts/kong_ev.py` 用配對種子的自對局，量化
-兩個策略問題：分座位對連莊莊家的防守、以及各型槓的邊際 EV。方法、指令與數據
-見 [docs/experiments.md](docs/experiments.md)。誠實範圍：攻擊側的蒙地卡羅勝值
-以對稱方式計三家，未特別加計「胡莊多收的連莊溢價」（低估非莊家 ≤ P/3 一次胡的
-量級）；槓的 dead wall 不從活牌牆回填。
+`scripts/streak_defense.py` and `scripts/kong_ev.py` use paired-seed self-play to
+quantify two strategy questions: seat-by-seat defense against a streaking dealer, and the
+marginal EV of each kong type (roughly how many tai declaring a given kong gains or
+loses). Method, commands, and data are in [docs/experiments.md](docs/experiments.md).
+Honest scope: the attack side's Monte Carlo win value is scored symmetrically across the
+three opponents and does not specially add the "extra streak premium a dealer collects"
+(under-counting a non-dealer by at most about P/3 of one win); a kong's dead-wall tile is
+not refilled from the live wall.
