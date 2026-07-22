@@ -73,5 +73,17 @@ def test_discard_analysis_is_ranked_and_matches_post_discard_ukeire():
         for entry in analyses:
             post_discard = list(hand)
             post_discard[entry.discard] -= 1
-            assert entry.ukeire == ukeire(tuple(post_discard))
+            visible = [0] * 34
+            visible[entry.discard] = 1
+            # The candidate is now in the river, so it cannot be drawn again.
+            assert entry.ukeire == ukeire(tuple(post_discard), visible=visible)
             assert entry.total == sum(entry.ukeire.values())
+
+
+def test_discarded_candidate_is_not_counted_as_unseen_ukeire():
+    hand = parse_tiles("123m123p123s11122z333z")
+    discarded_3z = next(entry for entry in discard_analysis(hand) if entry.discard == 29)
+
+    # Two 3z remain concealed and one is the candidate discard: only one is unseen.
+    assert discarded_3z.ukeire == {28: 2, 29: 1}
+    assert discarded_3z.total == 3

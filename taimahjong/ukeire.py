@@ -78,7 +78,9 @@ def discard_analysis(
         post_discard = list(hand)
         post_discard[tile] -= 1
         after = tuple(post_discard)
-        accepted = ukeire(after, melds_declared, seen)
+        attack_visible = list(seen)
+        attack_visible[tile] += 1
+        accepted = ukeire(after, melds_declared, attack_visible)
         analyses.append(
             DiscardAnalysis(
                 discard=tile,

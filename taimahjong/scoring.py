@@ -333,9 +333,19 @@ def score_hand(
         raise ValueError("a WinContext with the winning tile is required")
     checked = validate_counts(concealed)
     meld_sets = [_classify_meld(tuple(meld)) for meld in melds]
-    for tile, _ in kongs:
-        if not 0 <= tile < 34:
+    for tile, concealed_flag in kongs:
+        if not isinstance(tile, int) or isinstance(tile, bool) or not 0 <= tile < 34:
             raise ValueError("kong tiles must be tile indexes 0-33")
+        if not isinstance(concealed_flag, bool):
+            raise ValueError("kong concealed flags must be booleans")
+    physical_counts = list(checked)
+    for meld in melds:
+        for tile in meld:
+            physical_counts[tile] += 1
+    for tile, _ in kongs:
+        physical_counts[tile] += 4
+    if any(count > 4 for count in physical_counts):
+        raise ValueError("concealed hand, melds, and kongs cannot contain more than four copies of a tile kind")
     declared_sets = len(meld_sets) + len(kongs)
     if declared_sets > 5:
         raise ValueError("at most five sets can be declared")

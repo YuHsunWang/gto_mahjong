@@ -122,6 +122,13 @@ def test_validation_errors():
         score_hand(parse_tiles("123456789m123p11678s"), (), WinContext(winning_tile=_tile("9p")))
 
 
+def test_scoring_rejects_more_than_four_tiles_across_concealed_and_melds():
+    hand = parse_tiles("111123m456p789s22z")
+
+    with pytest.raises(ValueError, match="more than four"):
+        score_hand(hand, ((_tile("1m"),) * 3,), WinContext(winning_tile=_tile("2z")))
+
+
 def test_max_decomposition_is_chosen():
     # 123123123m can be read as runs; triplet reading scores higher with 111222333m
     hand = parse_tiles("111222333m456p55s678s")
@@ -183,3 +190,8 @@ def test_kong_size_validation_and_context_rules():
         WinContext(winning_tile=0, kong_bloom=True)
     with pytest.raises(ValueError):  # 搶槓 must be a ron
         WinContext(winning_tile=0, self_draw=True, robbed_kong=True)
+    with pytest.raises(ValueError, match="flags must be booleans"):
+        score_hand(
+            parse_tiles("234567m234p234s55s"), (), WinContext(winning_tile=_tile("2s")),
+            kongs=((_tile("1z"), 1),),
+        )
