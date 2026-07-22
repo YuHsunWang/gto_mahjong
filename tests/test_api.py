@@ -166,6 +166,27 @@ def test_ev_rank_endpoint_with_opponent(client):
     assert "tenpai_estimate" in body["opponent"]
 
 
+def test_ev_rank_auto_turns_include_hidden_opponent_hands(client):
+    response = client.post("/api/ev/rank", json={
+        "hand": "123m123p123s11122233z",
+        "sims": 1,
+    })
+
+    assert response.status_code == 200
+    assert response.json()["turns"] == 14  # ceil((136 - 16 dead - 17 own - 48 opponents) / 4)
+
+
+def test_ev_rank_prefers_explicit_wall_remaining(client):
+    response = client.post("/api/ev/rank", json={
+        "hand": "123m123p123s11122233z",
+        "wall_remaining": 0,
+        "sims": 1,
+    })
+
+    assert response.status_code == 200
+    assert response.json()["turns"] == 0
+
+
 def test_ev_rank_rejects_melds_without_river(client):
     response = client.post("/api/ev/rank", json={"hand": "123m123p123s11122233z", "melds": "111z"})
     assert response.status_code == 422
@@ -181,6 +202,17 @@ def test_score_endpoint_matches_engine(client):
     expected = score_hand(parse_tiles("123m111555666777z22z"), (), WinContext(winning_tile=_tile("2z"), self_draw=True))
     assert body["total_tai"] == expected.total_tai
     assert body["value_units"] == expected.value_units
+
+
+def test_score_endpoint_rejects_more_than_four_physical_copies(client):
+    response = client.post("/api/score", json={
+        "hand": "111123m456p789s22z",
+        "melds": "111m",
+        "win_tile": "2z",
+    })
+
+    assert response.status_code == 422
+    assert "more than four" in response.json()["detail"]
 
 
 def _tile(text: str) -> int:

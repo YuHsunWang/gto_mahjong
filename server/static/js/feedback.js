@@ -15,7 +15,7 @@ export function verdictEl(verdict, marginal, evDelta, text) {
   body.textContent = text;
   const delta = document.createElement('span');
   delta.className = 'delta';
-  delta.textContent = `EV 差 ${evDelta.toFixed(1)} 台`;
+  delta.textContent = `EV 差 ${evDelta.toFixed(1)} 分`;
   el.append(badge, body, delta);
   return el;
 }
@@ -83,7 +83,7 @@ export function scorebarEl(score) {
   const average = decisions ? (score.loss / decisions).toFixed(2) : '—';
   el.innerHTML = `<span>手數 <b>${decisions}</b></span>`
     + `<span>最佳率 <b>${accuracy}</b></span>`
-    + `<span>總EV損失 <b>${(score.loss || 0).toFixed(2)}</b> 台</span>`
+    + `<span>總EV損失 <b>${(score.loss || 0).toFixed(2)}</b> 分</span>`
     + `<span>每手均損 <b>${average}</b></span>`;
   return el;
 }

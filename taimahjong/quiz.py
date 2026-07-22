@@ -179,6 +179,9 @@ class QuizPosition:
     wall_remaining: int
     candidate_ev_gap: float
     dealer_streak: int = 0  # the table's 連莊 count (dealer is always seat 0)
+    own_kongs: tuple[tuple[int, bool], ...] = ()
+    migi_declared: bool = False
+    migi_eligible: bool = False
 
     @property
     def is_dealer(self) -> bool:
@@ -306,7 +309,7 @@ def _position_from(snapshot: DecisionSnapshot, seed: int) -> QuizPosition:
         shanten=shanten(hand, len(snapshot.melds)),
         # Remaining draws from the actual live wall (one draw per four tiles),
         # not a turn-count proxy: this reflects who is close to running out.
-        draws_remaining=max(1, ceil(snapshot.wall_remaining / 4)),
+        draws_remaining=ceil(snapshot.wall_remaining / 4),
         wall_remaining=snapshot.wall_remaining,
         candidate_ev_gap=0.0,
         dealer_streak=snapshot.dealer_streak,
@@ -325,8 +328,10 @@ def _score_template(position: QuizPosition) -> WinValueContext:
             winning_tile=0,
             dealer=position.is_dealer,
             dealer_streak=position.dealer_streak if position.is_dealer else 0,
+            migi_declared=position.migi_declared,
         ),
         position.own_melds,
+        position.own_kongs,
     )
 
 
@@ -336,13 +341,15 @@ def _rank_cached(position: QuizPosition, scheme: ScoringScheme) -> tuple[EVRankE
         position.hand,
         [opponent.view() for opponent in position.opponents],
         position.public_counts,
-        len(position.own_melds),
+        len(position.own_melds) + len(position.own_kongs),
         position.draws_remaining,
         EV_SIMS,
         _evaluation_seed(position),
         _score_template(position),
         top_k=EV_TOP_K,
         scheme=scheme,
+        own_river=position.own_river,
+        declaration_eligible=position.migi_eligible,
     ) if not entry.is_fold)
 
 
@@ -399,12 +406,14 @@ def _refine(position: QuizPosition, tile: int, sims: int, scheme: ScoringScheme 
         tile,
         [opponent.view() for opponent in position.opponents],
         position.public_counts,
-        len(position.own_melds),
+        len(position.own_melds) + len(position.own_kongs),
         position.draws_remaining,
         sims,
         _evaluation_seed(position),
         _score_template(position),
         scheme=scheme,
+        own_river=position.own_river,
+        declaration_eligible=position.migi_eligible,
     )
 
 
@@ -437,8 +446,8 @@ def grade(position: QuizPosition, chosen_tile: int, scheme: ScoringScheme = DEFA
         chosen_post = list(position.hand)
         chosen_post[chosen_tile] -= 1
         gate_shanten = max(
-            _cached_shanten(tuple(best_post), len(position.own_melds)),
-            _cached_shanten(tuple(chosen_post), len(position.own_melds)),
+            _cached_shanten(tuple(best_post), len(position.own_melds) + len(position.own_kongs)),
+            _cached_shanten(tuple(chosen_post), len(position.own_melds) + len(position.own_kongs)),
         )
         outcome, (best, chosen) = resolve_adaptive(estimate, gate_shanten)
     return QuizGrade(

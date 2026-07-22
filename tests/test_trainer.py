@@ -159,6 +159,28 @@ def test_call_ev_credits_dealer_tai_for_dealer_seat():
     assert _pass_ev(decision, base, 200) == dealer_ev
 
 
+def test_call_ev_credits_dealer_streak_for_dealer_seat():
+    from dataclasses import replace
+
+    from taimahjong.ev import estimate_win_value
+    from taimahjong.quiz import _evaluation_seed, _score_template
+    from taimahjong.trainer import _pass_ev
+
+    decision = _first_call()
+    assert decision is not None
+    position = replace(decision.position, dealer_streak=2)
+    streak_decision = replace(decision, position=position)
+    base = _evaluation_seed(position)
+    expected = estimate_win_value(
+        position.hand, position.draws_remaining,
+        len(position.own_melds) + len(position.own_kongs), position.public_counts,
+        200, base, _score_template(position),
+    ).expected_win_ev
+
+    assert _pass_ev(streak_decision, base, 200) == expected
+    assert _score_template(position).context.dealer_streak == 2
+
+
 def test_taking_a_call_opens_hand_and_game_terminates():
     for seed in range(1, 20):
         gen = play_trainer(seed, human_seat=0)
@@ -254,6 +276,26 @@ def test_kong_verdict_is_adaptive_and_deterministic(monkeypatch):
     assert a == b
     assert a.verdict_for(choice) == b.verdict_for(choice)
     assert calls == [max(position.shanten, 3), max(position.shanten, 3)]
+
+
+def test_trainer_ev_preserves_concealed_kong_for_menqing_tai():
+    from dataclasses import replace
+
+    from taimahjong.ev import _score_value
+    from taimahjong.quiz import _score_template
+    from taimahjong.tiles import parse_tiles
+
+    position = next(play_trainer(1)).position
+    hand = parse_tiles("234567m234p234s55s")
+    kong_tile = next(tile for tile, count in enumerate(parse_tiles("1z")) if count)
+    win_tile = next(tile for tile, count in enumerate(parse_tiles("2s")) if count)
+    position = replace(position, hand=hand, own_melds=(), own_kongs=((kong_tile, True),))
+
+    # play_trainer(1) seat 0 is the dealer, and _score_value scores as a self-draw,
+    # so preserving the concealed kong's 門清 gives 莊家1 + 門清1 + 自摸1 = 3 tai =>
+    # 底3台1 value 6. If the kong were disguised as an exposed meld (the bug), 門清
+    # would be lost, dropping this to 5 — so 6 is exactly what proves the fix.
+    assert _score_value(hand, win_tile, _score_template(position)) == 6
 
 
 def test_human_added_kong_can_be_robbed_and_skip_reaches_discard(monkeypatch):

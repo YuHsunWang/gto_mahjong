@@ -207,7 +207,7 @@ export function trainerScreen(root) {
     const table = document.createElement('table');
     table.className = 'evtable';
     const head = document.createElement('tr');
-    ['選項', 'EV（台）'].forEach((label) => {
+    ['選項', 'EV（分）'].forEach((label) => {
       const th = document.createElement('th');
       th.textContent = label;
       head.append(th);

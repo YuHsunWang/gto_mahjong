@@ -62,6 +62,36 @@ def test_all_called_single_wait_ron():
     assert result.total_tai == 4
 
 
+def test_open_kong_counts_as_exposed_set_for_all_called():
+    melds = [
+        (_tile("1m"), _tile("2m"), _tile("3m")),
+        (_tile("4m"), _tile("5m"), _tile("6m")),
+        (_tile("7m"), _tile("8m"), _tile("9m")),
+        (_tile("1z"),) * 3,
+    ]
+    result = score_hand(
+        parse_tiles("33z"), melds, WinContext(winning_tile=_tile("3z")),
+        kongs=((_tile("2z"), False),),
+    )
+
+    assert "all called (全求人)" in _names(result)
+
+
+def test_concealed_kong_disqualifies_all_called():
+    melds = [
+        (_tile("1m"), _tile("2m"), _tile("3m")),
+        (_tile("4m"), _tile("5m"), _tile("6m")),
+        (_tile("7m"), _tile("8m"), _tile("9m")),
+        (_tile("1z"),) * 3,
+    ]
+    result = score_hand(
+        parse_tiles("33z"), melds, WinContext(winning_tile=_tile("3z")),
+        kongs=((_tile("2z"), True),),
+    )
+
+    assert "all called (全求人)" not in _names(result)
+
+
 def test_migi_dealer_streak_stack_on_pinghu():
     hand = parse_tiles("123456789m123p11678s")
     context = WinContext(

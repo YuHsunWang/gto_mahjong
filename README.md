@@ -257,6 +257,10 @@ tile taken from a discard) never qualifies. A concealed kong keeps 門清 and
 counts toward concealed-triplet tai; an open kong breaks 門清. Consequently a
 大明槓 is strictly bad here (0 tai, breaks nothing extra, forfeits 槓上開花); the
 self-play experiment in [docs/experiments.md](docs/experiments.md) confirms it.
+For 全求人, this project follows the mainstream Taiwanese interpretation: a
+大明槓 counts as an exposed set, while any 暗槓 disqualifies 全求人 because that
+set was not completed from another player's tile. This rule-dependent choice
+should be changed if your table uses a different convention.
 
 **連莊 bilateral premium:** the dealer premium (莊 `DEALER_TAI` 1 + 連N拉N
 `STREAK_TAI_PER_WIN`·streak) applies to every payment leg between the dealer and

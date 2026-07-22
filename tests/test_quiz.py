@@ -27,6 +27,8 @@ from taimahjong.quiz import (
     grade,
     threshold_gap,
 )
+from taimahjong.selfplay import DecisionSnapshot
+from taimahjong.tiles import parse_tiles
 
 
 @pytest.fixture(scope="module")
@@ -87,6 +89,16 @@ def test_snapshot_is_public_information_only_and_counts_every_visible_tile(posit
     assert all(not hasattr(opponent, "hand") for opponent in position.opponents)
     assert _observed_counts(position) == position.visible_counts
     assert sum(position.hand) + 3 * len(position.own_melds) == 17
+
+
+def test_empty_wall_allows_zero_remaining_draws():
+    hand = parse_tiles("123m123p123s11122233z")
+    snapshot = DecisionSnapshot(2, hand, (), (), (), (0,) * 34, 17, 0, wall_remaining=0)
+
+    position = quiz._position_from(snapshot, seed=13)
+
+    assert position.wall_remaining == 0
+    assert position.draws_remaining == 0
 
 
 def test_grading_best_worst_off_candidate_and_illegal_choices(position):

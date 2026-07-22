@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from math import ceil, comb
 
 from .calibration import Calibration
-from .danger import OpponentView, _flush_suit, danger_score, fold_score, tenpai_score
+from .danger import OpponentView, RiverEntry, _flush_suit, danger_score, fold_score, tenpai_score
 from .scoring import BASE_UNITS, DEFAULT_SCHEME, ScoringScheme, WinContext, score_hand
 from .shanten import shanten
 from .simulate import winning_trials
@@ -43,6 +43,7 @@ class WinValueContext:
 
     context: WinContext
     melds: tuple[tuple[int, int, int], ...] = ()
+    kongs: tuple[tuple[int, bool], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -82,26 +83,31 @@ def remaining_draws(own_hand: tuple[int, ...] | list[int], visible: tuple[int, .
     """Approximate this seat's remaining draws from the live-wall tile count.
 
     Taiwanese mahjong reserves a 16-tile dead wall.  Public tiles and this
-    seat's concealed hand have already left the live wall, and turns rotate
-    among four seats, so this returns ``ceil(live_wall / 4)``.
+    seat's concealed hand have already left the live wall.  The three hidden
+    opponent hands account for another 48 tiles, and turns rotate among four
+    seats, so this returns ``ceil(live_wall / 4)``.
     """
     hand = validate_counts(own_hand)
     seen = validate_counts(visible)
-    live_wall = 136 - 16 - sum(hand) - sum(seen)
+    live_wall = 136 - 16 - sum(hand) - 3 * 16 - sum(seen)
     return max(0, ceil(live_wall / 4))
 
 
-def opponent_hazards(opponents: tuple[OpponentView, ...] | list[OpponentView]) -> tuple[float, ...]:
+def opponent_hazards(
+    opponents: tuple[OpponentView, ...] | list[OpponentView],
+    own_river: tuple[RiverEntry | int, ...] | list[RiverEntry | int] = (),
+) -> tuple[float, ...]:
     """Return fixed per-turn opponent win hazards from current public reads."""
     views = tuple(opponents)
     hazards: list[float] = []
     for index, opponent in enumerate(views):
-        others = [
+        others = [entry if isinstance(entry, int) else entry.tile for entry in own_river]
+        others.extend(
             entry if isinstance(entry, int) else entry.tile
             for other_index, other in enumerate(views)
             if other_index != index
             for entry in other.river
-        ]
+        )
         folded = fold_score(opponent, others) >= FOLD_HAZARD_CUTOFF
         tenpai = 1.0 if opponent.declared_at is not None else tenpai_score(opponent, len(opponent.river)).score
         multiplier = min(3.0, max(0.25, tenpai / BASELINE_TENPAI_RATE))
@@ -109,11 +115,15 @@ def opponent_hazards(opponents: tuple[OpponentView, ...] | list[OpponentView]) -
     return tuple(hazards)
 
 
-def survival_by_turn(turns: int, opponents: tuple[OpponentView, ...] | list[OpponentView]) -> tuple[float, ...]:
+def survival_by_turn(
+    turns: int,
+    opponents: tuple[OpponentView, ...] | list[OpponentView],
+    own_river: tuple[RiverEntry | int, ...] | list[RiverEntry | int] = (),
+) -> tuple[float, ...]:
     """Return survival through each of our draws, using independent hazards."""
     if turns < 0:
         raise ValueError("turns must be non-negative")
-    per_turn = min(1.0, sum(opponent_hazards(opponents)))
+    per_turn = min(1.0, sum(opponent_hazards(opponents, own_river)))
     survival = 1.0
     values: list[float] = []
     for _ in range(turns):
@@ -122,13 +132,15 @@ def survival_by_turn(turns: int, opponents: tuple[OpponentView, ...] | list[Oppo
     return tuple(values)
 
 
-def _template(template: WinContext | WinValueContext | None) -> tuple[WinContext, tuple[tuple[int, int, int], ...]]:
+def _template(
+    template: WinContext | WinValueContext | None,
+) -> tuple[WinContext, tuple[tuple[int, int, int], ...], tuple[tuple[int, bool], ...]]:
     if template is None:
-        return WinContext(winning_tile=0), ()
+        return WinContext(winning_tile=0), (), ()
     if isinstance(template, WinValueContext):
-        return template.context, template.melds
+        return template.context, template.melds, template.kongs
     if isinstance(template, WinContext):
-        return template, ()
+        return template, (), ()
     raise ValueError("context_template must be WinContext or WinValueContext")
 
 
@@ -140,11 +152,12 @@ def _score_value(hand: tuple[int, ...], winning_tile: int, template: WinContext 
     # — so a non-dealer's win EV is under-counted by at most P/3 of one win
     # (P = DEALER_TAI + STREAK_TAI_PER_WIN*streak). Modeling it needs a
     # per-target win distribution; deferred, and flagged in docs/experiments.
-    context, melds = _template(template)
+    context, melds, kongs = _template(template)
     return score_hand(
         hand,
         list(melds),
         replace(context, winning_tile=winning_tile, self_draw=True, migi_declared=context.migi_declared if migi is None else migi),
+        kongs=kongs,
     ).value_in(scheme)
 
 
@@ -260,6 +273,8 @@ def ev_rank(
     calibration: Calibration | None = None,
     top_k: int = 5,
     scheme: ScoringScheme = DEFAULT_SCHEME,
+    own_river: tuple[RiverEntry | int, ...] | list[RiverEntry | int] = (),
+    declaration_eligible: bool = False,
 ) -> list[EVRankEntry]:
     """Rank an efficient candidate set by self-draw EV less deal-in losses."""
     if top_k < 1:
@@ -279,7 +294,7 @@ def ev_rank(
     selected.extend(item for item in ranked_danger[top_k:] if item[1] < baseline)
     selected = selected[: top_k + 2]
 
-    survival = survival_by_turn(turns, views)
+    survival = survival_by_turn(turns, views, own_river)
     # CRN (common random numbers) reduces variance in differences between
     # candidates: identical randomness cancels shared sampling noise. Each
     # absolute EV still has Monte Carlo error that only more sims reduces.
@@ -288,9 +303,18 @@ def ev_rank(
     for analysis, _ in selected:
         post = list(hand)
         post[analysis.discard] -= 1
-        attack = _discounted_win_estimate(
-            tuple(post), turns, melds_declared, seen, sims, base_seed, context_template, survival, scheme,
-        )
+        attack_visible = list(seen)
+        attack_visible[analysis.discard] += 1
+        if declaration_eligible and shanten(tuple(post), melds_declared) == 0:
+            advice = declaration_ev(
+                tuple(post), tuple(attack_visible), turns, context_template, sims,
+                base_seed, views, scheme, own_river,
+            )
+            attack = advice.declared if advice.should_declare else advice.undeclared
+        else:
+            attack = _discounted_win_estimate(
+                tuple(post), turns, melds_declared, tuple(attack_visible), sims, base_seed, context_template, survival, scheme,
+            )
         losses = tuple(deal_in_ev(analysis.discard, view, seen, tuple(post), calibration, scheme) for view in views)
         risk = sum(losses)
         entries.append(EVRankEntry(
@@ -319,6 +343,8 @@ def evaluate_discard(
     context_template: WinContext | WinValueContext | None = None,
     calibration: Calibration | None = None,
     scheme: ScoringScheme = DEFAULT_SCHEME,
+    own_river: tuple[RiverEntry | int, ...] | list[RiverEntry | int] = (),
+    declaration_eligible: bool = False,
 ) -> EVRankEntry:
     """Net-EV of one discard using the exact discounted-attack, survival, and
     CRN-seed logic of :func:`ev_rank`'s per-candidate body.
@@ -332,13 +358,22 @@ def evaluate_discard(
     hand = validate_counts(counts17)
     seen = validate_counts(visible)
     views = tuple(opponents)
-    survival = survival_by_turn(turns, views)
+    survival = survival_by_turn(turns, views, own_river)
     base_seed = random.randrange(2**64) if seed is None else seed
     post = list(hand)
     post[discard] -= 1
-    attack = _discounted_win_estimate(
-        tuple(post), turns, melds_declared, seen, sims, base_seed, context_template, survival, scheme,
-    )
+    attack_visible = list(seen)
+    attack_visible[discard] += 1
+    if declaration_eligible and shanten(tuple(post), melds_declared) == 0:
+        advice = declaration_ev(
+            tuple(post), tuple(attack_visible), turns, context_template, sims,
+            base_seed, views, scheme, own_river,
+        )
+        attack = advice.declared if advice.should_declare else advice.undeclared
+    else:
+        attack = _discounted_win_estimate(
+            tuple(post), turns, melds_declared, tuple(attack_visible), sims, base_seed, context_template, survival, scheme,
+        )
     losses = tuple(deal_in_ev(discard, view, seen, tuple(post), calibration, scheme) for view in views)
     risk = sum(losses)
     return EVRankEntry(
@@ -355,6 +390,8 @@ def declaration_ev(
     sims: int = 400,
     seed: int | None = None,
     opponents: tuple[OpponentView, ...] | list[OpponentView] = (),
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    own_river: tuple[RiverEntry | int, ...] | list[RiverEntry | int] = (),
 ) -> DeclarationAdvice:
     """Compare exact locked-migi EV with the simulated upgrade-allowed branch."""
     hand = validate_counts(counts16)
@@ -374,12 +411,12 @@ def declaration_ev(
         completed = list(hand)
         completed[tile] += 1
         if shanten(tuple(completed)) == -1:
-            waits.append((tile, remaining, _score_value(tuple(completed), tile, context_template, migi=True)))
+            waits.append((tile, remaining, _score_value(tuple(completed), tile, context_template, migi=True, scheme=scheme)))
     winning = sum(remaining for _, remaining, _ in waits)
     p_win = 0.0 if not winning or not turns else 1.0 - comb(pool - winning, turns) / comb(pool, turns)
     mean = None if not winning else sum(remaining * value for _, remaining, value in waits) / winning
     raw_declared_ev = p_win * mean if mean is not None else 0.0
-    survival = survival_by_turn(turns, opponents)
+    survival = survival_by_turn(turns, opponents, own_river)
     declared_attack = 0.0
     declared_adjusted_p_win = 0.0
     for turn in range(1, turns + 1):
@@ -395,7 +432,7 @@ def declaration_ev(
         p_win, mean, raw_declared_ev, declared_adjusted_p_win, declared_attack,
         declared_draw, declared_attack + declared_draw * DRAW_VALUE,
     )
-    base_context, melds = _template(context_template)
-    undeclared_template = WinValueContext(replace(base_context, migi_declared=False), melds)
-    undeclared = _discounted_win_estimate(hand, turns, 0, seen, sims, seed, undeclared_template, survival)
+    base_context, melds, kongs = _template(context_template)
+    undeclared_template = WinValueContext(replace(base_context, migi_declared=False), melds, kongs)
+    undeclared = _discounted_win_estimate(hand, turns, 0, seen, sims, seed, undeclared_template, survival, scheme)
     return DeclarationAdvice(declared, undeclared, declared.net_ev > undeclared.net_ev)

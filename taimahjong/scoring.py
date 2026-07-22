@@ -269,7 +269,10 @@ def _score_decomposition(
         items.append(("robbing the kong (搶槓)", ROBBED_KONG_TAI))
     if single_wait:
         items.append(("single wait (獨聽)", SINGLE_WAIT_TAI))
-    if len(meld_sets) == 5 and not context.self_draw:
+    # Mainstream Taiwanese ruling used here: 大明槓 is an exposed set for
+    # 全求人, while any 暗槓 means the hand was not completed entirely with
+    # other players' tiles and therefore disqualifies the pattern.
+    if len(meld_sets) + open_kong_count == 5 and not concealed_kong_count and not context.self_draw:
         items.append(("all called (全求人)", ALL_CALLED_TAI))
 
     if all(kind == "run" for kind, _ in all_sets) and pair < 27 and not single_wait:

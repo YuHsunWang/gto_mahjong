@@ -18,6 +18,7 @@ import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from functools import lru_cache
+from math import ceil
 from pathlib import Path
 from random import SystemRandom
 from typing import Any
@@ -466,7 +467,8 @@ class EvRankRequest(BaseModel):
     melds: str = ""
     declared_at: int | None = None
     visible: str = ""
-    turns: int = 0  # 0 = derive from the visible pool
+    turns: int = 0  # 0 = derive from wall_remaining or the visible pool
+    wall_remaining: int | None = None
     sims: int = 400
     seed: int = 7
     base_units: int | None = None
@@ -499,7 +501,14 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
             opponent.validate()
         other_visible = (0,) * 34 if not request.visible.strip() else parse_tiles(request.visible)
         visible = _add_counts(other_visible, _opponent_public_counts(opponent)) if opponent else other_visible
-        turns = request.turns or remaining_draws(counts, visible)
+        if request.wall_remaining is not None and request.wall_remaining < 0:
+            raise ValueError("wall_remaining must be non-negative")
+        if request.turns:
+            turns = request.turns
+        elif request.wall_remaining is not None:
+            turns = ceil(request.wall_remaining / 4)
+        else:
+            turns = remaining_draws(counts, visible)
         entries = ev_rank(
             counts, [] if opponent is None else [opponent], visible,
             turns=turns, sims=request.sims, seed=request.seed, calibration=_calibration(),

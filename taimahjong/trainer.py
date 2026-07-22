@@ -19,9 +19,9 @@ from dataclasses import dataclass, field, replace
 from random import Random
 
 from . import quiz  # budget/adaptive constants read live (quiz.*) so tests can monkeypatch them
-from .ev import WinValueContext, estimate_win_value, evaluate_discard, ev_rank
+from .ev import WinValueContext, declaration_ev, estimate_win_value, evaluate_discard, ev_rank
 from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
-from .scoring import DEFAULT_SCHEME, ScoringScheme, WinContext
+from .scoring import DEFAULT_SCHEME, ScoringScheme
 from .selfplay import (
     DEALER_SEAT,
     Player,
@@ -141,7 +141,7 @@ class CallEvaluation:
         if choice is None:
             return self.decision.position.shanten
         post, melds = _post_call(self.decision.position, self.decision.options[choice])
-        return _cached_shanten(post, len(melds))
+        return _cached_shanten(post, len(melds) + len(self.decision.position.own_kongs))
 
     def verdict_for(self, choice: int | None) -> CallVerdict:
         """Grade a call choice via the shared adaptive resolver: the best and
@@ -182,8 +182,7 @@ class KongEvaluation:
     expectation over its dead-wall replacement tile, followed by the best
     post-kong discard EV. This deliberately does not roll out the replacement
     draw's full continuation or price its +1 槓上開花 upside; the existing EV
-    simulator has no kong state, so kongs are represented only by their
-    declared-set count and triplet-shaped public meld for this approximation.
+    simulator preserves each kong's concealed/exposed state for win scoring.
     """
 
     pass_ev: float
@@ -299,22 +298,51 @@ def _human_call_options(player: Player, tile: int, is_next_seat: bool) -> tuple[
     return tuple(options)
 
 
-def _trainer_position(player_index: int, drawn_tile: int | None, players: list[Player], wall_remaining: int, seed: int) -> QuizPosition:
-    """Build a trainer quiz view, representing each own kong as a triplet.
-
-    QuizPosition predates kongs and only carries three-tile melds. The fourth
-    kong tile is already in the self-play public count; adding the triplet here
-    gives its declared-set count to shanten and EV without changing that model.
-    """
+def _trainer_position(
+    player_index: int,
+    drawn_tile: int | None,
+    players: list[Player],
+    wall_remaining: int,
+    seed: int,
+    migi_eligible: bool = False,
+) -> QuizPosition:
+    """Build a trainer quiz view, preserving own kong visibility and type."""
     player = players[player_index]
     position = _position_from(_decision_snapshot(player_index, drawn_tile, players, wall_remaining), seed)
-    if not player.kongs:
-        return position
-    kong_melds = tuple((tile, tile, tile) for tile, _ in player.kongs)
     return replace(
         position,
-        own_melds=position.own_melds + kong_melds,
+        own_kongs=tuple(player.kongs),
         shanten=_cached_shanten(tuple(player.hand), _declared(player)),
+        migi_declared=player.declared,
+        migi_eligible=migi_eligible,
+    )
+
+
+def _score_template(
+    position: QuizPosition,
+    melds: tuple[tuple[int, int, int], ...] | None = None,
+    kongs: tuple[tuple[int, bool], ...] | None = None,
+) -> WinValueContext:
+    """Trainer scoring state shared by discard, call, and kong EV branches."""
+    template = quiz._score_template(position)
+    return replace(
+        template,
+        melds=position.own_melds if melds is None else melds,
+        kongs=position.own_kongs if kongs is None else kongs,
+    )
+
+
+def _declaration_advice(position: QuizPosition, scheme: ScoringScheme = DEFAULT_SCHEME):
+    """Value the declaration that the trainer will apply to this tenpai state."""
+    return declaration_ev(
+        position.hand,
+        position.public_counts,
+        position.draws_remaining,
+        _score_template(position),
+        seed=_evaluation_seed(position),
+        opponents=tuple(opponent.view() for opponent in position.opponents),
+        scheme=scheme,
+        own_river=position.own_river,
     )
 
 
@@ -354,9 +382,9 @@ def _pass_ev(decision: TrainerCallDecision, base_seed: int, sims: int, scheme: S
     """Self-draw win EV of keeping the concealed hand (the 'pass' pseudo-option)."""
     position = decision.position
     return estimate_win_value(
-        position.hand, position.draws_remaining, len(position.own_melds),
+        position.hand, position.draws_remaining, len(position.own_melds) + len(position.own_kongs),
         position.public_counts, sims, base_seed,
-        WinValueContext(WinContext(winning_tile=0, dealer=position.is_dealer), position.own_melds),
+        _score_template(position),
         scheme=scheme,
     ).expected_win_ev
 
@@ -372,9 +400,10 @@ def _option_rank(decision: TrainerCallDecision, option: CallOption, base_seed: i
     post, melds = _post_call(position, option)
     ranked = ev_rank(
         post, [opponent.view() for opponent in position.opponents], position.public_counts,
-        len(melds), position.draws_remaining, sims, base_seed,
-        WinValueContext(WinContext(winning_tile=0, dealer=position.is_dealer), melds), top_k=EV_TOP_K,
+        len(melds) + len(position.own_kongs), position.draws_remaining, sims, base_seed,
+        _score_template(position, melds), top_k=EV_TOP_K,
         scheme=scheme,
+        own_river=position.own_river,
     )
     playable = [entry for entry in ranked if not entry.is_fold]
     if not playable:
@@ -393,9 +422,10 @@ def _refine_option(decision: TrainerCallDecision, option: CallOption, discard: i
     post, melds = _post_call(position, option)
     entry = evaluate_discard(
         post, discard, [opponent.view() for opponent in position.opponents],
-        position.public_counts, len(melds), position.draws_remaining,
-        sims, base_seed, WinValueContext(WinContext(winning_tile=0, dealer=position.is_dealer), melds),
+        position.public_counts, len(melds) + len(position.own_kongs), position.draws_remaining,
+        sims, base_seed, _score_template(position, melds),
         scheme=scheme,
+        own_river=position.own_river,
     )
     return entry.net_ev
 
@@ -404,6 +434,7 @@ def _best_discard_ev(
     position: QuizPosition,
     hand: tuple[int, ...],
     melds: tuple[tuple[int, int, int], ...],
+    kongs: tuple[tuple[int, bool], ...],
     public_counts: tuple[int, ...],
     base_seed: int,
     sims: int,
@@ -412,9 +443,10 @@ def _best_discard_ev(
     """Best non-fold discard EV for one post-draw hand under the shared seed."""
     ranked = ev_rank(
         hand, [opponent.view() for opponent in position.opponents], public_counts,
-        len(melds), position.draws_remaining, sims, base_seed,
-        WinValueContext(WinContext(winning_tile=0, dealer=position.is_dealer), melds), top_k=EV_TOP_K,
+        len(melds) + len(kongs), position.draws_remaining, sims, base_seed,
+        _score_template(position, melds, kongs), top_k=EV_TOP_K,
         scheme=scheme,
+        own_river=position.own_river,
     )
     playable = [entry.net_ev for entry in ranked if not entry.is_fold]
     return max(playable, default=0.0)
@@ -422,26 +454,37 @@ def _best_discard_ev(
 
 def _post_kong_state(
     position: QuizPosition, option: KongOption,
-) -> tuple[tuple[int, ...], tuple[tuple[int, int, int], ...], tuple[int, ...]]:
-    """Return the hand before replacement, EV melds, and public counts after a kong."""
+) -> tuple[
+    tuple[int, ...],
+    tuple[tuple[int, int, int], ...],
+    tuple[tuple[int, bool], ...],
+    tuple[int, ...],
+]:
+    """Return concealed tiles, melds, typed kongs, and public counts after a kong."""
     hand = list(position.hand)
     public = list(position.public_counts)
+    melds = position.own_melds
     if option.kind == "concealed":
         hand[option.tile] -= 4
         public[option.tile] += 4
-        melds = position.own_melds + ((option.tile, option.tile, option.tile),)
+        kongs = position.own_kongs + ((option.tile, True),)
     else:
         hand[option.tile] -= 1
         public[option.tile] += 1
-        # The existing pon remains a triplet-shaped declared set in the EV API.
-        melds = position.own_melds
-    return tuple(hand), melds, tuple(public)
+        melds_list = list(melds)
+        melds_list.remove((option.tile, option.tile, option.tile))
+        melds = tuple(melds_list)
+        kongs = position.own_kongs + ((option.tile, False),)
+    return tuple(hand), melds, kongs, tuple(public)
 
 
 def _kong_pass_ev(decision: TrainerKongDecision, base_seed: int, sims: int, scheme: ScoringScheme = DEFAULT_SCHEME) -> float:
     """EV of declining a kong and taking the ordinary current-hand discard."""
     position = decision.position
-    return _best_discard_ev(position, position.hand, position.own_melds, position.public_counts, base_seed, sims, scheme)
+    return _best_discard_ev(
+        position, position.hand, position.own_melds, position.own_kongs,
+        position.public_counts, base_seed, sims, scheme,
+    )
 
 
 def _kong_option_ev(decision: TrainerKongDecision, option: KongOption, base_seed: int, sims: int, scheme: ScoringScheme = DEFAULT_SCHEME) -> float:
@@ -452,7 +495,7 @@ def _kong_option_ev(decision: TrainerKongDecision, option: KongOption, base_seed
     opponents' concealed hands.
     """
     position = decision.position
-    hand, melds, public = _post_kong_state(position, option)
+    hand, melds, kongs, public = _post_kong_state(position, option)
     unseen = [4 - hand[tile] - public[tile] for tile in range(34)]
     total = sum(count for count in unseen if count > 0)
     if total <= 0:
@@ -463,7 +506,9 @@ def _kong_option_ev(decision: TrainerKongDecision, option: KongOption, base_seed
             continue
         replacement = list(hand)
         replacement[tile] += 1
-        expected += copies * _best_discard_ev(position, tuple(replacement), melds, public, base_seed, sims, scheme)
+        expected += copies * _best_discard_ev(
+            position, tuple(replacement), melds, kongs, public, base_seed, sims, scheme,
+        )
     return expected / total
 
 
@@ -630,7 +675,11 @@ def play_trainer(
                     raise ValueError("sent kong choice must be an option index or None to skip")
 
         if current == human_seat and not player.declared:
-            position = _trainer_position(current, drawn_tile, players, len(wall), seed)
+            migi_eligible = not any_call and player.discards < 2 and _declared(player) == 0
+            position = _trainer_position(
+                current, drawn_tile, players, len(wall), seed,
+                migi_eligible=migi_eligible,
+            )
             chosen = yield TrainerDecision(position)
             if not (isinstance(chosen, int) and not isinstance(chosen, bool) and 0 <= chosen < 34):
                 raise ValueError("sent discard must be a tile index 0-33")
@@ -646,8 +695,10 @@ def play_trainer(
         true_tenpai = _cached_shanten(tuple(player.hand), _declared(player)) == 0
         player.river.append(RiverEntry(tile, origin))
         player.discards += 1
-        if not any_call and not player.declared and turn <= 2 and true_tenpai:
-            player.declared_at = len(player.river) - 1
+        if not any_call and not player.declared and turn <= 2 and true_tenpai and _declared(player) == 0:
+            declared_position = _trainer_position(current, None, players, len(wall), seed)
+            if _declaration_advice(declared_position).should_declare:
+                player.declared_at = len(player.river) - 1
 
         winner = _ron_winner(current, tile, players)
         if winner is not None:

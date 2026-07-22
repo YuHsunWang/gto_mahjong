@@ -106,10 +106,9 @@ def test_winning_trial_values_are_scored_as_self_draws():
 
 
 def test_remaining_draws_uses_live_wall_and_four_seats():
-    assert remaining_draws(POST_DRAW, (0,) * 34) == 26  # ceil((136 - 16 - 17) / 4)
-    hand = tuple([4, 4, 4, 4, 1] + [0] * 29)
-    visible = tuple([0] * 5 + [4] * 21 + [0] * 8)
-    assert remaining_draws(hand, visible) == 5  # ceil((136 - 16 - 17 - 84) / 4)
+    # 26 -> 14: the 48 tiles in three hidden opponent hands are not drawable.
+    assert remaining_draws(POST_DRAW, (0,) * 34) == 14  # ceil((136 - 16 - 17 - 48) / 4)
+    assert remaining_draws(POST_DRAW, parse_tiles("9999m")) == 13  # four public tiles also left the wall
 
 
 def test_opponent_hazard_survival_strictly_reduces_attack_ev_and_net_ev():
@@ -132,14 +131,40 @@ def test_folded_opponent_contributes_zero_hazard():
     assert opponent_hazards([folding, safety_source])[0] == 0.0
 
 
+def test_own_river_can_make_an_opponent_folded_for_survival_hazard():
+    target = OpponentView(parse_river("1m1p1s"), [], None)
+    own_river = parse_river("1m1p1s")
+
+    assert opponent_hazards([target])[0] > 0.0
+    assert opponent_hazards([target], own_river)[0] == 0.0
+
+
 def test_zero_hazard_attack_ev_is_exactly_the_pre_m7_value():
     entries = [entry for entry in ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19) if not entry.is_fold]
     sample = entries[0]
     post = list(POST_DRAW)
     post[sample.discard] -= 1
-    previous = estimate_win_value(tuple(post), 3, visible=(0,) * 34, sims=80, seed=19)
+    attack_visible = [0] * 34
+    attack_visible[sample.discard] = 1
+    previous = estimate_win_value(tuple(post), 3, visible=attack_visible, sims=80, seed=19)
     assert sample.attack_ev == previous.expected_win_ev
     assert sample.survival_adjusted_p_win == previous.p_win
+
+
+def test_ev_attack_pool_marks_each_candidate_discard_visible(monkeypatch):
+    hand = parse_tiles("123m123p123s11122z333z")
+    captured = {}
+
+    def fake_estimate(counts16, turns, melds_declared, visible, sims, seed, context_template, survival, scheme):
+        discard = next(tile for tile in range(34) if counts16[tile] < hand[tile])
+        captured[discard] = visible
+        return ev.WinValueEstimate(0.0, None, 0.0)
+
+    monkeypatch.setattr(ev, "_discounted_win_estimate", fake_estimate)
+    ev_rank(hand, [], (0,) * 34, turns=1, sims=1, seed=1, top_k=34)
+
+    assert captured[29][29] == 1
+    assert sum(captured[29]) == 1
 
 
 def test_draw_value_shifts_net_ev_by_exact_draw_term(monkeypatch):
