@@ -5,7 +5,7 @@
 import { post, get, showError, randomSeed } from './api.js';
 import { tileEl } from './tiles.js';
 import { feltEl, handEl, computingEl, faceText } from './table.js';
-import { verdictEl, evDetailsEl, bestLineEl, scorebarEl } from './feedback.js';
+import { verdictEl, evDetailsEl, bestLineEl, modelScopeEl, scorebarEl } from './feedback.js';
 import { record } from './stats.js';
 import { schemeToggle, schemeParams } from './scheme.js';
 
@@ -46,7 +46,9 @@ export function trainerScreen(root) {
     phase = 'boot';
     render();
     try {
-      state = await post('/api/trainer/new', { seed, human_seat: humanSeat, dealer_streak: dealerStreak });
+      state = await post('/api/trainer/new', {
+        seed, human_seat: humanSeat, dealer_streak: dealerStreak, ...schemeParams(),
+      });
       sessionStorage.setItem(SESSION_KEY, state.session_id);
       frozen = null;
       feedback = null;
@@ -80,9 +82,11 @@ export function trainerScreen(root) {
     phase = 'acting';
     render(computingText);
     try {
-      state = await post(`/api/trainer/${state.session_id}/act`, { step: state.step, ...move, ...schemeParams() });
+      state = await post(`/api/trainer/${state.session_id}/act`, {
+        step: state.step, ...move, ...schemeParams(state.scheme.id),
+      });
       feedback = state.feedback;
-      record('trainer', feedback.verdict, feedback.ev_loss);
+      record('trainer', feedback.verdict, feedback.ev_loss, state.scheme.id);
       phase = 'feedback';
     } catch (error) {
       showError(error);
@@ -155,7 +159,7 @@ export function trainerScreen(root) {
     });
     controls.append(startButton);
 
-    wrap.append(seedField, row, note, controls);
+    wrap.append(seedField, row, schemeToggle(() => {}), note, controls);
     return wrap;
   }
 
@@ -237,7 +241,7 @@ export function trainerScreen(root) {
     const delta = document.createElement('div');
     delta.className = `delta ${decision.point_delta > 0 ? 'win' : decision.point_delta < 0 ? 'lose' : ''}`;
     const streakIn = decision.dealer_streak_in ? `（連莊 ${decision.dealer_streak_in}）` : '';
-    delta.textContent = `你的收支 ${decision.point_delta > 0 ? '+' : ''}${decision.point_delta} 台單位 · ${decision.turns} 手${streakIn}`;
+    delta.textContent = `你的收支 ${decision.point_delta > 0 ? '+' : ''}${decision.point_delta} 籌碼單位 · ${decision.turns} 手${streakIn}`;
     wrap.append(headline, delta);
 
     const next = document.createElement('div');
@@ -271,9 +275,6 @@ export function trainerScreen(root) {
 
   function decisionScreen(decision) {
     const fragment = document.createDocumentFragment();
-    // In the trainer a graded decision has already advanced the game, so the
-    // scheme applies from the next decision onward (no retroactive re-grade).
-    fragment.append(schemeToggle(() => {}));
     if (decision.type === 'discard') {
       fragment.append(feltEl(decision.position));
       const hint = document.createElement('div');
@@ -318,7 +319,7 @@ export function trainerScreen(root) {
         melds: decision.position.own_melds,
       }));
       fragment.append(verdictEl(feedback.verdict, feedback.marginal, feedback.ev_delta, `你切 ${faceText(feedback.chosen_tile)}`));
-      if (showBest) fragment.append(bestLineEl(`最佳切牌：${faceText(bestTile)}（淨 EV ${feedback.best.net_ev.toFixed(1)}，綠框標示）`));
+      if (showBest) fragment.append(bestLineEl(`本模型估計切牌：${faceText(bestTile)}（淨 EV ${feedback.best.net_ev.toFixed(1)}，綠框標示）`));
       fragment.append(evDetailsEl(feedback.ranked, {
         chosenTile: feedback.chosen_tile,
         bestTile,
@@ -341,7 +342,7 @@ export function trainerScreen(root) {
         : (isCall
           ? `${callLabel(decision.options[feedback.best_index])} ${decision.options[feedback.best_index].meld.map(faceText).join('')}`
           : kongLabel(decision.options[feedback.best_index]));
-      fragment.append(bestLineEl(`最佳：${bestLabel}，EV ${feedback.best_ev.toFixed(1)} 台`));
+      fragment.append(bestLineEl(`本模型估計：${bestLabel}，heuristic EV ${feedback.best_ev.toFixed(1)} 籌碼單位`));
       fragment.append(optionEvRows(decision));
     }
 
@@ -367,6 +368,7 @@ export function trainerScreen(root) {
       return;
     }
     root.append(scorebarEl(state.scorecard));
+    root.append(modelScopeEl(state));
     if (phase === 'acting') {
       const decision = frozen;
       root.append(feltEl(decision.position, {

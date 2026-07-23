@@ -6,11 +6,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from .calibration import Calibration, counts_from_games, format_report, load_table, write_merged_table
+from .analysis import AnalysisContext, CalibrationProvider
+from .calibration import counts_from_games, format_report, load_table, write_merged_table
+from .config import GameConfig
 from .danger import OpponentView, fold_score, parse_river, rank_discards
-from .ev import declaration_ev, ev_rank, remaining_draws
+from .ev import TileAccounting, declaration_ev, ev_rank, remaining_draws
 from .quiz import best_discard, explain, generate_position, grade
-from .scoring import BASE_UNITS, WinContext, score_hand
+from .scoring import WinContext, score_hand
 from .selfplay import POLICIES, play_games
 from .shanten import shanten
 from .simulate import win_probability
@@ -79,11 +81,16 @@ def _add_visible(*groups: tuple[int, ...] | list[int]) -> tuple[int, ...]:
     return tuple(total)
 
 
-def _public_counts(opponent: OpponentView) -> tuple[int, ...]:
+def _opponent_discard_counts(opponent: OpponentView) -> tuple[int, ...]:
     counts = [0] * 34
     for entry in opponent.river:
         tile = entry if isinstance(entry, int) else entry.tile
         counts[tile] += 1
+    return tuple(counts)
+
+
+def _opponent_holding_counts(opponent: OpponentView) -> tuple[int, ...]:
+    counts = [0] * 34
     for meld in opponent.melds:
         for tile in meld:
             counts[tile] += 1
@@ -133,8 +140,23 @@ def main() -> None:
     parser.add_argument("--policies", help="four comma-separated self-play policies (attack, cautious, ev_aware)")
     parser.add_argument("--out", help="self-play calibration JSON destination")
     parser.add_argument("--answer", help="quiz discard answer, e.g. 3m")
+    parser.add_argument(
+        "--scheme",
+        choices=("3-1", "5-2"),
+        default="3-1",
+        help="底/台 payout preset (default: 3-1)",
+    )
     args = parser.parse_args()
     try:
+        config = GameConfig.from_id(args.scheme)
+        analysis = AnalysisContext(
+            config,
+            CalibrationProvider(_default_calibration_path()).load(),
+        )
+        scheme_line = (
+            f"Scheme: {config.scheme_id} "
+            f"(底{config.scheme.base_units}/台{config.scheme.tai_units})"
+        )
         if args.quiz_batch is not None:
             if args.tiles:
                 raise ValueError("tiles are not used with --quiz-batch")
@@ -144,21 +166,33 @@ def main() -> None:
                 raise ValueError("--quiz-batch must be at least 1")
             next_seed = 0 if args.seed is None else args.seed
             for _ in range(args.quiz_batch):
-                position = generate_position(next_seed)
+                position = generate_position(next_seed, analysis)
                 # The cheap ranking already names the best discard; no need to pay
                 # grade()'s REFINE_SIMS re-estimation just to print one tile.
-                discard = best_discard(position)
-                print(f"seed {position.seed}: best {_tile_name(discard)}")
+                discard = best_discard(position, analysis=analysis)
+                print(f"seed {position.seed}: heuristic EV {_tile_name(discard)}")
                 next_seed = position.seed + 1
+            print(scheme_line)
+            print(
+                f"Calibration: {analysis.calibration.calibration_id}; "
+                f"domain={analysis.calibration.domain}; "
+                f"fallback_used={str(analysis.calibration.fallback_used).lower()}"
+            )
             return
         if args.quiz:
             if args.tiles:
                 raise ValueError("tiles are not used with --quiz")
-            position = generate_position(0 if args.seed is None else args.seed)
+            position = generate_position(0 if args.seed is None else args.seed, analysis)
             print(position.render())
             answer = args.answer if args.answer is not None else input("Discard tile: ")
             chosen = _single_tile(answer)
-            quiz_grade = grade(position, chosen)
+            quiz_grade = grade(position, chosen, analysis=analysis)
+            print(scheme_line)
+            print(
+                f"Calibration: {analysis.calibration.calibration_id}; "
+                f"domain={analysis.calibration.domain}; "
+                f"fallback_used={str(analysis.calibration.fallback_used).lower()}"
+            )
             marginal_note = " (marginal — hugs a verdict boundary)" if quiz_grade.marginal else ""
             print(f"Verdict: {quiz_grade.verdict}{marginal_note}")
             print(f"EV delta: {quiz_grade.ev_delta:.1f} tai")
@@ -181,11 +215,16 @@ def main() -> None:
                 policies = tuple(args.policies.split(","))
                 if len(policies) != 4 or any(policy not in POLICIES for policy in policies):
                     raise ValueError("--policies requires four entries from attack, cautious, ev_aware")
-            games = play_games(args.games, args.seed, policies)
-            metadata = {"seeds": [] if args.seed is None else [args.seed], "policy_mix": list(policies)}
+            games = play_games(args.games, args.seed, policies, config=config)
+            metadata = {
+                "seeds": [] if args.seed is None else [args.seed],
+                "policy_mix": list(policies),
+                "scheme": config.payload(),
+            }
             if args.seed is not None:
                 metadata["last_seed"] = args.seed
             document = write_merged_table(args.out, counts_from_games(games), metadata)
+            print(scheme_line)
             print(f"self-play: appended {args.games} games; total {document['counts']['games']} games -> {args.out}")
             return
         if not args.tiles:
@@ -201,9 +240,14 @@ def main() -> None:
                     raise ValueError("--ev opponent state requires --opp-river")
                 opponent = OpponentView(parse_river(args.opp_river), _parse_opponent_melds(args.opp_melds), args.opp_declared)
             other_visible = (0,) * 34 if visible is None else visible
-            ev_visible = _add_visible(other_visible, _public_counts(opponent)) if opponent else other_visible
-            calibration_path = _default_calibration_path()
-            calibration = Calibration.from_path(calibration_path) if calibration_path.exists() else None
+            accounting = TileAccounting(
+                _add_visible(
+                    other_visible,
+                    _opponent_discard_counts(opponent) if opponent else (0,) * 34,
+                ),
+                _opponent_holding_counts(opponent) if opponent else (0,) * 34,
+            )
+            ev_visible = accounting.visible
             template = WinContext(
                 winning_tile=0,
                 dealer=args.dealer,
@@ -214,12 +258,19 @@ def main() -> None:
                 round_wind=_single_tile(args.round_wind),
                 seat_wind=_single_tile(args.seat_wind),
             )
-            turns = args.turns if args.turns is not None else remaining_draws(counts, ev_visible)
+            turns = args.turns if args.turns is not None else remaining_draws(counts, accounting)
             entries = ev_rank(
                 counts, [] if opponent is None else [opponent], ev_visible, args.melds, turns,
-                args.sims or 400, args.seed, template, calibration,
+                args.sims or 400, args.seed, template,
+                analysis.calibration.calibration, scheme=config.scheme,
             )
             print(f"Hand: {format_tiles(counts)}")
+            print(scheme_line)
+            print(
+                f"Calibration: {analysis.calibration.calibration_id}; "
+                f"domain={analysis.calibration.domain}; "
+                f"fallback_used={str(analysis.calibration.fallback_used).lower()}"
+            )
             if args.turns is None:
                 print(f"Remaining draws (auto): {turns}")
             print("Discard  Net EV  P(win)  Surv P(win)  P(draw)  E[win value]  E[loss]")
@@ -238,7 +289,14 @@ def main() -> None:
                     raise ValueError("--declare opponent state requires --opp-river")
                 opponent = OpponentView(parse_river(args.opp_river), _parse_opponent_melds(args.opp_melds), args.opp_declared)
             other_visible = (0,) * 34 if visible is None else visible
-            declare_visible = _add_visible(other_visible, _public_counts(opponent)) if opponent else other_visible
+            accounting = TileAccounting(
+                _add_visible(
+                    other_visible,
+                    _opponent_discard_counts(opponent) if opponent else (0,) * 34,
+                ),
+                _opponent_holding_counts(opponent) if opponent else (0,) * 34,
+            )
+            declare_visible = accounting.visible
             template = WinContext(
                 winning_tile=0,
                 dealer=args.dealer,
@@ -248,12 +306,13 @@ def main() -> None:
                 round_wind=_single_tile(args.round_wind),
                 seat_wind=_single_tile(args.seat_wind),
             )
-            turns = args.turns if args.turns is not None else remaining_draws(counts, declare_visible)
+            turns = args.turns if args.turns is not None else remaining_draws(counts, accounting)
             advice = declaration_ev(
                 counts, declare_visible, turns, template, args.sims or 400, args.seed,
-                [] if opponent is None else [opponent],
+                [] if opponent is None else [opponent], config.scheme,
             )
             print(f"Hand: {format_tiles(counts)}")
+            print(scheme_line)
             if args.turns is None:
                 print(f"Remaining draws (auto): {turns}")
             print("Branch       P(win)  Surv P(win)  P(draw)  E[win value]  Net EV")
@@ -269,13 +328,17 @@ def main() -> None:
                 raise ValueError("--danger requires --opp-river")
             opponent = OpponentView(parse_river(args.opp_river), _parse_opponent_melds(args.opp_melds), args.opp_declared)
             other_visible = (0,) * 34 if visible is None else visible
-            danger_visible = _add_visible(other_visible, _public_counts(opponent))
+            danger_visible = _add_visible(
+                other_visible,
+                _opponent_discard_counts(opponent),
+                _opponent_holding_counts(opponent),
+            )
             analyses = rank_discards(counts, opponent, danger_visible, args.melds)
-            calibration_path = _default_calibration_path()
-            calibration = Calibration.from_path(calibration_path) if calibration_path.exists() else None
+            calibration = analysis.calibration.calibration
             opponent_tenpai = analyses[0].tenpai if analyses else None
             opponent_fold = fold_score(opponent, parse_tiles(args.others) if args.others else [])
             print(f"Hand: {format_tiles(counts)}")
+            print(scheme_line)
             if opponent_tenpai is not None:
                 signals = ", ".join(f"{name}={value}" for name, value in opponent_tenpai.signals.items())
                 run = int(opponent_tenpai.signals.get("trailing_tsumogiri_run", 0))
@@ -343,15 +406,20 @@ def main() -> None:
             result = score_hand(counts, my_melds, context)
             melds_text = args.my_melds or "-"
             print(f"Hand: {format_tiles(counts)} (melds: {melds_text})")
+            print(scheme_line)
             print(f"Win tile: {_tile_name(winning[0])} ({'self-draw' if args.self_draw else 'ron'})")
             print("Tai breakdown:")
             for name, tai in result.items:
                 print(f"  {name:<38} {tai}")
             print(f"Total: {result.total_tai} tai")
-            print(f"Value: 底({BASE_UNITS} tai) + {result.total_tai} tai = {result.value_units} tai units")
+            print(
+                f"Value: 底 {config.scheme.base_units} + 台 {config.scheme.tai_units}"
+                f" × {result.total_tai} = {result.value_in(config.scheme)} units"
+            )
         elif args.simulate:
             result = win_probability(counts, args.turns if args.turns is not None else 10, args.melds, visible, args.sims or 5000, args.seed)
             print(f"Hand: {format_tiles(counts)}")
+            print(scheme_line)
             print("Turn  Tenpai %  Win %")
             for turn, (tenpai, win) in enumerate(zip(result.tenpai_by_turn, result.win_by_turn), start=1):
                 print(f"{turn:<4}  {tenpai * 100:>7.2f}  {win * 100:>5.2f}")
@@ -361,6 +429,7 @@ def main() -> None:
             accepted = ukeire(counts, args.melds, visible)
             current_shanten = shanten(counts, args.melds)
             print(f"Hand: {format_tiles(counts)}")
+            print(scheme_line)
             print(f"Shanten: {current_shanten}")
             for tile, remaining in accepted.items():
                 print(f"{_tile_name(tile)}: {remaining}")
@@ -368,6 +437,7 @@ def main() -> None:
         elif args.analyze:
             analyses = discard_analysis(counts, args.melds, visible)
             print(f"Hand: {format_tiles(counts)}")
+            print(scheme_line)
             print("Discard  Shanten  Total  Accepted")
             for analysis in analyses:
                 print(
@@ -377,6 +447,7 @@ def main() -> None:
         else:
             current_shanten = shanten(counts, args.melds)
             print(f"Hand: {format_tiles(counts)}")
+            print(scheme_line)
             print(f"Shanten: {current_shanten}")
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)

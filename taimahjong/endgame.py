@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from . import quiz
+from .analysis import AnalysisContext, DEFAULT_ANALYSIS_CONTEXT
 from .ev import EVRankEntry, ev_rank
 from .quiz import EV_TOP_K, MAX_ATTEMPTS, QuizPosition, _evaluation_seed, _position_from, _score_template
 from .selfplay import DecisionSnapshot, play_game
@@ -32,7 +33,10 @@ class EndgamePosition:
     tag: str  # "attack" (push) or "defense" (fold pressure)
 
 
-def _full_rank(position: QuizPosition) -> list[EVRankEntry]:
+def _full_rank(
+    position: QuizPosition,
+    analysis: AnalysisContext = DEFAULT_ANALYSIS_CONTEXT,
+) -> list[EVRankEntry]:
     """The quiz ranking with the fold pseudo-action retained, for tagging.
 
     Budget constants are read live off ``quiz`` so tests can monkeypatch them.
@@ -46,7 +50,9 @@ def _full_rank(position: QuizPosition) -> list[EVRankEntry]:
         quiz.EV_SIMS,
         _evaluation_seed(position),
         _score_template(position),
+        calibration=analysis.calibration.calibration,
         top_k=EV_TOP_K,
+        scheme=analysis.game.scheme,
     )
 
 
@@ -68,7 +74,10 @@ def _tag(ranked: list[EVRankEntry]) -> str:
     return "defense" if beaten_by < DEFENSE_FOLD_RANK else "attack"
 
 
-def generate_endgame_position(seed: int) -> EndgamePosition:
+def generate_endgame_position(
+    seed: int,
+    analysis: AnalysisContext = DEFAULT_ANALYSIS_CONTEXT,
+) -> EndgamePosition:
     """Find the first filtered late-game position at ``seed`` or later.
 
     Search order matches :func:`taimahjong.quiz.generate_position`: game seeds
@@ -79,12 +88,12 @@ def generate_endgame_position(seed: int) -> EndgamePosition:
         raise ValueError("seed must be an integer")
     for game_seed in range(seed, seed + MAX_ATTEMPTS):
         snapshots: list[DecisionSnapshot] = []
-        play_game(game_seed, snapshot_hook=snapshots.append)
+        play_game(game_seed, snapshot_hook=snapshots.append, config=analysis.game)
         for snapshot in snapshots:
             position = _position_from(snapshot, game_seed)
             if not _pressure(position):
                 continue
-            ranked = _full_rank(position)
+            ranked = _full_rank(position, analysis)
             playable = [entry for entry in ranked if not entry.is_fold]
             if len(playable) < 2:
                 continue

@@ -4,8 +4,9 @@ import { drillScreen } from './quiz.js';
 import { trainerScreen } from './trainer.js';
 import { analyzeScreen, scoreScreen } from './tools.js';
 import { lessonsScreen } from './lessons.js';
-import { summary, accuracySeries, sparklineEl } from './stats.js';
+import { summary, accuracySeries, hasLegacyStats, sparklineEl } from './stats.js';
 import { tileEl } from './tiles.js';
+import { schemeToggle } from './scheme.js';
 
 const app = document.getElementById('app');
 
@@ -21,7 +22,7 @@ const MODES = [
     hash: '#/quiz',
     name: '單手',
     en: 'Spot drill',
-    desc: '種子產生的關鍵一手：切哪張？和 GTO 最佳解比對。',
+    desc: '種子產生的關鍵一手：切哪張？和本模型的 heuristic EV 建議比對。',
     statsKey: 'quiz',
   },
   {
@@ -58,8 +59,8 @@ function modeCard(mode) {
     const accuracy = Math.round((100 * stats.best) / stats.decisions);
     const average = (stats.loss / stats.decisions).toFixed(2);
     row.innerHTML = `<span>已答 <b>${stats.decisions}</b></span>`
-      + `<span>最佳率 <b>${accuracy}%</b></span>`
-      + `<span>均損 <b>${average}</b> 台</span>`;
+      + `<span>模型最佳率 <b>${accuracy}%</b></span>`
+      + `<span>均損 <b>${average}</b> 籌碼單位</span>`;
     const spark = document.createElement('span');
     spark.className = 'spark';
     spark.append(sparklineEl(accuracySeries(mode.statsKey)));
@@ -109,6 +110,7 @@ function homeScreen(root) {
 
   const setting = document.createElement('div');
   setting.className = 'setting-row';
+  setting.append(schemeToggle(() => route()));
   const label = document.createElement('label');
   label.className = 'check';
   const box = document.createElement('input');
@@ -121,9 +123,11 @@ function homeScreen(root) {
 
   const footnote = document.createElement('div');
   footnote.className = 'footnote';
-  footnote.textContent = '機率以機器人自我對局校準，不代表真人牌局；進攻 EV 僅計自摸。'
+  footnote.textContent = '進攻只估自摸的 Monte Carlo EV；放銃與對手價值是 heuristic，'
+    + '校準資料域只涵蓋內建 bot，缺表時會明示 heuristic fallback，不代表真人牌局。'
     + 'EV 為蒙地卡羅估計：貼著判定門檻的手會自動加碼精算，仍標「（邊緣）」者受殘餘取樣誤差影響。'
-    + '本桌無花牌（花牌建模為獨立的未來里程碑）。';
+    + '本桌無花牌（花牌建模為獨立的未來里程碑）。'
+    + (hasLegacyStats() ? ' 舊版未標底台的統計已保留為 legacy，未併入目前方案。' : '');
   root.append(footnote);
 }
 

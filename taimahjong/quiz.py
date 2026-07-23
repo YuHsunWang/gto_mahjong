@@ -11,6 +11,8 @@ from functools import lru_cache
 from math import ceil
 from typing import Callable, TypeVar
 
+from .analysis import AnalysisContext, DEFAULT_ANALYSIS_CONTEXT
+from .config import GameConfig
 from .danger import OpponentView, RiverEntry, danger_score, fold_score, format_river, tenpai_score
 from .ev import EVRankEntry, WinValueContext, evaluate_discard, ev_rank
 from .scoring import DEFAULT_SCHEME, ScoringScheme, WinContext
@@ -335,8 +337,22 @@ def _score_template(position: QuizPosition) -> WinValueContext:
     )
 
 
+def _analysis_context(
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    analysis: AnalysisContext | None = None,
+) -> AnalysisContext:
+    """Preserve the legacy scheme argument while keying work by full context."""
+    if analysis is not None:
+        if scheme != DEFAULT_SCHEME and analysis.game.scheme != scheme:
+            raise ValueError("scheme and analysis context disagree")
+        return analysis
+    if scheme == DEFAULT_SCHEME:
+        return DEFAULT_ANALYSIS_CONTEXT
+    return AnalysisContext(GameConfig(scheme))
+
+
 @lru_cache(maxsize=256)
-def _rank_cached(position: QuizPosition, scheme: ScoringScheme) -> tuple[EVRankEntry, ...]:
+def _rank_cached(position: QuizPosition, analysis: AnalysisContext) -> tuple[EVRankEntry, ...]:
     return tuple(entry for entry in ev_rank(
         position.hand,
         [opponent.view() for opponent in position.opponents],
@@ -346,25 +362,37 @@ def _rank_cached(position: QuizPosition, scheme: ScoringScheme) -> tuple[EVRankE
         EV_SIMS,
         _evaluation_seed(position),
         _score_template(position),
+        calibration=analysis.calibration.calibration,
         top_k=EV_TOP_K,
-        scheme=scheme,
+        scheme=analysis.game.scheme,
         own_river=position.own_river,
         declaration_eligible=position.migi_eligible,
     ) if not entry.is_fold)
 
 
-def _rank(position: QuizPosition, scheme: ScoringScheme = DEFAULT_SCHEME) -> tuple[EVRankEntry, ...]:
-    """Cheap EV ranking keyed independently of the display-only gap.
+def _rank(
+    position: QuizPosition,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    analysis: AnalysisContext | None = None,
+) -> tuple[EVRankEntry, ...]:
+    """Cheap EV ranking keyed by the fixed analysis context.
 
-    Position generation ranks under the house default scheme so a seed always
-    reproduces the same position; grading passes the user's chosen scheme.
+    The display-only gap is removed from the position key; scheme and
+    calibration identity remain in the immutable context key.
     """
-    return _rank_cached(replace(position, candidate_ev_gap=0.0), scheme)
+    return _rank_cached(
+        replace(position, candidate_ev_gap=0.0),
+        _analysis_context(scheme, analysis),
+    )
 
 
-def best_discard(position: QuizPosition, scheme: ScoringScheme = DEFAULT_SCHEME) -> int:
+def best_discard(
+    position: QuizPosition,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    analysis: AnalysisContext | None = None,
+) -> int:
     """Return the cheap ranking's best discard, equal to ``grade().best.discard``."""
-    return _rank(position, scheme)[0].discard
+    return _rank(position, scheme, analysis)[0].discard
 
 
 def _interesting(position: QuizPosition) -> bool:
@@ -375,7 +403,10 @@ def _interesting(position: QuizPosition) -> bool:
     )
 
 
-def generate_position(seed: int) -> QuizPosition:
+def generate_position(
+    seed: int,
+    analysis: AnalysisContext = DEFAULT_ANALYSIS_CONTEXT,
+) -> QuizPosition:
     """Find the first filtered post-draw position at ``seed`` or later.
 
     Search order is deterministic: game seeds are tried as ``seed``,
@@ -385,22 +416,29 @@ def generate_position(seed: int) -> QuizPosition:
         raise ValueError("seed must be an integer")
     for game_seed in range(seed, seed + MAX_ATTEMPTS):
         snapshots: list[DecisionSnapshot] = []
-        play_game(game_seed, snapshot_hook=snapshots.append)
+        play_game(game_seed, snapshot_hook=snapshots.append, config=analysis.game)
         for snapshot in snapshots:
             position = _position_from(snapshot, game_seed)
             if not _interesting(position):
                 continue
-            ranked = _rank(position)
+            ranked = _rank(position, analysis=analysis)
             gap = ranked[0].net_ev - ranked[-1].net_ev
             if gap >= EV_GAP_MIN:
                 return replace(position, candidate_ev_gap=gap)
     raise RuntimeError(f"no interesting quiz position found in {MAX_ATTEMPTS} seeded games")
 
 
-def _refine(position: QuizPosition, tile: int, sims: int, scheme: ScoringScheme = DEFAULT_SCHEME) -> EVRankEntry:
+def _refine(
+    position: QuizPosition,
+    tile: int,
+    sims: int,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    analysis: AnalysisContext | None = None,
+) -> EVRankEntry:
     """Re-estimate one discard at ``sims`` sims, sharing the ranking's CRN base
     seed so the best/chosen difference stays variance-reduced while its absolute
     Monte Carlo error shrinks ~``sqrt(EV_SIMS / sims)``."""
+    context = _analysis_context(scheme, analysis)
     return evaluate_discard(
         position.hand,
         tile,
@@ -411,13 +449,19 @@ def _refine(position: QuizPosition, tile: int, sims: int, scheme: ScoringScheme 
         sims,
         _evaluation_seed(position),
         _score_template(position),
-        scheme=scheme,
+        calibration=context.calibration.calibration,
+        scheme=context.game.scheme,
         own_river=position.own_river,
         declaration_eligible=position.migi_eligible,
     )
 
 
-def grade(position: QuizPosition, chosen_tile: int, scheme: ScoringScheme = DEFAULT_SCHEME) -> QuizGrade:
+def grade(
+    position: QuizPosition,
+    chosen_tile: int,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    analysis: AnalysisContext | None = None,
+) -> QuizGrade:
     """Grade a legal discard under the 底/台 ``scheme``: rank candidates cheaply,
     decide the verdict from the rank-best and chosen candidates re-estimated at
     REFINE_SIMS, and only when that ev_delta sits on a verdict boundary
@@ -427,18 +471,19 @@ def grade(position: QuizPosition, chosen_tile: int, scheme: ScoringScheme = DEFA
         raise ValueError("chosen tile must be an index from 0 through 33")
     if not position.hand[chosen_tile]:
         raise ValueError("chosen tile must be present in the hand")
-    ranked = tuple(_rank(position, scheme))
+    context = _analysis_context(scheme, analysis)
+    ranked = tuple(_rank(position, analysis=context))
     rank_position = next((index for index, entry in enumerate(ranked, start=1) if entry.discard == chosen_tile), None)
     # The verdict comes from two same-CRN-seed estimates; the ranked table keeps
     # its cheaper EV_SIMS values. Choosing the rank-best tile is an exact tie
     # (ev_delta 0), never escalated or flagged marginal.
     if chosen_tile == ranked[0].discard:
-        best = chosen = _refine(position, ranked[0].discard, REFINE_SIMS, scheme)
+        best = chosen = _refine(position, ranked[0].discard, REFINE_SIMS, analysis=context)
         outcome = Verdict.exact_tie(REFINE_SIMS)
     else:
         def estimate(sims: int) -> tuple[float, tuple[EVRankEntry, EVRankEntry]]:
-            best_entry = _refine(position, ranked[0].discard, sims, scheme)
-            chosen_entry = _refine(position, chosen_tile, sims, scheme)
+            best_entry = _refine(position, ranked[0].discard, sims, analysis=context)
+            chosen_entry = _refine(position, chosen_tile, sims, analysis=context)
             return best_entry.net_ev - chosen_entry.net_ev, (best_entry, chosen_entry)
 
         best_post = list(position.hand)

@@ -1,11 +1,12 @@
 """Tests for self-draw Monte Carlo simulation."""
 
 from math import comb
+import random
 
 import pytest
 
-from taimahjong.simulate import win_probability
-from taimahjong.tiles import parse_tiles
+from taimahjong.simulate import _greedy_discard, win_probability, winning_trials
+from taimahjong.tiles import format_tiles, parse_tiles
 from taimahjong.ukeire import discard_analysis
 
 
@@ -68,3 +69,45 @@ def test_rejects_invalid_turn_count_and_insufficient_pool():
     exhausted_visible = tuple(4 - count for count in TENPAI_HAND)
     with pytest.raises(ValueError, match="unseen pool"):
         win_probability(TENPAI_HAND, turns=1, visible=exhausted_visible)
+
+
+def test_dynamic_remaining_counts_resolve_review_seed_policy_divergence():
+    """MJ-003 reproduction: turn 10 must use prior draws/discards, not initial seen."""
+    initial = parse_tiles("123456789m1123p567s")
+    remaining = [4 - count for count in initial]
+    draws = [tile for tile, copies in enumerate(remaining) for _ in range(copies)]
+    random.Random(1).shuffle(draws)
+    current = initial
+    prior_discards = []
+    for turn, draw in enumerate(draws[:10], start=1):
+        remaining[draw] -= 1
+        post_draw = list(current)
+        post_draw[draw] += 1
+        current = tuple(post_draw)
+        discard, _ = _greedy_discard(current, tuple(remaining), 0)
+        if turn == 10:
+            assert format_tiles(current) == "22344567789m234p567s"
+            assert prior_discards == [33, 9, 24, 26, 20, 13, 0, 23, 9]
+            dynamic_visible = [0] * 34
+            for prior in prior_discards:
+                dynamic_visible[prior] += 1
+            assert discard_analysis(current, visible=(0,) * 34)[0].discard == 1
+            assert discard_analysis(current, visible=tuple(dynamic_visible))[0].discard == 3
+            assert discard == 3  # 4m; stale initial-visible accounting chose 2m
+            break
+        reduced = list(current)
+        reduced[discard] -= 1
+        current = tuple(reduced)
+        prior_discards.append(discard)
+
+
+def test_win_probability_is_exactly_the_aggregate_of_shared_winning_trials():
+    visible = _stand_pat_visible()
+    kwargs = dict(turns=6, visible=visible, sims=240, seed=73)
+    result = win_probability(TENPAI_HAND, **kwargs)
+    wins = winning_trials(TENPAI_HAND, **kwargs)
+    assert result.p_win == len(wins) / kwargs["sims"]
+    assert result.win_by_turn == [
+        sum(win.turn <= turn for win in wins) / kwargs["sims"]
+        for turn in range(1, kwargs["turns"] + 1)
+    ]

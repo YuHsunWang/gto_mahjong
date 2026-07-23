@@ -14,9 +14,10 @@ from pathlib import Path
 from typing import Callable
 
 from .calibration import Calibration
+from .config import DEFAULT_GAME_CONFIG, GameConfig
 from .danger import OpponentView, RiverEntry, danger_score, fold_score, tenpai_score
 from .ev import BASELINE_TENPAI_RATE, DECLARED_FACTOR, opponent_value_estimate
-from .scoring import BASE_UNITS, DEALER_TAI, STREAK_TAI_PER_WIN, WinContext, score_hand
+from .scoring import BASE_UNITS, DEFAULT_SCHEME, DEALER_TAI, STREAK_TAI_PER_WIN, ScoringScheme, WinContext, score_hand
 from .shanten import shanten
 from .ukeire import DiscardAnalysis
 
@@ -26,8 +27,8 @@ KONG_POLICIES = ("none", "concealed_added", "all")
 
 # M5c's deliberately cheap, deterministic replacement for per-discard Monte
 # Carlo.  Candidate attack value is relative ukeire times a shanten lookup;
-# risk is a calibrated per-opponent deal-in loss.  These are policy constants,
-# not Taiwan-human-play estimates.
+# risk uses a bot-domain calibrated deal-in lookup when available. These are
+# policy constants and bot-ecology estimates, not Taiwan-human-play estimates.
 ATTACK_TOP_K = 5
 SHANTEN_WIN_WEIGHT = {-1: 1.0, 0: 0.45, 1: 0.18, 2: 0.06}
 SHANTEN_FALLBACK_WEIGHT = 0.02
@@ -332,7 +333,12 @@ def _tenpai_factor(opponent: OpponentView) -> float:
     return min(3.0, max(0.25, score / BASELINE_TENPAI_RATE))
 
 
-def _ev_aware_discard(player_index: int, analyses: tuple[DiscardAnalysis, ...], players: list[Player]) -> int:
+def _ev_aware_discard(
+    player_index: int,
+    analyses: tuple[DiscardAnalysis, ...],
+    players: list[Player],
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+) -> int:
     """Choose from M2's top candidates plus the raw minimum-danger discard."""
     player = players[player_index]
     visible = _public_counts(players)
@@ -357,7 +363,7 @@ def _ev_aware_discard(player_index: int, analyses: tuple[DiscardAnalysis, ...], 
         post[analysis.discard] -= 1
         relative_ukeire = analysis.total / best_ukeire if best_ukeire else 0.0
         attack = SHANTEN_WIN_WEIGHT.get(analysis.shanten_after, SHANTEN_FALLBACK_WEIGHT)
-        attack *= relative_ukeire * (BASE_UNITS + EXPECTED_TAI_PROXY)
+        attack *= relative_ukeire * (scheme.base_units + scheme.tai_units * EXPECTED_TAI_PROXY)
         risk = 0.0
         for index, opponent in opponents:
             danger = danger_by_candidate[analysis.discard][index]
@@ -365,12 +371,17 @@ def _ev_aware_discard(player_index: int, analyses: tuple[DiscardAnalysis, ...], 
             # The committed table normally supplies this.  The fallback only
             # keeps the simulator usable before a first calibration build.
             probability = 0.0 if probability is None else probability
-            risk += probability * opponent_value_estimate(opponent) * _tenpai_factor(opponent)
+            risk += probability * opponent_value_estimate(opponent, scheme) * _tenpai_factor(opponent)
         ranked.append((attack - risk, -order, analysis.discard))
     return max(ranked)[2]
 
 
-def _choose_discard(player_index: int, drawn_tile: int | None, players: list[Player]) -> tuple[int, bool]:
+def _choose_discard(
+    player_index: int,
+    drawn_tile: int | None,
+    players: list[Player],
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+) -> tuple[int, bool]:
     player = players[player_index]
     if player.declared:
         assert drawn_tile is not None
@@ -379,7 +390,7 @@ def _choose_discard(player_index: int, drawn_tile: int | None, players: list[Pla
     analyses = _cached_analysis(tuple(player.hand), _declared(player), visible)
     assert analyses
     if player.policy == "ev_aware":
-        return _ev_aware_discard(player_index, analyses, players), False
+        return _ev_aware_discard(player_index, analyses, players, scheme), False
     fold_active = (
         player.policy == "cautious"
         and _cached_shanten(tuple(player.hand), _declared(player)) >= 2
@@ -411,19 +422,25 @@ def _cautious_dealer_weight(opponent: int, players: list[Player]) -> float:
     return 1.0 + CAUTIOUS_DEALER_BONUS * (1 + players[DEALER_SEAT].dealer_streak)
 
 
-def _dealer_leg_premium(outcome: str, winner: int | None, discarder: int | None, dealer_streak: int) -> int:
+def _dealer_leg_premium(
+    outcome: str,
+    winner: int | None,
+    discarder: int | None,
+    dealer_streak: int,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+) -> int:
     """Extra units on the dealer's payment leg when a non-dealer wins.
 
-    Premium in tai == premium in value units: value_units = BASE_UNITS +
-    total tai, and the premium is extra tai on an already-scored win.  A
-    dealer winner gets 0 here because their premium is baked into the hand
-    value by ``score_hand`` (every leg pays it).
+    The premium is expressed in tai by the scoring table and converted through
+    the same payout scheme as the hand. A dealer winner gets 0 here because
+    their premium is baked into the hand value by ``score_hand`` (every leg
+    pays it).
     """
     if winner is None or winner == DEALER_SEAT:
         return 0
     if outcome == "ron" and discarder != DEALER_SEAT:
         return 0
-    return DEALER_TAI + STREAK_TAI_PER_WIN * dealer_streak
+    return scheme.tai_units * (DEALER_TAI + STREAK_TAI_PER_WIN * dealer_streak)
 
 
 def _settlement(
@@ -434,6 +451,7 @@ def _settlement(
     winning_hand: tuple[int, ...] | None,
     winning_tile: int | None,
     dealer_streak: int = 0,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
     kong_bloom: bool = False,
     robbed_kong: bool = False,
 ) -> tuple[tuple[int, int, int, int], int]:
@@ -466,8 +484,8 @@ def _settlement(
             robbed_kong=robbed_kong,
         ),
         kongs=tuple(players[winner].kongs),
-    ).value_units
-    premium = _dealer_leg_premium(outcome, winner, discarder, dealer_streak)
+    ).value_in(scheme)
+    premium = _dealer_leg_premium(outcome, winner, discarder, dealer_streak, scheme)
     deltas = [0, 0, 0, 0]
     if outcome == "ron":
         assert discarder is not None
@@ -541,6 +559,7 @@ def play_game(
     snapshot_hook: Callable[[DecisionSnapshot], None] | None = None,
     dealer_streak: int = 0,
     kong_policy: str | tuple[str, str, str, str] = "none",
+    config: GameConfig = DEFAULT_GAME_CONFIG,
 ) -> GameResult:
     """Play one deterministic-seeded game and retain every discard event in memory.
 
@@ -582,17 +601,17 @@ def play_game(
         drawn_tile: int | None = None
         if needs_draw:
             if not wall:
-                points, value = _settlement("draw", None, None, players, None, None, dealer_streak)
+                points, value = _settlement("draw", None, None, players, None, None, dealer_streak, config.scheme)
                 return GameResult(events, "draw", None, None, actions, point_deltas=points, value_units=value, dealer_streak=dealer_streak, kong_log=tuple(kong_log))
             drawn_tile = wall.pop()
             player.hand[drawn_tile] += 1
             _assert_conservation(players, wall, dead)
             if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                 winning_hand = tuple(player.hand)
-                points, value = _settlement("tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak)
+                points, value = _settlement("tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme)
                 return GameResult(
                     events, "tsumo", current, None, actions, winning_hand, _declared(player), points, value,
-                    dealer_streak, _dealer_leg_premium("tsumo", current, None, dealer_streak),
+                    dealer_streak, _dealer_leg_premium("tsumo", current, None, dealer_streak, config.scheme),
                     kongs=tuple(player.kongs), kong_log=tuple(kong_log),
                 )
             # Self-draw kongs (concealed / added): declare, rob-check, draw a
@@ -610,11 +629,11 @@ def play_game(
                         robbed_hand[kind_tile] += 1
                         winning = tuple(robbed_hand)
                         points, value = _settlement(
-                            "ron", robber, current, players, winning, kind_tile, dealer_streak, robbed_kong=True,
+                            "ron", robber, current, players, winning, kind_tile, dealer_streak, config.scheme, robbed_kong=True,
                         )
                         return GameResult(
                             events, "ron", robber, current, actions, winning, _declared(players[robber]), points, value,
-                            dealer_streak, _dealer_leg_premium("ron", robber, current, dealer_streak),
+                            dealer_streak, _dealer_leg_premium("ron", robber, current, dealer_streak, config.scheme),
                             kongs=tuple(players[robber].kongs), robbed_kong=True, kong_log=tuple(kong_log),
                         )
                 kong_log.append((current, kind_tile, concealed))
@@ -623,17 +642,17 @@ def play_game(
                 if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                     winning_hand = tuple(player.hand)
                     points, value = _settlement(
-                        "tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, kong_bloom=True,
+                        "tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme, kong_bloom=True,
                     )
                     return GameResult(
                         events, "tsumo", current, None, actions, winning_hand, _declared(player), points, value,
-                        dealer_streak, _dealer_leg_premium("tsumo", current, None, dealer_streak),
+                        dealer_streak, _dealer_leg_premium("tsumo", current, None, dealer_streak, config.scheme),
                         kongs=tuple(player.kongs), kong_bloom=True, kong_log=tuple(kong_log),
                     )
             if snapshot_hook is not None and not player.declared:
                 snapshot_hook(_decision_snapshot(current, drawn_tile, players, len(wall)))
 
-        tile, fold_active = _choose_discard(current, drawn_tile, players)
+        tile, fold_active = _choose_discard(current, drawn_tile, players, config.scheme)
         assert player.hand[tile] > 0
         origin = "tsumogiri" if drawn_tile == tile else "tedashi"
         player.hand[tile] -= 1
@@ -697,10 +716,10 @@ def play_game(
             winning_hand[tile] += 1
             assert _cached_shanten(tuple(winning_hand), _declared(players[winner])) == -1
             winning = tuple(winning_hand)
-            points, value = _settlement("ron", winner, current, players, winning, tile, dealer_streak)
+            points, value = _settlement("ron", winner, current, players, winning, tile, dealer_streak, config.scheme)
             return GameResult(
                 events, "ron", winner, current, actions, winning, _declared(players[winner]), points, value,
-                dealer_streak, _dealer_leg_premium("ron", winner, current, dealer_streak),
+                dealer_streak, _dealer_leg_premium("ron", winner, current, dealer_streak, config.scheme),
                 kongs=tuple(players[winner].kongs), kong_log=tuple(kong_log),
             )
 
@@ -718,10 +737,10 @@ def play_game(
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(players[big_caller].hand), _declared(players[big_caller])) == -1:
                     winning_hand = tuple(players[big_caller].hand)
-                    points, value = _settlement("tsumo", big_caller, None, players, winning_hand, replacement, dealer_streak)
+                    points, value = _settlement("tsumo", big_caller, None, players, winning_hand, replacement, dealer_streak, config.scheme)
                     return GameResult(
                         events, "tsumo", big_caller, None, actions, winning_hand, _declared(players[big_caller]), points, value,
-                        dealer_streak, _dealer_leg_premium("tsumo", big_caller, None, dealer_streak),
+                        dealer_streak, _dealer_leg_premium("tsumo", big_caller, None, dealer_streak, config.scheme),
                         kongs=tuple(players[big_caller].kongs), kong_log=tuple(kong_log),
                     )
                 current = big_caller
@@ -763,14 +782,28 @@ def play_game(
             needs_draw = True
 
 
-def play_games(games: int, seed: int | None = None, policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious"), dealer_streak: int = 0) -> list[GameResult]:
+def play_games(
+    games: int,
+    seed: int | None = None,
+    policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious"),
+    dealer_streak: int = 0,
+    config: GameConfig = DEFAULT_GAME_CONFIG,
+) -> list[GameResult]:
     if not isinstance(games, int) or isinstance(games, bool) or games < 0:
         raise ValueError("games must be a non-negative integer")
     rng = Random(seed)
-    return [play_game(rng.randrange(2**63), policies, dealer_streak=dealer_streak) for _ in range(games)]
+    return [
+        play_game(rng.randrange(2**63), policies, dealer_streak=dealer_streak, config=config)
+        for _ in range(games)
+    ]
 
 
-def head_to_head(games: int, seed: int, dealer_streak: int = 0) -> HeadToHeadResult:
+def head_to_head(
+    games: int,
+    seed: int,
+    dealer_streak: int = 0,
+    config: GameConfig = DEFAULT_GAME_CONFIG,
+) -> HeadToHeadResult:
     """Run alternating-seat ev_aware/attack games and summarize point EV.
 
     Consecutive fixed seeds make a full comparison reproducible.  Even games
@@ -787,7 +820,7 @@ def head_to_head(games: int, seed: int, dealer_streak: int = 0) -> HeadToHeadRes
     differences: list[float] = []
     for index in range(games):
         policies = paired_policies[index % 2]
-        game = play_game(seed + index, policies, dealer_streak=dealer_streak)
+        game = play_game(seed + index, policies, dealer_streak=dealer_streak, config=config)
         ev_points = sum(game.point_deltas[seat] for seat, policy in enumerate(policies) if policy == "ev_aware") / 2
         attack_points = sum(game.point_deltas[seat] for seat, policy in enumerate(policies) if policy == "attack") / 2
         deltas.append((ev_points, attack_points))

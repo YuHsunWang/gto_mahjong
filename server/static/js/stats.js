@@ -1,6 +1,9 @@
-// Client-side answer history per mode (localStorage; docs/ui-plan.md W3).
+// Client-side answer history per mode and payout scheme.
 
-const KEY = 'mj-stats-v1';
+import { currentScheme } from './scheme.js';
+
+const KEY = 'mj-stats-v2';
+const LEGACY_KEY = 'mj-stats-v1';
 const CAP = 500;
 
 function load() {
@@ -16,16 +19,21 @@ function save(data) {
 }
 
 // One graded decision: verdict + non-negative EV loss.
-export function record(mode, verdict, evLoss) {
+export function record(mode, verdict, evLoss, schemeId = currentScheme().key) {
   const data = load();
-  if (!data[mode]) data[mode] = [];
-  data[mode].push({ t: Date.now(), b: verdict === 'best' ? 1 : 0, l: Math.round(evLoss * 100) / 100 });
-  if (data[mode].length > CAP) data[mode] = data[mode].slice(-CAP);
+  if (!data[mode]) data[mode] = {};
+  if (!data[mode][schemeId]) data[mode][schemeId] = [];
+  data[mode][schemeId].push({ t: Date.now(), b: verdict === 'best' ? 1 : 0, l: Math.round(evLoss * 100) / 100 });
+  if (data[mode][schemeId].length > CAP) data[mode][schemeId] = data[mode][schemeId].slice(-CAP);
   save(data);
 }
 
-export function summary(mode) {
-  const events = load()[mode] || [];
+function eventsFor(mode, schemeId = currentScheme().key) {
+  return load()[mode]?.[schemeId] || [];
+}
+
+export function summary(mode, schemeId = currentScheme().key) {
+  const events = eventsFor(mode, schemeId);
   const decisions = events.length;
   const best = events.reduce((sum, event) => sum + event.b, 0);
   const loss = events.reduce((sum, event) => sum + event.l, 0);
@@ -33,8 +41,8 @@ export function summary(mode) {
 }
 
 // Rolling best-rate (window 10) over the last 60 answers, as points 0..1.
-export function accuracySeries(mode, windowSize = 10, span = 60) {
-  const events = (load()[mode] || []).slice(-span);
+export function accuracySeries(mode, windowSize = 10, span = 60, schemeId = currentScheme().key) {
+  const events = eventsFor(mode, schemeId).slice(-span);
   if (events.length < 2) return [];
   const points = [];
   for (let i = 0; i < events.length; i += 1) {
@@ -42,6 +50,10 @@ export function accuracySeries(mode, windowSize = 10, span = 60) {
     points.push(window.reduce((sum, event) => sum + event.b, 0) / window.length);
   }
   return points;
+}
+
+export function hasLegacyStats() {
+  return localStorage.getItem(LEGACY_KEY) !== null;
 }
 
 export function sparklineEl(points, width = 96, height = 26) {

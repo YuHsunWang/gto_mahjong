@@ -79,17 +79,65 @@ class DeclarationAdvice:
     should_declare: bool
 
 
-def remaining_draws(own_hand: tuple[int, ...] | list[int], visible: tuple[int, ...] | list[int]) -> int:
+@dataclass(frozen=True)
+class TileAccounting:
+    """Typed observable tiles for wall accounting versus tile availability.
+
+    ``out_of_hands`` contains river tiles and any other tiles that are no
+    longer in a player's fixed holding. ``revealed_holdings`` contains open
+    melds/kongs: they remain useful for ukeire and danger, but must not be
+    deducted again after the three opponents' 48-tile holding allowance.
+    """
+
+    out_of_hands: tuple[int, ...] | list[int] = (0,) * 34
+    revealed_holdings: tuple[int, ...] | list[int] = (0,) * 34
+
+    def __post_init__(self) -> None:
+        outside = validate_counts(self.out_of_hands)
+        holdings = validate_counts(self.revealed_holdings)
+        if any(outside[tile] + holdings[tile] > 4 for tile in range(34)):
+            raise ValueError("observable tiles cannot contain more than four copies of a tile kind")
+        object.__setattr__(self, "out_of_hands", outside)
+        object.__setattr__(self, "revealed_holdings", holdings)
+
+    @property
+    def visible(self) -> tuple[int, ...]:
+        return tuple(
+            self.out_of_hands[tile] + self.revealed_holdings[tile]
+            for tile in range(34)
+        )
+
+
+def remaining_draws(
+    own_hand: tuple[int, ...] | list[int],
+    accounting: TileAccounting | tuple[int, ...] | list[int] | None = None,
+    *,
+    wall_remaining: int | None = None,
+) -> int:
     """Approximate this seat's remaining draws from the live-wall tile count.
 
-    Taiwanese mahjong reserves a 16-tile dead wall.  Public tiles and this
-    seat's concealed hand have already left the live wall.  The three hidden
-    opponent hands account for another 48 tiles, and turns rotate among four
-    seats, so this returns ``ceil(live_wall / 4)``.
+    An explicit live-wall count is authoritative.  Otherwise Taiwanese
+    mahjong reserves a 16-tile dead wall; this seat's concealed hand and the
+    three opponents' fixed 48-tile holdings are already deducted, so only
+    ``TileAccounting.out_of_hands`` is additionally removed. Revealed melds
+    stay inside those holdings and do not shorten the wall a second time.
     """
     hand = validate_counts(own_hand)
-    seen = validate_counts(visible)
-    live_wall = 136 - 16 - sum(hand) - 3 * 16 - sum(seen)
+    if wall_remaining is not None:
+        if not isinstance(wall_remaining, int) or isinstance(wall_remaining, bool) or wall_remaining < 0:
+            raise ValueError("wall_remaining must be a non-negative integer")
+        return ceil(wall_remaining / 4)
+    if accounting is None:
+        tiles = TileAccounting()
+    elif isinstance(accounting, TileAccounting):
+        tiles = accounting
+    else:
+        # Backward-compatible strict meaning: a bare count tuple is out of all
+        # hands (river/other public tiles), never an opponent meld.
+        tiles = TileAccounting(accounting)
+    if any(hand[tile] + tiles.visible[tile] > 4 for tile in range(34)):
+        raise ValueError("hand and observable tiles cannot contain more than four copies of a tile kind")
+    live_wall = 136 - 16 - sum(hand) - 3 * 16 - sum(tiles.out_of_hands)
     return max(0, ceil(live_wall / 4))
 
 

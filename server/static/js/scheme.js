@@ -5,12 +5,14 @@
 const KEY = 'mj-scheme';
 
 export const SCHEMES = {
-  '3/1': { key: '3/1', label: '底3台1', base_units: 3, tai_units: 1 },
-  '5/2': { key: '5/2', label: '底5台2', base_units: 5, tai_units: 2 },
+  '3-1': { key: '3-1', label: '底3台1', base_units: 3, tai_units: 1 },
+  '5-2': { key: '5-2', label: '底5台2', base_units: 5, tai_units: 2 },
 };
 
 export function currentScheme() {
-  return SCHEMES[localStorage.getItem(KEY)] || SCHEMES['3/1'];
+  const stored = localStorage.getItem(KEY);
+  const legacy = stored === '3/1' ? '3-1' : stored === '5/2' ? '5-2' : stored;
+  return SCHEMES[legacy] || SCHEMES['3-1'];
 }
 
 export function setScheme(key) {
@@ -18,9 +20,9 @@ export function setScheme(key) {
 }
 
 // Spread into a grade/act/ev-rank request body.
-export function schemeParams() {
-  const scheme = currentScheme();
-  return { base_units: scheme.base_units, tai_units: scheme.tai_units };
+export function schemeParams(key = null) {
+  const scheme = (key && SCHEMES[key]) || currentScheme();
+  return { scheme: scheme.key };
 }
 
 // A small segmented control. `onChange(newKey)` fires only on an actual switch.

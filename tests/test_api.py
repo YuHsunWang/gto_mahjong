@@ -18,11 +18,13 @@ def fast_budgets(monkeypatch):
     # into (or out of) this module's tiny-budget runs.
     from taimahjong import quiz
 
-    for cache in (api._quiz_position, api._endgame_position, quiz._rank_cached):
+    for cache in (api._quiz_position, api._endgame_position, quiz._rank_cached, api._calibration_context):
         cache.cache_clear()
     yield
-    for cache in (api._quiz_position, api._endgame_position, quiz._rank_cached):
-        cache.cache_clear()
+    for cache in (api._quiz_position, api._endgame_position, quiz._rank_cached, api._calibration_context):
+        clear = getattr(cache, "cache_clear", None)
+        if clear:
+            clear()
 
 
 @pytest.fixture()
@@ -42,6 +44,10 @@ def test_quiz_new_then_grade_roundtrip(client):
     assert sum(position["hand"]) in (17, 14, 11, 8, 5, 2)  # 17 minus 3 per declared meld
     assert position["wall_remaining"] > 0
     assert len(position["opponents"]) == 3
+    assert created.json()["scheme"]["id"] == "3-1"
+    assert created.json()["domain"] == "bot"
+    assert created.json()["calibration_id"]
+    assert created.json()["fallback_used"] is False
 
     graded = client.post("/api/quiz/grade", json={"seed": position["seed"], "tile": _some_hand_tile(position)})
     assert graded.status_code == 200
@@ -49,6 +55,7 @@ def test_quiz_new_then_grade_roundtrip(client):
     assert grade["verdict"] in {"best", "good", "inaccuracy", "mistake"}
     assert grade["ranked"] and not any(entry["is_fold"] for entry in grade["ranked"])
     assert isinstance(grade["explain"], str) and grade["explain"]
+    assert graded.json()["scheme"]["id"] == "3-1"
 
 
 def test_quiz_grade_rejects_a_tile_not_in_hand(client):
@@ -59,7 +66,7 @@ def test_quiz_grade_rejects_a_tile_not_in_hand(client):
 
 
 def test_quiz_grade_honors_the_scoring_scheme(client):
-    position = client.post("/api/quiz/new", json={"seed": 1}).json()["position"]
+    position = client.post("/api/quiz/new", json={"seed": 1, "scheme": "3-1"}).json()["position"]
     tile = _some_hand_tile(position)
     body = {"seed": position["seed"], "tile": tile}
     default = client.post("/api/quiz/grade", json=body).json()["grade"]
@@ -69,12 +76,31 @@ def test_quiz_grade_honors_the_scoring_scheme(client):
     # An absent scheme means the house default (底3台1); 底5台2 must move the EV.
     assert top(default) == pytest.approx(top(three_one))
     assert top(five_two) != pytest.approx(top(three_one))
+    assert client.post("/api/quiz/grade", json={**body, "scheme": "5-2"}).json()["scheme"]["id"] == "5-2"
 
 
 def test_grade_rejects_a_half_specified_scheme(client):
     position = client.post("/api/quiz/new", json={"seed": 1}).json()["position"]
     body = {"seed": position["seed"], "tile": _some_hand_tile(position), "base_units": 5}
     assert client.post("/api/quiz/grade", json=body).status_code == 422
+
+
+def test_api_rejects_non_preset_or_conflicting_scheme(client):
+    assert client.post("/api/score", json={
+        "hand": "22z",
+        "melds": "123m;456p;789s;111z;555z",
+        "win_tile": "2z",
+        "base_units": 4,
+        "tai_units": 1,
+    }).status_code == 422
+    assert client.post("/api/score", json={
+        "hand": "22z",
+        "melds": "123m;456p;789s;111z;555z",
+        "win_tile": "2z",
+        "scheme": "3-1",
+        "base_units": 5,
+        "tai_units": 2,
+    }).status_code == 422
 
 
 def test_endgame_new_meets_the_pressure_filter(client, monkeypatch):
@@ -98,11 +124,14 @@ def test_endgame_new_meets_the_pressure_filter(client, monkeypatch):
 
 
 def test_trainer_session_flow_discard_scorecard_and_reload(client):
-    started = client.post("/api/trainer/new", json={"seed": 1, "human_seat": 0, "dealer_streak": 1})
+    started = client.post("/api/trainer/new", json={
+        "seed": 1, "human_seat": 0, "dealer_streak": 1, "scheme": "5-2",
+    })
     assert started.status_code == 200
     state = started.json()
     session_id = state["session_id"]
     assert state["scorecard"] == {"decisions": 0, "best": 0, "loss": 0.0}
+    assert state["scheme"]["id"] == "5-2"
 
     graded_discards = 0
     for _ in range(40):
@@ -114,7 +143,10 @@ def test_trainer_session_flow_discard_scorecard_and_reload(client):
             move = {"step": state["step"], "action": "discard", "tile": _some_hand_tile(decision["position"])}
         else:  # kong or call: exercise the pass path
             move = {"step": state["step"], "action": decision["type"], "option": None}
-        acted = client.post(f"/api/trainer/{session_id}/act", json=move)
+        acted = client.post(
+            f"/api/trainer/{session_id}/act",
+            json={**move, "scheme": "5-2"},
+        )
         assert acted.status_code == 200
         state = acted.json()
         assert state["feedback"]["verdict"] in {"best", "good", "inaccuracy", "mistake"}
@@ -134,6 +166,23 @@ def test_trainer_session_flow_discard_scorecard_and_reload(client):
     # Replaying a stale step must not advance the game a second time.
     stale = {"step": state["step"] - 1, "action": "discard", "tile": 0}
     assert client.post(f"/api/trainer/{session_id}/act", json=stale).status_code == 409
+
+
+def test_trainer_rejects_mid_session_scheme_switch(client):
+    state = client.post("/api/trainer/new", json={"seed": 1, "scheme": "3-1"}).json()
+    decision = state["decision"]
+    move = {
+        "step": state["step"],
+        "action": decision["type"],
+        "scheme": "5-2",
+    }
+    if decision["type"] == "discard":
+        move["tile"] = _some_hand_tile(decision["position"])
+    else:
+        move["option"] = None
+    response = client.post(f"/api/trainer/{state['session_id']}/act", json=move)
+    assert response.status_code == 409
+    assert response.json()["detail"] == "trainer scheme is fixed at session creation"
 
 
 def test_trainer_act_validates_before_touching_the_generator(client):
@@ -164,6 +213,8 @@ def test_ev_rank_endpoint_with_opponent(client):
     assert body["turns"] > 0
     assert any(entry["is_fold"] for entry in body["entries"])
     assert "tenpai_estimate" in body["opponent"]
+    assert body["scheme"]["id"] == "3-1"
+    assert body["domain"] == "bot" and body["fallback_used"] is False
 
 
 def test_ev_rank_auto_turns_include_hidden_opponent_hands(client):
@@ -174,6 +225,18 @@ def test_ev_rank_auto_turns_include_hidden_opponent_hands(client):
 
     assert response.status_code == 200
     assert response.json()["turns"] == 14  # ceil((136 - 16 dead - 17 own - 48 opponents) / 4)
+
+
+def test_ev_rank_open_meld_does_not_shorten_the_live_wall(client):
+    base = {
+        "hand": "123m123p123s11122233z",
+        "river": "9m",
+        "sims": 1,
+    }
+    closed = client.post("/api/ev/rank", json=base)
+    opened = client.post("/api/ev/rank", json={**base, "melds": "111p"})
+    assert closed.status_code == opened.status_code == 200
+    assert closed.json()["turns"] == opened.json()["turns"] == 14
 
 
 def test_ev_rank_prefers_explicit_wall_remaining(client):
@@ -202,6 +265,22 @@ def test_score_endpoint_matches_engine(client):
     expected = score_hand(parse_tiles("123m111555666777z22z"), (), WinContext(winning_tile=_tile("2z"), self_draw=True))
     assert body["total_tai"] == expected.total_tai
     assert body["value_units"] == expected.value_units
+    assert body["scheme"]["id"] == "3-1"
+
+
+@pytest.mark.parametrize(("scheme", "expected"), [("3-1", 7), ("5-2", 13)])
+def test_score_known_four_tai_hand_uses_requested_preset(client, scheme, expected):
+    response = client.post("/api/score", json={
+        "hand": "22z",
+        "melds": "123m;456p;789s;111z;555z",
+        "win_tile": "2z",
+        "scheme": scheme,
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_tai"] == 4
+    assert body["value_units"] == expected
+    assert body["scheme"]["id"] == scheme
 
 
 def test_score_endpoint_rejects_more_than_four_physical_copies(client):

@@ -1,8 +1,8 @@
-// GTO-Wizard-style feedback: verdict badge, ranked EV table, explain text.
+// Heuristic-EV feedback: verdict badge, ranked table, and scope disclosure.
 
 import { faceText } from './tiles.js';
 
-export const VERDICT_LABELS = { best: '最佳', good: '良好', inaccuracy: '小失誤', mistake: '失誤' };
+export const VERDICT_LABELS = { best: '模型最佳', good: '良好', inaccuracy: '小失誤', mistake: '失誤' };
 
 export function verdictEl(verdict, marginal, evDelta, text) {
   const el = document.createElement('div');
@@ -75,6 +75,22 @@ export function bestLineEl(text) {
   return el;
 }
 
+export function modelScopeEl(metadata = null) {
+  const el = document.createElement('div');
+  el.className = 'note model-scope';
+  const calibration = metadata
+    ? (metadata.fallback_used
+      ? 'heuristic fallback（校準表缺失）'
+      : `bot-domain calibration ${metadata.calibration_id}`)
+    : 'bot-domain calibration（缺表時改用 heuristic fallback）';
+  const scheme = metadata?.scheme
+    ? `底${metadata.scheme.base_units}／台${metadata.scheme.tai_units}`
+    : '目前底台設定';
+  el.textContent = `模型範圍：${scheme}；進攻只估自摸的 Monte Carlo EV；`
+    + `放銃與對手價值屬 heuristic EV；${calibration}，不代表真人牌局。`;
+  return el;
+}
+
 export function scorebarEl(score) {
   const el = document.createElement('div');
   el.className = 'scorebar';
@@ -82,7 +98,7 @@ export function scorebarEl(score) {
   const accuracy = decisions ? `${Math.round((100 * score.best) / decisions)}%` : '—';
   const average = decisions ? (score.loss / decisions).toFixed(2) : '—';
   el.innerHTML = `<span>手數 <b>${decisions}</b></span>`
-    + `<span>最佳率 <b>${accuracy}</b></span>`
+    + `<span>模型最佳率 <b>${accuracy}</b></span>`
     + `<span>總EV損失 <b>${(score.loss || 0).toFixed(2)}</b> 分</span>`
     + `<span>每手均損 <b>${average}</b></span>`;
   return el;

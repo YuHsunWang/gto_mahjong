@@ -241,7 +241,22 @@ def test_refined_ev_delta_has_lower_cross_seed_variance_than_cheap(position):
 
 
 def test_quiz_cli_noninteractive_prints_best_verdict(position):
-    answer = grade(position, next(tile for tile, count in enumerate(position.hand) if count)).best.discard
+    # CLI composition loads the committed calibration, so reproduce its
+    # calibration-keyed seeded position rather than the core fallback fixture.
+    from pathlib import Path
+    from taimahjong.analysis import AnalysisContext, CalibrationProvider
+    from taimahjong.config import DEFAULT_GAME_CONFIG
+
+    analysis = AnalysisContext(
+        DEFAULT_GAME_CONFIG,
+        CalibrationProvider(Path("data/calibration.json")).load(),
+    )
+    cli_position = generate_position(1, analysis)
+    answer = grade(
+        cli_position,
+        next(tile for tile, count in enumerate(cli_position.hand) if count),
+        analysis=analysis,
+    ).best.discard
     counts = [0] * 34
     counts[answer] = 1
     from taimahjong.tiles import format_tiles

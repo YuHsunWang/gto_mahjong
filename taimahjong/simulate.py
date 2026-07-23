@@ -37,6 +37,130 @@ def _validate_positive_int(value: int, name: str) -> None:
         raise ValueError(f"{name} must be an integer greater than or equal to 1")
 
 
+@lru_cache(maxsize=200_000)
+def _cached_shanten(current: tuple[int, ...], melds_declared: int) -> int:
+    return shanten(current, melds_declared)
+
+
+@lru_cache(maxsize=200_000)
+def _greedy_discard(
+    current: tuple[int, ...],
+    remaining_counts: tuple[int, ...],
+    melds_declared: int,
+) -> tuple[int, int]:
+    """Return the M2 first choice using the trial's current unseen copies.
+
+    The remaining-count tuple is part of the cache key.  It preserves the
+    common-random-number draw stream while preventing a later policy decision
+    from treating an earlier own discard as drawable again.
+    """
+    candidates: list[tuple[int, tuple[int, ...]]] = []
+    best_shanten = 11
+    for tile, count in enumerate(current):
+        if not count:
+            continue
+        reduced = list(current)
+        reduced[tile] -= 1
+        after = tuple(reduced)
+        after_shanten = _cached_shanten(after, melds_declared)
+        if after_shanten < best_shanten:
+            best_shanten = after_shanten
+            candidates = [(tile, after)]
+        elif after_shanten == best_shanten:
+            candidates.append((tile, after))
+
+    best_tile = -1
+    best_total = -1
+    for tile, after in candidates:
+        total = 0
+        for draw, copies in enumerate(remaining_counts):
+            if copies <= 0:
+                continue
+            next_hand = list(after)
+            next_hand[draw] += 1
+            if _cached_shanten(tuple(next_hand), melds_declared) < best_shanten:
+                total += copies
+        if total > best_total or (total == best_total and (best_tile == -1 or tile < best_tile)):
+            best_tile = tile
+            best_total = total
+    return best_tile, best_shanten
+
+
+@dataclass(frozen=True)
+class _RolloutResult:
+    first_tenpai_turns: tuple[int, ...]
+    wins: tuple[WinningTrial, ...]
+
+
+def _assert_physical_state(
+    hand: tuple[int, ...],
+    visible: list[int],
+    remaining_counts: list[int],
+) -> None:
+    assert all(
+        hand[tile] + visible[tile] + remaining_counts[tile] == 4
+        for tile in range(34)
+    ), "trial tile copies were not conserved"
+
+
+def _rollout(
+    counts: tuple[int, ...] | list[int],
+    turns: int,
+    melds_declared: int = 0,
+    visible: tuple[int, ...] | list[int] | None = None,
+    sims: int = 5000,
+    seed: int | None = None,
+) -> _RolloutResult:
+    """Run the single shared greedy rollout used by both public summaries."""
+    _validate_positive_int(turns, "turns")
+    _validate_positive_int(sims, "sims")
+    hand = validate_counts(counts)
+    ukeire(hand, melds_declared, visible)
+    seen = (0,) * 34 if visible is None else validate_counts(visible)
+    initial_remaining = tuple(4 - hand[tile] - seen[tile] for tile in range(34))
+    pool = [tile for tile, copies in enumerate(initial_remaining) for _ in range(copies)]
+    if len(pool) < turns:
+        raise ValueError(f"unseen pool has {len(pool)} tiles; expected at least {turns}")
+
+    rng = random.Random(seed)
+    initial_shanten = _cached_shanten(hand, melds_declared)
+    tenpai_turns: list[int] = []
+    wins: list[WinningTrial] = []
+    for _ in range(sims):
+        draws = pool[:]
+        rng.shuffle(draws)
+        current = hand
+        dynamic_visible = list(seen)
+        remaining_counts = list(initial_remaining)
+        _assert_physical_state(current, dynamic_visible, remaining_counts)
+        first_tenpai = 1 if initial_shanten <= 0 else 0
+
+        for turn, tile in enumerate(draws[:turns], start=1):
+            assert remaining_counts[tile] > 0
+            remaining_counts[tile] -= 1
+            drawn = list(current)
+            drawn[tile] += 1
+            current = tuple(drawn)
+            _assert_physical_state(current, dynamic_visible, remaining_counts)
+            if _cached_shanten(current, melds_declared) == -1:
+                first_tenpai = first_tenpai or turn
+                wins.append(WinningTrial(current, tile, turn))
+                break
+
+            discard, after_shanten = _greedy_discard(
+                current, tuple(remaining_counts), melds_declared,
+            )
+            reduced = list(current)
+            reduced[discard] -= 1
+            current = tuple(reduced)
+            dynamic_visible[discard] += 1
+            _assert_physical_state(current, dynamic_visible, remaining_counts)
+            if not first_tenpai and after_shanten <= 0:
+                first_tenpai = turn
+        tenpai_turns.append(first_tenpai)
+    return _RolloutResult(tuple(tenpai_turns), tuple(wins))
+
+
 def win_probability(
     counts: tuple[int, ...] | list[int],
     turns: int,
@@ -50,98 +174,15 @@ def win_probability(
     A starting tenpai hand is counted in the turn-one tenpai total, so the
     returned curves have exactly one entry for each simulated draw.
     """
-    _validate_positive_int(turns, "turns")
-    _validate_positive_int(sims, "sims")
-
-    hand = validate_counts(counts)
-    # This reuses M2's exact concealed-size and visible-tile validation.
-    ukeire(hand, melds_declared, visible)
-    seen = (0,) * 34 if visible is None else validate_counts(visible)
-    pool = [
-        tile
-        for tile in range(34)
-        for _ in range(4 - hand[tile] - seen[tile])
+    rollout = _rollout(counts, turns, melds_declared, visible, sims, seed)
+    tenpai_counts = [
+        sum(bool(first) and first <= turn for first in rollout.first_tenpai_turns)
+        for turn in range(1, turns + 1)
     ]
-    if len(pool) < turns:
-        raise ValueError(f"unseen pool has {len(pool)} tiles; expected at least {turns}")
-
-    @lru_cache(maxsize=None)
-    def cached_shanten(current: tuple[int, ...]) -> int:
-        return shanten(current, melds_declared)
-
-    @lru_cache(maxsize=None)
-    def greedy_discard(current: tuple[int, ...]) -> tuple[int, int]:
-        """Return the same first choice as ``discard_analysis(current)[0]``.
-
-        M2 ranks by resulting shanten before ukeire. Calculate ukeire only
-        for the candidates tied at the best shanten; the other candidates
-        cannot affect the first result and dominate simulation runtime.
-        """
-        candidates: list[tuple[int, tuple[int, ...]]] = []
-        best_shanten = 11
-        for tile, count in enumerate(current):
-            if not count:
-                continue
-            reduced = list(current)
-            reduced[tile] -= 1
-            after = tuple(reduced)
-            after_shanten = cached_shanten(after)
-            if after_shanten < best_shanten:
-                best_shanten = after_shanten
-                candidates = [(tile, after)]
-            elif after_shanten == best_shanten:
-                candidates.append((tile, after))
-
-        best_tile = -1
-        best_total = -1
-        for tile, after in candidates:
-            total = 0
-            for draw, count in enumerate(after):
-                if count == 4:
-                    continue
-                next_hand = list(after)
-                next_hand[draw] += 1
-                if cached_shanten(tuple(next_hand)) < best_shanten:
-                    total += 4 - after[draw] - seen[draw]
-            if total > best_total or (total == best_total and (best_tile == -1 or tile < best_tile)):
-                best_tile = tile
-                best_total = total
-        return best_tile, best_shanten
-
-    rng = random.Random(seed)
-    tenpai_counts = [0] * turns
-    win_counts = [0] * turns
-    initial_shanten = cached_shanten(hand)
-
-    for _ in range(sims):
-        draws = pool[:]
-        rng.shuffle(draws)
-        current = hand
-        first_tenpai = 1 if initial_shanten <= 0 else 0
-        first_win = 0
-
-        for index, tile in enumerate(draws[:turns], start=1):
-            drawn = list(current)
-            drawn[tile] += 1
-            current = tuple(drawn)
-            if cached_shanten(current) == -1:
-                first_tenpai = first_tenpai or index
-                first_win = index
-                break
-
-            discard, after_shanten = greedy_discard(current)
-            reduced = list(current)
-            reduced[discard] -= 1
-            current = tuple(reduced)
-            if not first_tenpai and after_shanten <= 0:
-                first_tenpai = index
-
-        for index in range(turns):
-            if first_tenpai and first_tenpai <= index + 1:
-                tenpai_counts[index] += 1
-            if first_win and first_win <= index + 1:
-                win_counts[index] += 1
-
+    win_counts = [
+        sum(win.turn <= turn for win in rollout.wins)
+        for turn in range(1, turns + 1)
+    ]
     tenpai_by_turn = [count / sims for count in tenpai_counts]
     win_by_turn = [count / sims for count in win_counts]
     return SimResult(
@@ -164,65 +205,7 @@ def winning_trials(
 ) -> tuple[WinningTrial, ...]:
     """Return final winning hands and draw turns for deterministic trials.
 
-    This additive companion to :func:`win_probability` uses its same greedy
-    self-draw policy.  A discarded tile is not returned to the wall.
+    This is a view of the exact shared rollout used by
+    :func:`win_probability`; a discarded tile is not returned to the wall.
     """
-    _validate_positive_int(turns, "turns")
-    _validate_positive_int(sims, "sims")
-    hand = validate_counts(counts)
-    ukeire(hand, melds_declared, visible)
-    seen = (0,) * 34 if visible is None else validate_counts(visible)
-    pool = [tile for tile in range(34) for _ in range(4 - hand[tile] - seen[tile])]
-    if len(pool) < turns:
-        raise ValueError(f"unseen pool has {len(pool)} tiles; expected at least {turns}")
-
-    @lru_cache(maxsize=None)
-    def cached_shanten(current: tuple[int, ...]) -> int:
-        return shanten(current, melds_declared)
-
-    @lru_cache(maxsize=None)
-    def greedy_discard(current: tuple[int, ...]) -> int:
-        candidates: list[tuple[int, tuple[int, ...]]] = []
-        best_shanten = 11
-        for tile, count in enumerate(current):
-            if not count:
-                continue
-            reduced = list(current)
-            reduced[tile] -= 1
-            after = tuple(reduced)
-            after_shanten = cached_shanten(after)
-            if after_shanten < best_shanten:
-                best_shanten, candidates = after_shanten, [(tile, after)]
-            elif after_shanten == best_shanten:
-                candidates.append((tile, after))
-        best_tile, best_total = -1, -1
-        for tile, after in candidates:
-            total = 0
-            for draw, count in enumerate(after):
-                if count == 4:
-                    continue
-                next_hand = list(after)
-                next_hand[draw] += 1
-                if cached_shanten(tuple(next_hand)) < best_shanten:
-                    total += 4 - after[draw] - seen[draw]
-            if total > best_total or (total == best_total and (best_tile == -1 or tile < best_tile)):
-                best_tile, best_total = tile, total
-        return best_tile
-
-    rng = random.Random(seed)
-    wins: list[WinningTrial] = []
-    for _ in range(sims):
-        draws = pool[:]
-        rng.shuffle(draws)
-        current = hand
-        for turn, tile in enumerate(draws[:turns], start=1):
-            drawn = list(current)
-            drawn[tile] += 1
-            current = tuple(drawn)
-            if cached_shanten(current) == -1:
-                wins.append(WinningTrial(current, tile, turn))
-                break
-            reduced = list(current)
-            reduced[greedy_discard(current)] -= 1
-            current = tuple(reduced)
-    return tuple(wins)
+    return _rollout(counts, turns, melds_declared, visible, sims, seed).wins

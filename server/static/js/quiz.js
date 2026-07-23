@@ -1,10 +1,10 @@
 // 單手 (quiz) and 殘局 (endgame) drills: one seeded position, one graded
-// discard, GTO-Wizard feedback. Both modes share this screen; they differ in
+// discard, heuristic-EV feedback. Both modes share this screen; they differ in
 // API prefix and the endgame push/fold tag.
 
 import { post, showError, randomSeed } from './api.js';
 import { feltEl, handEl, computingEl, faceText } from './table.js';
-import { verdictEl, evDetailsEl, bestLineEl, VERDICT_LABELS } from './feedback.js';
+import { verdictEl, evDetailsEl, bestLineEl, modelScopeEl, VERDICT_LABELS } from './feedback.js';
 import { record } from './stats.js';
 import { schemeToggle, schemeParams } from './scheme.js';
 
@@ -17,6 +17,7 @@ export function drillScreen(root, { apiBase, mode, title }) {
   let phase = 'idle'; // idle | generating | awaiting | grading | feedback
   let gradeResult = null;
   let chosenTile = null;
+  let metadata = null;
 
   function header() {
     const bar = document.createElement('div');
@@ -49,8 +50,9 @@ export function drillScreen(root, { apiBase, mode, title }) {
     chosenTile = null;
     render();
     try {
-      const body = await post(`${apiBase}/new`, { seed: requestedSeed });
+      const body = await post(`${apiBase}/new`, { seed: requestedSeed, ...schemeParams() });
       position = body.position;
+      metadata = body;
       seed = position.seed; // the generator may advance past the requested seed
       tag = body.tag || null;
       phase = 'awaiting';
@@ -68,7 +70,8 @@ export function drillScreen(root, { apiBase, mode, title }) {
     try {
       const body = await post(`${apiBase}/grade`, { seed, tile, ...schemeParams() });
       gradeResult = body.grade;
-      record(mode, gradeResult.verdict, gradeResult.ev_loss);
+      metadata = body;
+      record(mode, gradeResult.verdict, gradeResult.ev_loss, body.scheme.id);
       phase = 'feedback';
     } catch (error) {
       showError(error);
@@ -106,11 +109,12 @@ export function drillScreen(root, { apiBase, mode, title }) {
     const inFeedback = phase === 'feedback';
     root.append(feltEl(position));
 
-    // Switching the 底/台 scheme re-grades the same tile, so you see how the
-    // verdict/EV move under a different payout convention on the same position.
+    // A scheme change regenerates the seeded drill under that fixed analysis
+    // context, so generation, ranking, and grading never mix unit systems.
     root.append(schemeToggle(() => {
-      if (phase === 'feedback' && chosenTile !== null) gradeTile(chosenTile);
+      generate(seed);
     }));
+    root.append(modelScopeEl(metadata));
 
     if (phase === 'awaiting') {
       const hint = document.createElement('div');
@@ -137,9 +141,9 @@ export function drillScreen(root, { apiBase, mode, title }) {
       }));
       root.append(verdictEl(gradeResult.verdict, gradeResult.marginal, gradeResult.ev_delta, `你切 ${faceText(chosenTile)}`));
       if (showBest) {
-        root.append(bestLineEl(`最佳切牌：${faceText(bestTile)}（淨 EV ${gradeResult.best.net_ev.toFixed(1)}，綠框標示）`));
+        root.append(bestLineEl(`本模型估計切牌：${faceText(bestTile)}（淨 EV ${gradeResult.best.net_ev.toFixed(1)}，綠框標示）`));
       } else {
-        root.append(bestLineEl(`判定 ${VERDICT_LABELS[gradeResult.verdict]} — 你的選擇就是（或不遜於）最佳解`));
+        root.append(bestLineEl(`判定 ${VERDICT_LABELS[gradeResult.verdict]} — 你的選擇不遜於本模型的估計最佳`));
       }
       root.append(evDetailsEl(gradeResult.ranked, {
         chosenTile,

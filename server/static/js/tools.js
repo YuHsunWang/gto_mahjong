@@ -3,7 +3,8 @@
 import { post, showError } from './api.js';
 import { tileEl, parseCompact } from './tiles.js';
 import { computingEl } from './table.js';
-import { evTableEl } from './feedback.js';
+import { evTableEl, modelScopeEl } from './feedback.js';
+import { schemeParams, schemeToggle } from './scheme.js';
 
 function field(labelText, input, id) {
   const wrap = document.createElement('div');
@@ -80,6 +81,7 @@ export function analyzeScreen(root) {
   advanced.className = 'field-row';
   advanced.append(field('摸牌回合（0=自動）', turns, 'an-turns'), field('模擬次數', sims, 'an-sims'), field('種子', seed, 'an-seed'));
   form.append(advanced);
+  form.append(schemeToggle(() => {}));
 
   const controls = document.createElement('div');
   controls.className = 'controls';
@@ -103,14 +105,15 @@ export function analyzeScreen(root) {
         turns: Number(turns.value) || 0,
         sims: Number(sims.value) || 400,
         seed: Number(seed.value) || 0,
+        ...schemeParams(),
       });
       output.replaceChildren();
       const caption = document.createElement('div');
       caption.className = 'note';
       caption.textContent = body.opponent
-        ? `剩餘摸牌回合 ${body.turns} · 對手聽牌估計 ${body.opponent.tenpai_estimate.toFixed(2)} · 棄和估計 ${body.opponent.fold_estimate.toFixed(2)}`
-        : `剩餘摸牌回合 ${body.turns} · 未提供對手狀態`;
-      output.append(caption, evTableEl(body.entries));
+        ? `方案 ${body.scheme.id} · 剩餘摸牌回合 ${body.turns} · 對手聽牌估計 ${body.opponent.tenpai_estimate.toFixed(2)} · 棄和估計 ${body.opponent.fold_estimate.toFixed(2)}`
+        : `方案 ${body.scheme.id} · 剩餘摸牌回合 ${body.turns} · 未提供對手狀態`;
+      output.append(caption, modelScopeEl(body), evTableEl(body.entries));
     } catch (error) {
       output.replaceChildren();
       showError(error);
@@ -164,6 +167,7 @@ export function scoreScreen(root) {
   const seatWind = makeWind();
   winds.append(field('圈風', roundWind, 'sc-round'), field('門風', seatWind, 'sc-seat'));
   form.append(winds);
+  form.append(schemeToggle(() => {}));
 
   const controls = document.createElement('div');
   controls.className = 'controls';
@@ -189,6 +193,7 @@ export function scoreScreen(root) {
         earthly: flags.earthly.checked,
         round_wind: roundWind.value || null,
         seat_wind: seatWind.value || null,
+        ...schemeParams(),
       });
       output.replaceChildren();
       const wrap = document.createElement('div');
@@ -214,7 +219,7 @@ export function scoreScreen(root) {
       wrap.append(table);
       const total = document.createElement('div');
       total.className = 'score-total';
-      total.textContent = `總計 ${body.total_tai} 台（底 ${body.base_units} + 台數 = ${body.value_units} 台單位）`;
+      total.textContent = `總計 ${body.total_tai} 台（底 ${body.base_units} + 台 ${body.tai_units} × ${body.total_tai} = ${body.value_units} 籌碼單位；方案 ${body.scheme.id}）`;
       output.append(wrap, total);
     } catch (error) {
       output.replaceChildren();

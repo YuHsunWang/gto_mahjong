@@ -2,6 +2,8 @@
 
 from math import comb
 
+import pytest
+
 from taimahjong.danger import OpponentView, parse_river
 import taimahjong.ev as ev
 from taimahjong.ev import (
@@ -12,6 +14,7 @@ from taimahjong.ev import (
     ev_rank,
     opponent_hazards,
     remaining_draws,
+    TileAccounting,
 )
 from taimahjong.scoring import EARTHLY_TAI, HEAVENLY_TAI, WinContext, score_hand
 from taimahjong.tiles import parse_tiles
@@ -109,6 +112,36 @@ def test_remaining_draws_uses_live_wall_and_four_seats():
     # 26 -> 14: the 48 tiles in three hidden opponent hands are not drawable.
     assert remaining_draws(POST_DRAW, (0,) * 34) == 14  # ceil((136 - 16 - 17 - 48) / 4)
     assert remaining_draws(POST_DRAW, parse_tiles("9999m")) == 13  # four public tiles also left the wall
+
+
+@pytest.mark.parametrize(
+    ("out_of_hands", "revealed_holdings", "expected_turns"),
+    [
+        ("9m", "", 14),
+        ("9m", "111p", 14),  # the same opponent tiles merely become an open pon
+        ("9m9p", "111p777s", 14),  # multiple opponents' chi/pon holdings
+        ("9m9p12z", "111p777s8888m", 13),  # several melds plus a revealed kong
+    ],
+)
+def test_live_wall_accounting_separates_discards_from_revealed_holdings(
+    out_of_hands, revealed_holdings, expected_turns,
+):
+    accounting = TileAccounting(
+        parse_tiles(out_of_hands) if out_of_hands else (0,) * 34,
+        parse_tiles(revealed_holdings) if revealed_holdings else (0,) * 34,
+    )
+    assert remaining_draws(POST_DRAW, accounting) == expected_turns
+
+
+def test_explicit_wall_and_derived_accounting_return_the_same_turns():
+    accounting = TileAccounting(
+        parse_tiles("9m9p12z"),
+        parse_tiles("111p777s8888m"),
+    )
+    derived_live_wall = 136 - 16 - sum(POST_DRAW) - 3 * 16 - 4
+    assert remaining_draws(POST_DRAW, accounting) == remaining_draws(
+        POST_DRAW, accounting, wall_remaining=derived_live_wall,
+    )
 
 
 def test_opponent_hazard_survival_strictly_reduces_attack_ev_and_net_ev():

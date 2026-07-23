@@ -1,18 +1,21 @@
 > 🌐 [繁體中文](README.md) ｜ **English**
 
-# Taiwanese Mahjong GTO Trainer
+# Taiwanese Mahjong Heuristic-EV Trainer
 
 A tool for practicing Taiwanese 16-tile mahjong. It works out your hand efficiency,
 estimates deal-in danger, scores winning hands, and uses EV (expected value — roughly
-"how many tai this move is worth on average") to tell you which tile to discard. You can
+"how many chip units this move is worth on average") to provide this model's estimated
+discard recommendation. You can
 play through a web UI that scores you live, or call any single feature from the command
 line.
 
 Scope first: it only handles the 34 ordinary tile kinds (characters, dots, bamboo,
 honors) — no flowers, no special hands. And one important caveat: every probability in
-the tool is calibrated by playing its own built-in bots against each other for thousands
-of games, not against real human play. So it is good for training judgment and feel, but
-don't treat those numbers as exact win rates at a real table.
+the deal-in lookup table is calibrated from built-in-bot self-play. Self-draw rates are
+Monte Carlo rollouts, while the other opponent and defense terms are deterministic
+heuristics. None is calibrated to human play, and a missing lookup table is reported as
+a heuristic fallback. The tool is useful for practicing judgment, but its numbers are
+not exact real-table win rates.
 
 Tiles use a compact notation: digits before a suit — `m` characters, `p` dots,
 `s` bamboo, `z` honors (1–7). For example `123m456p789s1122334z` is 16 tiles.
@@ -63,7 +66,7 @@ python3 -m taimahjong "123m123p123s11122233z" --analyze   # rank discards
 Estimates how soon you'll win using the "deal many hands" method (Monte Carlo).
 
 It randomly deals many games against the 136-tile set, drawing without replacement, and
-whenever it draws a non-winning tile it discards optimally and continues. It then reports
+whenever it draws a non-winning tile it follows a heuristic efficiency discard and continues. It then reports
 your cumulative tenpai and self-draw win rates after each turn. This counts your own
 self-draw only — it ignores what opponents do and ignores deal-ins.
 
@@ -136,7 +139,7 @@ Turns "which discard is best" into a number you can compare.
 
 EV is expected value. It takes a win's value (in tai) times the chance of winning as the
 "attack" side, subtracts each opponent's deal-in loss, and gives a net EV per discard —
-the highest is the theoretically best play. It also accounts for defense: an opponent
+the highest is **this model's estimated best play**. It also accounts for defense: an opponent
 may win before your next draw, so it discounts the attack side by "the chance you survive
 to your next turn," and it can value a draw (流局) too.
 
@@ -168,7 +171,7 @@ python3 -m taimahjong --quiz-batch 5 --seed 1
 Plays a whole hand start to finish with you, scoring every move live.
 
 It pauses when it's your turn, grades your discard by EV as you go, and tallies your
-best-rate and total EV loss until a win / deal-in / draw, then summarizes. In this phase
+model-best rate and total EV loss until a win / deal-in / draw, then summarizes. In this phase
 you play 門清 (self-draw or ron; no chi/pon yet) while opponents call normally. You can
 pick a seat and streak at the start to feel different positions relative to the dealer —
 a streak raises both the value of the dealer's win and the cost of dealing into them.
@@ -182,9 +185,9 @@ interface: full game (play to the end with live EV grading), single hand (one di
 problem), endgame (high-pressure spots as the wall runs low, auto-tagged attack/defense),
 a lessons area (hand-written efficiency problems backed by pure acceptance), discard
 analysis, and scoring. The table is drawn as a Mahjong-Soul-style cross-shaped river,
-with GTO-Wizard-style feedback (verdict badge, EV delta, best-answer marker, expandable
+with analysis-tool-style feedback (verdict badge, EV delta, model-recommendation marker, expandable
 ranking table). Answer history is stored in your browser, and the home page charts each
-mode's best-rate trend.
+mode's model-best-rate trend.
 
 The page can also switch the **底/台 scheme** (底3台1 ⇄ 底5台2). The 底:台 ratio changes
 the trade-off between "win first" and "go for a big hand," so it can change the best
@@ -192,7 +195,7 @@ discard — switching re-scores instantly.
 
 ### Under the hood: how the engine got accurate
 
-Many of the probabilities above aren't set by hand — they're calibrated from self-play.
+The deal-in lookup is not set by hand — it is calibrated within the bot domain from self-play.
 
 `taimahjong.selfplay` plays four bots against each other for thousands of games, records
 the state and deal-in outcome of each discard, and builds probability tables from it (for
@@ -205,7 +208,17 @@ python3 -m taimahjong --selfplay --games 250 --seed 10001 --out data/calibration
 python3 -m taimahjong --selfplay-report data/calibration.json
 ```
 
-Again: these numbers are calibrated against *these bots*, not against humans.
+Again: only fields that use this lookup are calibrated against *these bots*. Monte Carlo
+self-draw rates and heuristic opponent values are different estimates, and none is
+calibrated against humans.
+
+### Methodology card
+
+- **Outcomes**: attack rollouts count only the player's self-draw; draw value is currently zero.
+- **Not modeled**: the player's ron, opponent-tsumo payments, future-turn deal-ins, and a full best response.
+- **Calibration domain**: the deal-in lookup comes from the built-in bot ecology; if it is missing, all three teaching paths report and use the same heuristic fallback.
+- **Sampling uncertainty**: self-draw and attack EV are fixed-seed Monte Carlo point estimates; boundary drills add samples but retain residual error.
+- **Claims-review checklist**: `[x]` model-engineering owner confirmed that this page describes outputs only as model estimates / heuristic EV (Batch A, 2026-07-23).
 
 ### Research experiments
 
@@ -219,8 +232,8 @@ each kong type is worth declaring (`scripts/kong_ev.py`). Method and data are in
 ## Honest scope and limits
 
 - **Ordinary tiles only**: no flowers, no special hands.
-- **Probabilities are calibrated against bots**, not human play; the defensive-side
-  opponent value isn't even calibrated — it's a directional estimate.
+- **Only the deal-in lookup has bot-domain calibration**, not human calibration;
+  self-draw is Monte Carlo and the defensive-side opponent value is a directional heuristic.
 - **Danger is not a safety guarantee**: Taiwan has no permanent furiten, so river
   evidence only discounts.
 - **House rules are adjustable**: how 全求人 counts, kong tai, whether a draw is

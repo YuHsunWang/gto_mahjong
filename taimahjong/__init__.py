@@ -15,10 +15,19 @@ from .danger import (
     rank_discards,
     tenpai_score,
 )
+from .analysis import (
+    AnalysisContext,
+    CalibrationContext,
+    CalibrationProvider,
+    DEFAULT_ANALYSIS_CONTEXT,
+    HEURISTIC_FALLBACK,
+)
 from .calibration import Calibration, MIN_CELL_COUNT
+from .config import DEFAULT_GAME_CONFIG, GameConfig, SCHEME_PRESETS
 from .ev import (
     DeclarationAdvice,
     EVRankEntry,
+    TileAccounting,
     WinValueContext,
     WinValueEstimate,
     deal_in_ev,
@@ -45,10 +54,19 @@ __all__ = [
     "DangerAssessment",
     "DangerDiscardAnalysis",
     "Calibration",
+    "CalibrationContext",
+    "CalibrationProvider",
+    "AnalysisContext",
+    "DEFAULT_ANALYSIS_CONTEXT",
+    "HEURISTIC_FALLBACK",
+    "GameConfig",
+    "DEFAULT_GAME_CONFIG",
+    "SCHEME_PRESETS",
     "DeclarationAdvice",
     "DECLARED_TAI",
     "DiscardAnalysis",
     "EVRankEntry",
+    "TileAccounting",
     "OpponentView",
     "RiverEntry",
     "SimResult",

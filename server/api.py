@@ -18,7 +18,6 @@ import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from functools import lru_cache
-from math import ceil
 from pathlib import Path
 from random import SystemRandom
 from typing import Any
@@ -33,12 +32,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from taimahjong.analysis import AnalysisContext, CalibrationProvider
 from taimahjong.calibration import Calibration
+from taimahjong.config import DEFAULT_GAME_CONFIG, GameConfig
 from taimahjong.danger import OpponentView, RiverEntry, fold_score, parse_river, tenpai_score
 from taimahjong.endgame import EndgamePosition, generate_endgame_position
-from taimahjong.ev import EVRankEntry, ev_rank, remaining_draws
+from taimahjong.ev import EVRankEntry, TileAccounting, ev_rank, remaining_draws
 from taimahjong.quiz import QuizGrade, QuizPosition, explain, generate_position, grade
-from taimahjong.scoring import BASE_UNITS, DEFAULT_SCHEME, ScoringScheme, WinContext, score_hand
+from taimahjong.scoring import WinContext, score_hand
 from taimahjong.tiles import parse_tiles
 from taimahjong.shanten import shanten
 from taimahjong.ukeire import discard_analysis, ukeire
@@ -91,20 +92,34 @@ def _add_counts(*groups: tuple[int, ...] | list[int]) -> tuple[int, ...]:
     return tuple(counts)
 
 
-def _opponent_public_counts(opponent: OpponentView) -> tuple[int, ...]:
+def _opponent_discard_counts(opponent: OpponentView) -> tuple[int, ...]:
     counts = [0] * 34
     for entry in opponent.river:
         counts[entry.tile if isinstance(entry, RiverEntry) else entry] += 1
+    return tuple(counts)
+
+
+def _opponent_holding_counts(opponent: OpponentView) -> tuple[int, ...]:
+    counts = [0] * 34
     for meld in opponent.melds:
         for tile in meld:
             counts[tile] += 1
     return tuple(counts)
 
 
+_CALIBRATION_PROVIDER = CalibrationProvider(
+    Path(__file__).resolve().parents[1] / "data" / "calibration.json"
+)
+
+
 @lru_cache(maxsize=1)
+def _calibration_context():
+    return _CALIBRATION_PROVIDER.load()
+
+
 def _calibration() -> Calibration | None:
-    path = Path(__file__).resolve().parents[1] / "data" / "calibration.json"
-    return Calibration.from_path(path) if path.exists() else None
+    """Compatibility accessor for tests and callers that only need the table."""
+    return _calibration_context().calibration
 
 
 # ---------------------------------------------------------------------------
@@ -181,44 +196,62 @@ def _grade_payload(result: QuizGrade) -> dict[str, Any]:
 # Quiz + endgame drills (stateless: the seed reproduces the position)
 
 
-# 底/台 payout scheme. Absent → the house default (底3台1). Both fields must be
-# present together; bounds keep a stray value from making the EV nonsensical.
+# 底/台 payout scheme. Absent → the house default (底3台1). A caller may send
+# the preset id or the exact pair; no third product scheme is accepted.
 class SchemeRequest(BaseModel):
+    scheme: str | None = None
     base_units: int | None = None
     tai_units: int | None = None
 
 
-def _scheme(request: "SchemeRequest | GradeRequest | TrainerActRequest | EvRankRequest") -> ScoringScheme:
+def _game_config(request: Any, default: GameConfig = DEFAULT_GAME_CONFIG) -> GameConfig:
+    scheme_id = getattr(request, "scheme", None)
     base = getattr(request, "base_units", None)
     tai = getattr(request, "tai_units", None)
-    if base is None and tai is None:
-        return DEFAULT_SCHEME
+    if scheme_id is None and base is None and tai is None:
+        return default
     if base is None or tai is None:
+        if scheme_id is not None and base is None and tai is None:
+            try:
+                return GameConfig.from_id(scheme_id)
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from None
         raise HTTPException(status_code=422, detail="base_units and tai_units must be given together")
-    if not (0 <= base <= 100) or not (1 <= tai <= 100):
-        raise HTTPException(status_code=422, detail="base_units 0-100 and tai_units 1-100")
-    return ScoringScheme(base, tai)
+    try:
+        pair = GameConfig.from_pair(base, tai)
+        identified = pair if scheme_id is None else GameConfig.from_id(scheme_id)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from None
+    if pair != identified:
+        raise HTTPException(status_code=422, detail="scheme id and base_units/tai_units disagree")
+    return pair
 
 
-class SeedRequest(BaseModel):
+def _analysis_context(request: Any, default: GameConfig = DEFAULT_GAME_CONFIG) -> AnalysisContext:
+    return AnalysisContext(_game_config(request, default), _calibration_context())
+
+
+def _analysis_payload(analysis: AnalysisContext) -> dict[str, Any]:
+    return analysis.payload()
+
+
+class SeedRequest(SchemeRequest):
     seed: int | None = None
 
 
-class GradeRequest(BaseModel):
+class GradeRequest(SchemeRequest):
     seed: int
     tile: int
-    base_units: int | None = None
-    tai_units: int | None = None
 
 
 @lru_cache(maxsize=128)
-def _quiz_position(seed: int) -> QuizPosition:
-    return generate_position(seed)
+def _quiz_position(seed: int, analysis: AnalysisContext) -> QuizPosition:
+    return generate_position(seed, analysis)
 
 
 @lru_cache(maxsize=128)
-def _endgame_position(seed: int) -> EndgamePosition:
-    return generate_endgame_position(seed)
+def _endgame_position(seed: int, analysis: AnalysisContext) -> EndgamePosition:
+    return generate_endgame_position(seed, analysis)
 
 
 def _new_seed(requested: int | None) -> int:
@@ -235,26 +268,40 @@ def _engine(call, *args):
 
 @app.post("/api/quiz/new")
 def quiz_new(request: SeedRequest) -> dict[str, Any]:
-    position = _engine(_quiz_position, _new_seed(request.seed))
-    return {"position": _position_payload(position)}
+    analysis = _analysis_context(request)
+    position = _engine(_quiz_position, _new_seed(request.seed), analysis)
+    return {"position": _position_payload(position), **_analysis_payload(analysis)}
 
 
 @app.post("/api/quiz/grade")
 def quiz_grade(request: GradeRequest) -> dict[str, Any]:
-    position = _engine(_quiz_position, request.seed)
-    return {"grade": _grade_payload(_engine(grade, position, request.tile, _scheme(request)))}
+    analysis = _analysis_context(request)
+    position = _engine(_quiz_position, request.seed, analysis)
+    result = _engine(grade, position, request.tile, analysis.game.scheme, analysis)
+    return {"grade": _grade_payload(result), **_analysis_payload(analysis)}
 
 
 @app.post("/api/endgame/new")
 def endgame_new(request: SeedRequest) -> dict[str, Any]:
-    drill = _engine(_endgame_position, _new_seed(request.seed))
-    return {"position": _position_payload(drill.position), "tag": drill.tag}
+    analysis = _analysis_context(request)
+    drill = _engine(_endgame_position, _new_seed(request.seed), analysis)
+    return {
+        "position": _position_payload(drill.position),
+        "tag": drill.tag,
+        **_analysis_payload(analysis),
+    }
 
 
 @app.post("/api/endgame/grade")
 def endgame_grade(request: GradeRequest) -> dict[str, Any]:
-    drill = _engine(_endgame_position, request.seed)
-    return {"grade": _grade_payload(_engine(grade, drill.position, request.tile, _scheme(request))), "tag": drill.tag}
+    analysis = _analysis_context(request)
+    drill = _engine(_endgame_position, request.seed, analysis)
+    result = _engine(grade, drill.position, request.tile, analysis.game.scheme, analysis)
+    return {
+        "grade": _grade_payload(result),
+        "tag": drill.tag,
+        **_analysis_payload(analysis),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +315,7 @@ class _TrainerSession:
     dealer_streak: int
     generator: Any
     current: Any  # TrainerDecision | TrainerKongDecision | TrainerCallDecision | TrainerOutcome
+    analysis: AnalysisContext
     step: int = 0
     score: dict[str, float] = field(default_factory=lambda: {"decisions": 0, "best": 0, "loss": 0.0})
     feedback: dict[str, Any] | None = None
@@ -277,19 +325,17 @@ class _TrainerSession:
 _SESSIONS: OrderedDict[str, _TrainerSession] = OrderedDict()
 
 
-class TrainerNewRequest(BaseModel):
+class TrainerNewRequest(SchemeRequest):
     seed: int | None = None
     human_seat: int = 0
     dealer_streak: int = 0
 
 
-class TrainerActRequest(BaseModel):
+class TrainerActRequest(SchemeRequest):
     step: int
     action: str  # "discard" | "kong" | "call"
     tile: int | None = None  # discard only
     option: int | None = None  # kong/call: option index, or None to skip/pass
-    base_units: int | None = None
-    tai_units: int | None = None
 
 
 def _decision_payload(item: Any) -> dict[str, Any]:
@@ -343,6 +389,7 @@ def _session_payload(session_id: str, session: _TrainerSession) -> dict[str, Any
         "scorecard": dict(session.score),
         "decision": _decision_payload(session.current),
         "feedback": session.feedback,
+        **_analysis_payload(session.analysis),
     }
 
 
@@ -356,9 +403,16 @@ def _get_session(session_id: str) -> _TrainerSession:
 @app.post("/api/trainer/new")
 def trainer_new(request: TrainerNewRequest) -> dict[str, Any]:
     seed = _new_seed(request.seed)
-    generator = _engine(play_trainer, seed, request.human_seat, ("attack", "cautious", "attack", "cautious"), request.dealer_streak)
+    analysis = _analysis_context(request)
+    generator = _engine(
+        play_trainer, seed, request.human_seat,
+        ("attack", "cautious", "attack", "cautious"),
+        request.dealer_streak, analysis,
+    )
     first = _engine(next, generator)
-    session = _TrainerSession(seed, request.human_seat, request.dealer_streak, generator, first)
+    session = _TrainerSession(
+        seed, request.human_seat, request.dealer_streak, generator, first, analysis,
+    )
     session_id = uuid.uuid4().hex
     _SESSIONS[session_id] = session
     while len(_SESSIONS) > _MAX_SESSIONS:
@@ -397,14 +451,21 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
         item = session.current
         if isinstance(item, TrainerOutcome):
             raise HTTPException(status_code=409, detail="hand is already over")
-        scheme = _scheme(request)
+        requested = _game_config(request, session.analysis.game)
+        if requested != session.analysis.game:
+            raise HTTPException(
+                status_code=409,
+                detail="trainer scheme is fixed at session creation",
+            )
+        analysis = session.analysis
+        scheme = analysis.game.scheme
 
         if isinstance(item, TrainerDecision):
             if request.action != "discard" or request.tile is None:
                 raise HTTPException(status_code=422, detail="current decision expects action=discard with a tile")
             # grade() validates the tile before anything is sent into the
             # generator — a bad send would terminate the game generator.
-            result = _engine(grade, item.position, request.tile, scheme)
+            result = _engine(grade, item.position, request.tile, scheme, analysis)
             _record(session, result.verdict, result.ev_loss)
             session.feedback = {"kind": "discard", "chosen_tile": request.tile, **_grade_payload(result)}
             session.current = session.generator.send(request.tile)
@@ -412,7 +473,7 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
             if request.action != "kong":
                 raise HTTPException(status_code=422, detail="current decision expects action=kong")
             choice = _validate_option(item.options, request.option)
-            evaluation = evaluate_kong(item, scheme=scheme)
+            evaluation = evaluate_kong(item, scheme=scheme, analysis=analysis)
             result = evaluation.verdict_for(choice)
             _record(session, result.verdict, result.ev_loss)
             session.feedback = {
@@ -433,7 +494,7 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
             if request.action != "call":
                 raise HTTPException(status_code=422, detail="current decision expects action=call")
             choice = _validate_option(item.options, request.option)
-            evaluation = evaluate_call(item, scheme=scheme)
+            evaluation = evaluate_call(item, scheme=scheme, analysis=analysis)
             result = evaluation.verdict_for(choice)
             _record(session, result.verdict, result.ev_loss)
             session.feedback = {
@@ -461,7 +522,7 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
 # Stateless analysis: EV ranking and hand scoring
 
 
-class EvRankRequest(BaseModel):
+class EvRankRequest(SchemeRequest):
     hand: str
     river: str = ""
     melds: str = ""
@@ -471,11 +532,9 @@ class EvRankRequest(BaseModel):
     wall_remaining: int | None = None
     sims: int = 400
     seed: int = 7
-    base_units: int | None = None
-    tai_units: int | None = None
 
 
-class ScoreRequest(BaseModel):
+class ScoreRequest(SchemeRequest):
     hand: str
     win_tile: str
     melds: str = ""
@@ -492,6 +551,7 @@ class ScoreRequest(BaseModel):
 @app.post("/api/ev/rank")
 def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
     def run() -> dict[str, Any]:
+        analysis = _analysis_context(request)
         counts = parse_tiles(request.hand)
         opponent: OpponentView | None = None
         if request.river or request.melds or request.declared_at is not None:
@@ -499,22 +559,34 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
                 raise ValueError("opponent state requires the opponent's river")
             opponent = OpponentView(parse_river(request.river), _parse_melds(request.melds), request.declared_at)
             opponent.validate()
-        other_visible = (0,) * 34 if not request.visible.strip() else parse_tiles(request.visible)
-        visible = _add_counts(other_visible, _opponent_public_counts(opponent)) if opponent else other_visible
+        other_out_of_hands = (0,) * 34 if not request.visible.strip() else parse_tiles(request.visible)
+        accounting = TileAccounting(
+            _add_counts(
+                other_out_of_hands,
+                _opponent_discard_counts(opponent) if opponent else (0,) * 34,
+            ),
+            _opponent_holding_counts(opponent) if opponent else (0,) * 34,
+        )
+        visible = accounting.visible
         if request.wall_remaining is not None and request.wall_remaining < 0:
             raise ValueError("wall_remaining must be non-negative")
         if request.turns:
             turns = request.turns
         elif request.wall_remaining is not None:
-            turns = ceil(request.wall_remaining / 4)
+            turns = remaining_draws(counts, accounting, wall_remaining=request.wall_remaining)
         else:
-            turns = remaining_draws(counts, visible)
+            turns = remaining_draws(counts, accounting)
         entries = ev_rank(
             counts, [] if opponent is None else [opponent], visible,
-            turns=turns, sims=request.sims, seed=request.seed, calibration=_calibration(),
-            scheme=_scheme(request),
+            turns=turns, sims=request.sims, seed=request.seed,
+            calibration=analysis.calibration.calibration,
+            scheme=analysis.game.scheme,
         )
-        payload: dict[str, Any] = {"turns": turns, "entries": [_entry_payload(entry) for entry in entries]}
+        payload: dict[str, Any] = {
+            "turns": turns,
+            "entries": [_entry_payload(entry) for entry in entries],
+            **_analysis_payload(analysis),
+        }
         if opponent is not None:
             payload["opponent"] = {
                 "tenpai_estimate": tenpai_score(opponent, len(opponent.river)).score,
@@ -528,6 +600,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
 @app.post("/api/score")
 def score_endpoint(request: ScoreRequest) -> dict[str, Any]:
     def run() -> dict[str, Any]:
+        config = _game_config(request)
         context = WinContext(
             winning_tile=_tile_from_compact(request.win_tile),
             self_draw=request.self_draw,
@@ -543,8 +616,10 @@ def score_endpoint(request: ScoreRequest) -> dict[str, Any]:
         return {
             "items": [{"name": name, "tai": tai} for name, tai in result.items],
             "total_tai": result.total_tai,
-            "value_units": result.value_units,
-            "base_units": BASE_UNITS,
+            "value_units": result.value_in(config.scheme),
+            "base_units": config.scheme.base_units,
+            "tai_units": config.scheme.tai_units,
+            "scheme": config.payload(),
         }
 
     return _engine(run)

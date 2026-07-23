@@ -1,4 +1,4 @@
-# Web UI plan — Mahjong-Soul-style table, GTO-Wizard-style training
+# Web UI plan — Mahjong-Soul-style table, analysis-tool-style training
 
 Decisions (2026-07-20, user-confirmed):
 
@@ -11,7 +11,7 @@ Decisions (2026-07-20, user-confirmed):
   README/experiments): attack EV is self-draw only; deal-in calibration is
   bot-ecology, not human.
 
-## Training modes (GTO-Wizard mapping)
+## Training modes (analysis-tool mapping)
 
 | Mode | Engine source | Status |
 |---|---|---|
@@ -71,7 +71,7 @@ Static, no build step: vanilla ES modules + one CSS file, served by FastAPI.
     hand, with the candidate meld previewed; auto-pass timer OFF (this is a
     trainer, not a timed game).
   - Discards animate to the river; the just-cut tile stays highlighted.
-- **Feedback layer (GTO-Wizard conventions):**
+- **Feedback layer (analysis-tool conventions):**
   - After each decision: verdict badge (best/good/inaccuracy/mistake in
     green/blue/amber/red, "邊緣" suffix preserved), EV delta, best action
     marked on the hand/buttons, expandable ranked-EV table and explain text.
