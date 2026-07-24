@@ -37,7 +37,13 @@ from taimahjong.calibration import Calibration
 from taimahjong.config import DEFAULT_GAME_CONFIG, GameConfig
 from taimahjong.danger import OpponentView, RiverEntry, fold_score, parse_river, tenpai_score
 from taimahjong.endgame import EndgamePosition, generate_endgame_position
-from taimahjong.ev import EVRankEntry, TileAccounting, ev_rank, remaining_draws
+from taimahjong.ev import (
+    EVRankEntry,
+    TileAccounting,
+    ev_rank,
+    paired_delta_moments,
+    remaining_draws,
+)
 from taimahjong.quiz import QuizGrade, QuizPosition, explain, generate_position, grade
 from taimahjong.scoring import WinContext, score_hand
 from taimahjong.tiles import parse_tiles
@@ -164,7 +170,7 @@ def _position_payload(position: QuizPosition) -> dict[str, Any]:
 
 
 def _entry_payload(entry: EVRankEntry) -> dict[str, Any]:
-    return {
+    payload = {
         "discard": entry.discard,
         "is_fold": entry.is_fold,
         "label": entry.label,
@@ -174,7 +180,45 @@ def _entry_payload(entry: EVRankEntry) -> dict[str, Any]:
         "p_draw": entry.p_draw,
         "mean_win_value": entry.mean_win_value,
         "risk_ev": entry.risk_ev,
+        "sample_count": entry.sample_count,
+        "win_count": entry.win_count,
+        "value_sum": entry.value_sum,
+        "value_sumsq": entry.value_sum_squares,
+        "se": entry.standard_error,
+        "ci95": [entry.ci95_low, entry.ci95_high],
     }
+    if entry.action_plan is not None:
+        payload["action_plan"] = {
+            "first_discard": entry.action_plan.first_discard,
+            "safe_inventory": list(entry.action_plan.safe_inventory),
+            "principles": list(entry.action_plan.principles),
+        }
+    return payload
+
+
+def _top_gap_payload(entries: tuple[EVRankEntry, ...] | list[EVRankEntry]) -> dict[str, Any] | None:
+    ranked = sorted(entries, key=lambda entry: (-entry.net_ev, entry.discard))
+    if len(ranked) < 2:
+        return None
+    moments = paired_delta_moments(ranked[0], ranked[1])
+    payload = moments.payload()
+    effect_small = abs(moments.mean) < 0.10
+    payload.update({
+        "top_discard": ranked[0].discard,
+        "top_is_fold": ranked[0].is_fold,
+        "runner_up_discard": ranked[1].discard,
+        "runner_up_is_fold": ranked[1].is_fold,
+        "effect_threshold": 0.10,
+        "effect_small": effect_small,
+        "wording": (
+            "uncertain"
+            if moments.crosses_zero
+            else "marginal"
+            if effect_small
+            else "clear"
+        ),
+    })
+    return payload
 
 
 def _grade_payload(result: QuizGrade) -> dict[str, Any]:
@@ -188,6 +232,12 @@ def _grade_payload(result: QuizGrade) -> dict[str, Any]:
         "best": _entry_payload(result.best),
         "chosen": _entry_payload(result.chosen),
         "ranked": [_entry_payload(entry) for entry in result.ranked],
+        "defense_policy": (
+            None
+            if result.defense_policy is None
+            else _entry_payload(result.defense_policy)
+        ),
+        "top1_vs_top2": _top_gap_payload(result.ranked),
         "explain": explain(result),
     }
 
@@ -288,6 +338,11 @@ def endgame_new(request: SeedRequest) -> dict[str, Any]:
     return {
         "position": _position_payload(drill.position),
         "tag": drill.tag,
+        "defense_policy": (
+            None
+            if drill.defense_policy is None
+            else _entry_payload(drill.defense_policy)
+        ),
         **_analysis_payload(analysis),
     }
 
@@ -532,6 +587,7 @@ class EvRankRequest(SchemeRequest):
     wall_remaining: int | None = None
     sims: int = 400
     seed: int = 7
+    exhaustive: bool = False
 
 
 class ScoreRequest(SchemeRequest):
@@ -581,10 +637,18 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
             turns=turns, sims=request.sims, seed=request.seed,
             calibration=analysis.calibration.calibration,
             scheme=analysis.game.scheme,
+            exhaustive=request.exhaustive,
         )
         payload: dict[str, Any] = {
             "turns": turns,
             "entries": [_entry_payload(entry) for entry in entries],
+            "exhaustive": request.exhaustive,
+            "candidate_scope": (
+                "all_legal_discards"
+                if request.exhaustive
+                else "confidence_bound_screened"
+            ),
+            "top1_vs_top2": _top_gap_payload(entries),
             **_analysis_payload(analysis),
         }
         if opponent is not None:

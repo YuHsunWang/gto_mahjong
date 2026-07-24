@@ -30,8 +30,8 @@ def test_pressure_requires_late_wall_and_shanten_or_declaration():
 
 
 def test_tag_ranks_fold_by_net_ev_not_list_order():
-    # ev_rank always sorts the fold row last; the tag must ignore that and
-    # compare net EV, or every drill would be tagged "attack".
+    # The policy record is kept outside discard-table order; tagging must
+    # compare policy EV instead of trusting its list position.
     fold_second = [_entry(3, 5.0), _entry(4, 1.0), _entry(-1, 2.0, is_fold=True)]
     assert endgame._tag(fold_second) == "defense"
     fold_last = [_entry(3, 5.0), _entry(4, 4.0), _entry(-1, -1.0, is_fold=True)]

@@ -1,9 +1,8 @@
 """Late-game filtered teaching positions for endgame push/fold drills.
 
 A thin filter over the quiz machinery: the same seeded self-play snapshots,
-restricted to late-wall high-pressure decisions, and tagged as an attack
-(push) or defense (fold-pressure) drill from where the fold pseudo-action
-ranks by net EV.  Grading reuses :func:`taimahjong.quiz.grade` unchanged.
+restricted to late-wall high-pressure decisions, and tagged from the executable
+defense policy's EV. Grading reuses :func:`taimahjong.quiz.grade` unchanged.
 """
 
 from __future__ import annotations
@@ -31,13 +30,14 @@ class EndgamePosition:
 
     position: QuizPosition
     tag: str  # "attack" (push) or "defense" (fold pressure)
+    defense_policy: EVRankEntry | None = None
 
 
 def _full_rank(
     position: QuizPosition,
     analysis: AnalysisContext = DEFAULT_ANALYSIS_CONTEXT,
 ) -> list[EVRankEntry]:
-    """The quiz ranking with the fold pseudo-action retained, for tagging.
+    """The quiz ranking with the executable defense policy retained.
 
     Budget constants are read live off ``quiz`` so tests can monkeypatch them.
     """
@@ -64,10 +64,10 @@ def _pressure(position: QuizPosition) -> bool:
 
 
 def _tag(ranked: list[EVRankEntry]) -> str:
-    """"defense" when folding ranks in the top DEFENSE_FOLD_RANK actions by net EV.
+    """"defense" when policy EV is within the top defense teaching band.
 
-    ``ev_rank`` sorts the fold row last regardless of value, so its rank must be
-    recomputed from net EV rather than read off the list order.
+    ``ev_rank`` keeps the defense-policy record out of the discard-table order,
+    so the tag is recomputed from policy EV rather than list position.
     """
     fold = next(entry for entry in ranked if entry.is_fold)
     beaten_by = sum(1 for entry in ranked if not entry.is_fold and entry.net_ev > fold.net_ev)
@@ -100,5 +100,13 @@ def generate_endgame_position(
             gap = playable[0].net_ev - playable[-1].net_ev
             if gap < ENDGAME_EV_GAP_MIN:
                 continue
-            return EndgamePosition(replace(position, candidate_ev_gap=gap), _tag(ranked))
+            defense = next(
+                (entry for entry in ranked if entry.is_fold),
+                None,
+            )
+            return EndgamePosition(
+                replace(position, candidate_ev_gap=gap),
+                _tag(ranked),
+                defense,
+            )
     raise RuntimeError(f"no endgame position found in {MAX_ATTEMPTS} seeded games")

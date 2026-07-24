@@ -60,7 +60,11 @@ def test_part0_confirmed_scoring_totals():
 def test_ev_rank_is_seed_deterministic_and_attack_only_orders_by_attack_ev():
     first = ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19)
     assert first == ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19)
-    assert [entry.attack_ev for entry in first] == sorted((entry.attack_ev for entry in first), reverse=True)
+    real = [entry for entry in first if not entry.is_fold]
+    assert [entry.attack_ev for entry in real] == sorted(
+        (entry.attack_ev for entry in real),
+        reverse=True,
+    )
     assert all(entry.risk_ev == 0 for entry in first)
 
 
@@ -72,7 +76,8 @@ def test_declared_safe_discard_dominates_equal_efficiency_risky_discard():
     entries = ev_rank(POST_DRAW, [opponent], visible, turns=1, sims=400, seed=11, top_k=10)
     by_tile = {entry.discard: entry for entry in entries}
     safe, risky = by_tile[_tile("3m")], by_tile[_tile("2p")]
-    assert safe.risk_ev == 0
+    # The first 3m is genbutsu; total policy risk can still be non-zero after
+    # the next draw because MJ-007 now prices the policy's subsequent discard.
     assert risky.risk_ev > 0
     assert safe.net_ev > risky.net_ev
 
@@ -188,7 +193,10 @@ def test_ev_attack_pool_marks_each_candidate_discard_visible(monkeypatch):
     hand = parse_tiles("123m123p123s11122z333z")
     captured = {}
 
-    def fake_estimate(counts16, turns, melds_declared, visible, sims, seed, context_template, survival, scheme):
+    def fake_estimate(
+        counts16, turns, melds_declared, visible, sims, seed,
+        context_template, survival, scheme, discard_policy=None,
+    ):
         discard = next(tile for tile in range(34) if counts16[tile] < hand[tile])
         captured[discard] = visible
         return ev.WinValueEstimate(0.0, None, 0.0)
@@ -210,13 +218,16 @@ def test_draw_value_shifts_net_ev_by_exact_draw_term(monkeypatch):
         assert after.net_ev - before.net_ev == after.p_draw * 2.5
 
 
-def test_fold_row_is_last_labeled_and_no_riskier_than_real_discards():
+def test_defense_policy_is_last_labeled_and_has_an_executable_first_discard():
     opponent = OpponentView(parse_river("123456789m"), [], None)
     entries = ev_rank(POST_DRAW, [opponent], _visible_with_opponent(opponent), turns=3, sims=80, seed=19, top_k=10)
     fold = entries[-1]
     real = entries[:-1]
-    assert fold.is_fold and fold.label == "fold" and fold.discard == -1
-    assert fold.risk_ev <= min(entry.risk_ev for entry in real)
+    assert fold.is_fold and fold.label == "defense_policy"
+    assert fold.action_plan is not None
+    assert fold.discard == fold.action_plan.first_discard
+    assert POST_DRAW[fold.discard] > 0
+    assert fold.action_plan.principles
 
 
 def test_opponent_value_estimate_scales_with_dealer_streak():

@@ -14,7 +14,14 @@ from typing import Callable, TypeVar
 from .analysis import AnalysisContext, DEFAULT_ANALYSIS_CONTEXT
 from .config import GameConfig
 from .danger import OpponentView, RiverEntry, danger_score, fold_score, format_river, tenpai_score
-from .ev import EVRankEntry, WinValueContext, evaluate_discard, ev_rank
+from .ev import (
+    EVRankEntry,
+    WinValueContext,
+    evaluate_discard,
+    ev_rank,
+    paired_delta_moments,
+)
+from .moments import SampleMoments
 from .scoring import DEFAULT_SCHEME, ScoringScheme, WinContext
 from .selfplay import DEALER_SEAT, DecisionSnapshot, _cached_shanten, play_game
 from .shanten import shanten
@@ -64,6 +71,7 @@ MARGINAL_BAND = 0.10
 # real teaching point and cheap to resolve. Far-from-tenpai near-ties keep the
 # REFINE_SIMS verdict (and are still flagged marginal when they hug a boundary).
 ESCALATE_MAX_SHANTEN = 1
+EV_EFFECT_SIZE_MIN = 0.10
 
 
 def verdict_for_delta(ev_delta: float) -> str:
@@ -225,6 +233,8 @@ class QuizGrade:
     verdict: str
     refined_sims: int = REFINE_SIMS  # budget the verdict was decided at (REFINE_SIMS or ESCALATE_SIMS)
     marginal: bool = False  # final ev_delta still hugs a verdict boundary
+    top_gap: SampleMoments = SampleMoments()
+    defense_policy: EVRankEntry | None = None
 
     @property
     def ev_loss(self) -> float:
@@ -353,7 +363,7 @@ def _analysis_context(
 
 @lru_cache(maxsize=256)
 def _rank_cached(position: QuizPosition, analysis: AnalysisContext) -> tuple[EVRankEntry, ...]:
-    return tuple(entry for entry in ev_rank(
+    return tuple(ev_rank(
         position.hand,
         [opponent.view() for opponent in position.opponents],
         position.public_counts,
@@ -367,7 +377,7 @@ def _rank_cached(position: QuizPosition, analysis: AnalysisContext) -> tuple[EVR
         scheme=analysis.game.scheme,
         own_river=position.own_river,
         declaration_eligible=position.migi_eligible,
-    ) if not entry.is_fold)
+    ))
 
 
 def _rank(
@@ -380,6 +390,20 @@ def _rank(
     The display-only gap is removed from the position key; scheme and
     calibration identity remain in the immutable context key.
     """
+    return tuple(
+        entry for entry in _rank_cached(
+            replace(position, candidate_ev_gap=0.0),
+            _analysis_context(scheme, analysis),
+        )
+        if not entry.is_fold
+    )
+
+
+def _full_rank(
+    position: QuizPosition,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    analysis: AnalysisContext | None = None,
+) -> tuple[EVRankEntry, ...]:
     return _rank_cached(
         replace(position, candidate_ev_gap=0.0),
         _analysis_context(scheme, analysis),
@@ -472,7 +496,17 @@ def grade(
     if not position.hand[chosen_tile]:
         raise ValueError("chosen tile must be present in the hand")
     context = _analysis_context(scheme, analysis)
-    ranked = tuple(_rank(position, analysis=context))
+    full_ranked = tuple(_full_rank(position, analysis=context))
+    ranked = tuple(entry for entry in full_ranked if not entry.is_fold)
+    defense_policy = next(
+        (entry for entry in full_ranked if entry.is_fold),
+        None,
+    )
+    top_gap = (
+        paired_delta_moments(ranked[0], ranked[1])
+        if len(ranked) >= 2
+        else SampleMoments()
+    )
     rank_position = next((index for index, entry in enumerate(ranked, start=1) if entry.discard == chosen_tile), None)
     # The verdict comes from two same-CRN-seed estimates; the ranked table keeps
     # its cheaper EV_SIMS values. Choosing the rank-best tile is an exact tie
@@ -495,9 +529,19 @@ def grade(
             _cached_shanten(tuple(chosen_post), len(position.own_melds) + len(position.own_kongs)),
         )
         outcome, (best, chosen) = resolve_adaptive(estimate, gate_shanten)
+    ranking_uncertain = (
+        top_gap.n > 0
+        and (
+            top_gap.crosses_zero
+            or abs(top_gap.mean) < EV_EFFECT_SIZE_MIN
+        )
+    )
     return QuizGrade(
         position, best, chosen, ranked, outcome.ev_delta, rank_position,
-        outcome.verdict, outcome.refined_sims, outcome.marginal,
+        outcome.verdict, outcome.refined_sims,
+        outcome.marginal or ranking_uncertain,
+        top_gap,
+        defense_policy,
     )
 
 
@@ -527,6 +571,11 @@ def _is_declared_safe(position: QuizPosition, tile: int, opponent_index: int) ->
 
 def _component_lines(grade: QuizGrade) -> tuple[str, str]:
     if grade.ev_delta <= 0.0 or grade.best.discard == grade.chosen.discard:
+        if len(grade.ranked) < 2:
+            return (
+                f"Best {_tile_name(grade.best.discard)}: only legal discard.",
+                "Chosen matches the only legal discard.",
+            )
         # Compare the cheap ranked best against the cheap runner-up: both come
         # from the same EV_SIMS ranking under one CRN seed, so their component
         # difference is variance-reduced. grade.best is refined at a different

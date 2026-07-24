@@ -6,6 +6,20 @@ and what each kong type is actually worth. Both use seed-paired batches — the
 same seed is the same shuffle across every condition — so a difference between
 conditions is the decision under study, not luck.
 
+## Uncertainty and wording gate
+
+Current scripts emit mergeable `n/sum/sumsq`, mean, SE, and a normal 95% CI.
+Paired contrast modes calculate each same-seed game difference before
+accumulating moments, so chunk-merging reproduces a single run exactly. A
+directional phrase is allowed only when the paired CI excludes zero **and** the
+absolute mean exceeds 0.10 value units/game. A CI containing zero is
+`uncertain`; an effect below the threshold is `marginal`.
+
+The tables below pre-date those moment fields. They retain their historical
+point estimates and sample sizes, but no paired second moments were saved.
+They are exploratory records, not CI-supported effect claims; re-run the paired
+commands before using directional wording.
+
 All point figures are in **value units** (1 底 = `BASE_UNITS` = 3 tai-units);
 they are the same units as `GameResult.point_deltas`, and every game's four
 deltas sum to zero. The bots are the deterministic self-play policies
@@ -67,7 +81,7 @@ every streak and across the dealer-aware on/off toggle.
 
 Two things move, one does not:
 
-- **The 連莊 premium is the dominant effect.** The dealer's point EV rises about
+- **Historical payment gradient (n=1000/cell; paired CI unavailable):** the dealer's point EV rises about
   +0.07 units per streak step — pure payment, since the deal-in *rate* does not
   change. Dealing into a connecting dealer is simply worth more.
 - **Seat geometry decides who suffers.** 莊的上家 (upstream — draws right before
@@ -81,20 +95,19 @@ Two things move, one does not:
   decides the discards that feed the dealer. The mechanism is real (unit-tested)
   but this bot ecology seldom exercises it.
 
-**ev_aware defenders do respond.** The `ev_aware` policy prices the dealer on
+**Historical `ev_aware` point estimates (n=120/cell; paired CI unavailable).** The `ev_aware` policy prices the dealer on
 *every* discard through `opponent_value_estimate` (the M2 channel), not only when
 folding. A smaller supplementary run (`--defenders ev_aware --games 120 --streak
-3`) shows dealer-awareness cutting deal-ins to the dealer materially:
+3`) produced these deal-in point estimates:
 
 | dealer-aware | deal-in-to-dealer — 下家 / 對家 / 上家 |
 |---|---|
 | on | 0.092 / 0.100 / 0.217 |
 | off | 0.142 / 0.142 / 0.258 |
 
-So the prescriptive "defend the dealer harder, especially as 上家" is realized by
-continuous-EV defenders (~16–35 % fewer deal-ins to the dealer at streak 3), not
-by the fold-only cautious policy. (120 games — directional, not a tight CI; the
-Monte-Carlo `ev_aware` policy is too slow for a full battery.)
+These historical counts do not preserve paired difference moments. No
+percentage-improvement claim is made until the paired rerun's CI excludes zero
+and passes the effect-size gate.
 
 ## Experiment B — kong marginal EV by type
 
@@ -120,10 +133,10 @@ done
 | concealed_added | +0.333 | 6.0 % | no |
 | all | +0.221 | 13.4 % | yes |
 
-- **暗槓 / 加槓 ≈ neutral:** `concealed_added − none = −0.013` units/game — within
-  sampling noise. Taking a shanten-safe concealed or added kong neither helps nor
-  hurts materially; it keeps 門清 (concealed) and only trades flexibility.
-- **大明槓 is clearly negative:** `all − concealed_added = −0.112` units/game. The
+- **暗槓 / 加槓 historical point estimate (n=1000/cell; paired CI unavailable):**
+  `concealed_added − none = −0.013` units/game.
+- **大明槓 historical point estimate (n=1000/cell; paired CI unavailable):**
+  `all − concealed_added = −0.112` units/game. The
   extra open kongs in `all` are 大明槓, and enabling them lowers the actor's EV.
   This is exactly what the house rule predicts — a 大明槓 scores 0 tai, breaks
   nothing extra, forfeits 槓上開花, and locks four tiles into a fixed set — so it
@@ -135,15 +148,27 @@ hand is rare with attack bots), and 搶槓 cannot occur when only seat 0 kongs a
 no opponent is left to rob — both are exercised instead by the dedicated
 selfplay/trainer tests.
 
-**Answer to "明槓效益如何":** an open 大明槓 is a losing play under these rules
-(≈ −0.11 units/game); concealed and added kongs are roughly break-even. Kong to
-complete a hand shape (a concealed triplet you need, a 槓上開花 draw), never for
-its own sake — and never a 大明槓.
+**Current evidence status:** the historical point estimate for open 大明槓 is
+−0.112 units/game, but its paired CI was not retained. Treat the direction as
+unconfirmed until the paired command below passes the CI/effect gate.
 
 ## Reproducing
 
 Each script prints one JSON line. The numbers above are pinned in spirit by
 `tests/test_selfplay.py::test_daiminkan_is_not_positive_ev_under_house_rule`
 (大明槓 is not positive-EV) and
-`test_per_seat_kong_policy_restricts_kongs_to_enabled_seats`. Larger batches
-tighten the confidence intervals but do not change the direction of any result.
+`test_per_seat_kong_policy_restricts_kongs_to_enabled_seats`; those are
+regression tests, not effect-size evidence.
+
+Mergeable/paired forms:
+
+```bash
+python3 scripts/head_to_head.py --games 200 --seed 24001
+python3 scripts/kong_ev.py --games 200 --seed 40001 \
+  --kong-policy all --compare-to concealed_added
+python3 scripts/streak_defense.py --games 200 --seed 30001 --streak 3 \
+  --dealer-aware on --defenders ev_aware --paired-aware-contrast
+```
+
+Each moments object contains `n`, `sum`, `sumsq`, `mean`, `se`, `ci95`, and
+`crosses_zero`; chunk moments are added fieldwise.

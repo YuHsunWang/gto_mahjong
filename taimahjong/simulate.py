@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Callable
 
 from .shanten import shanten
 from .tiles import validate_counts
@@ -30,6 +31,32 @@ class WinningTrial:
     hand: tuple[int, ...]
     winning_tile: int
     turn: int
+    trial: int = 0
+
+
+@dataclass(frozen=True)
+class DiscardStep:
+    """One policy discard with the public state needed to price its risk."""
+
+    turn: int
+    tile: int
+    hand: tuple[int, ...]
+    visible: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class TrialTrace:
+    """One complete draw stream under a deterministic discard policy."""
+
+    trial: int
+    win: WinningTrial | None
+    discards: tuple[DiscardStep, ...]
+
+
+DiscardPolicy = Callable[
+    [tuple[int, ...], tuple[int, ...], tuple[int, ...], int],
+    int,
+]
 
 
 def _validate_positive_int(value: int, name: str) -> None:
@@ -90,6 +117,7 @@ def _greedy_discard(
 class _RolloutResult:
     first_tenpai_turns: tuple[int, ...]
     wins: tuple[WinningTrial, ...]
+    trials: tuple[TrialTrace, ...]
 
 
 def _assert_physical_state(
@@ -110,6 +138,7 @@ def _rollout(
     visible: tuple[int, ...] | list[int] | None = None,
     sims: int = 5000,
     seed: int | None = None,
+    discard_policy: DiscardPolicy | None = None,
 ) -> _RolloutResult:
     """Run the single shared greedy rollout used by both public summaries."""
     _validate_positive_int(turns, "turns")
@@ -126,7 +155,8 @@ def _rollout(
     initial_shanten = _cached_shanten(hand, melds_declared)
     tenpai_turns: list[int] = []
     wins: list[WinningTrial] = []
-    for _ in range(sims):
+    traces: list[TrialTrace] = []
+    for trial in range(sims):
         draws = pool[:]
         rng.shuffle(draws)
         current = hand
@@ -134,6 +164,8 @@ def _rollout(
         remaining_counts = list(initial_remaining)
         _assert_physical_state(current, dynamic_visible, remaining_counts)
         first_tenpai = 1 if initial_shanten <= 0 else 0
+        steps: list[DiscardStep] = []
+        winning: WinningTrial | None = None
 
         for turn, tile in enumerate(draws[:turns], start=1):
             assert remaining_counts[tile] > 0
@@ -144,21 +176,37 @@ def _rollout(
             _assert_physical_state(current, dynamic_visible, remaining_counts)
             if _cached_shanten(current, melds_declared) == -1:
                 first_tenpai = first_tenpai or turn
-                wins.append(WinningTrial(current, tile, turn))
+                winning = WinningTrial(current, tile, turn, trial)
+                wins.append(winning)
                 break
 
-            discard, after_shanten = _greedy_discard(
-                current, tuple(remaining_counts), melds_declared,
-            )
+            if discard_policy is None:
+                discard, after_shanten = _greedy_discard(
+                    current, tuple(remaining_counts), melds_declared,
+                )
+            else:
+                discard = discard_policy(
+                    current,
+                    tuple(remaining_counts),
+                    tuple(dynamic_visible),
+                    melds_declared,
+                )
+                if not 0 <= discard < 34 or not current[discard]:
+                    raise ValueError("discard policy returned a tile not present in the hand")
+                reduced_for_shanten = list(current)
+                reduced_for_shanten[discard] -= 1
+                after_shanten = _cached_shanten(tuple(reduced_for_shanten), melds_declared)
             reduced = list(current)
             reduced[discard] -= 1
             current = tuple(reduced)
+            steps.append(DiscardStep(turn, discard, current, tuple(dynamic_visible)))
             dynamic_visible[discard] += 1
             _assert_physical_state(current, dynamic_visible, remaining_counts)
             if not first_tenpai and after_shanten <= 0:
                 first_tenpai = turn
         tenpai_turns.append(first_tenpai)
-    return _RolloutResult(tuple(tenpai_turns), tuple(wins))
+        traces.append(TrialTrace(trial, winning, tuple(steps)))
+    return _RolloutResult(tuple(tenpai_turns), tuple(wins), tuple(traces))
 
 
 def win_probability(
@@ -209,3 +257,22 @@ def winning_trials(
     :func:`win_probability`; a discarded tile is not returned to the wall.
     """
     return _rollout(counts, turns, melds_declared, visible, sims, seed).wins
+
+
+def policy_trials(
+    counts: tuple[int, ...] | list[int],
+    turns: int,
+    melds_declared: int = 0,
+    visible: tuple[int, ...] | list[int] | None = None,
+    sims: int = 5000,
+    seed: int | None = None,
+    discard_policy: DiscardPolicy | None = None,
+) -> tuple[TrialTrace, ...]:
+    """Return every trial trace under one deterministic policy.
+
+    Passing the same ``seed`` to different policies preserves the same shuffled
+    draw streams (CRN); only the policy's discards differ.
+    """
+    return _rollout(
+        counts, turns, melds_declared, visible, sims, seed, discard_policy,
+    ).trials

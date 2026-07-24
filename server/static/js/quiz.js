@@ -145,11 +145,15 @@ export function drillScreen(root, { apiBase, mode, title }) {
       } else {
         root.append(bestLineEl(`判定 ${VERDICT_LABELS[gradeResult.verdict]} — 你的選擇不遜於本模型的估計最佳`));
       }
-      root.append(evDetailsEl(gradeResult.ranked, {
+      const entries = gradeResult.defense_policy
+        ? [...gradeResult.ranked, gradeResult.defense_policy]
+        : gradeResult.ranked;
+      root.append(evDetailsEl(entries, {
         chosenTile,
         bestTile,
         explain: gradeResult.explain,
         open: true,
+        topGap: gradeResult.top1_vs_top2,
       }));
       root.append(controls());
     }

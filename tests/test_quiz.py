@@ -101,7 +101,7 @@ def test_empty_wall_allows_zero_remaining_draws():
     assert position.draws_remaining == 0
 
 
-def test_grading_best_worst_off_candidate_and_illegal_choices(position):
+def test_grading_best_worst_and_illegal_choices(position):
     probe = next(tile for tile, count in enumerate(position.hand) if count)
     initial = grade(position, probe)
     best_grade = grade(position, initial.best.discard)
@@ -112,15 +112,22 @@ def test_grading_best_worst_off_candidate_and_illegal_choices(position):
     expected = "good" if worst_grade.ev_delta < GOOD_DELTA else "inaccuracy" if worst_grade.ev_delta < 1.0 else "mistake"
     assert worst_grade.verdict == expected
 
-    candidates = {entry.discard for entry in initial.ranked}
-    off_candidate = next(tile for tile, count in enumerate(position.hand) if count and tile not in candidates)
-    off_grade = grade(position, off_candidate)
-    assert off_grade.chosen.discard == off_candidate
-    assert off_grade.rank_position is None
-
     illegal = next(tile for tile, count in enumerate(position.hand) if not count)
     with pytest.raises(ValueError, match="present in the hand"):
         grade(position, illegal)
+
+
+def test_single_legal_candidate_has_no_paired_gap(position, monkeypatch):
+    tile = next(tile for tile, count in enumerate(position.hand) if count)
+    only = EVRankEntry(tile, 0.0, None, 0.0, (), 0.0, 0.0)
+    monkeypatch.setattr(quiz, "_full_rank", lambda *_args, **_kwargs: (only,))
+    monkeypatch.setattr(quiz, "_refine", lambda *_args, **_kwargs: only)
+
+    result = grade(position, tile)
+
+    assert result.verdict == "best"
+    assert result.top_gap.n == 0
+    assert result.defense_policy is None
 
 
 def test_rank_cache_normalizes_candidate_ev_gap():

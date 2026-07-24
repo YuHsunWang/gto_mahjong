@@ -320,10 +320,14 @@ export function trainerScreen(root) {
       }));
       fragment.append(verdictEl(feedback.verdict, feedback.marginal, feedback.ev_delta, `你切 ${faceText(feedback.chosen_tile)}`));
       if (showBest) fragment.append(bestLineEl(`本模型估計切牌：${faceText(bestTile)}（淨 EV ${feedback.best.net_ev.toFixed(1)}，綠框標示）`));
-      fragment.append(evDetailsEl(feedback.ranked, {
+      const entries = feedback.defense_policy
+        ? [...feedback.ranked, feedback.defense_policy]
+        : feedback.ranked;
+      fragment.append(evDetailsEl(entries, {
         chosenTile: feedback.chosen_tile,
         bestTile,
         explain: feedback.explain,
+        topGap: feedback.top1_vs_top2,
       }));
     } else {
       const isCall = feedback.kind === 'call';

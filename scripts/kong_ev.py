@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from taimahjong.selfplay import play_game
+from taimahjong.moments import SampleMoments
 
 POLICIES = ("attack", "attack", "attack", "attack")
 
@@ -25,6 +26,7 @@ POLICIES = ("attack", "attack", "attack", "attack")
 def _run(games: int, seed: int, kong_policy: str) -> dict:
     seat_policy = (kong_policy, "none", "none", "none")
     seat0_points = 0
+    point_differences: list[float] = []
     seat0_wins = 0
     kong_types: Counter[str] = Counter()
     bloom = robbed = 0
@@ -32,6 +34,7 @@ def _run(games: int, seed: int, kong_policy: str) -> dict:
     for offset in range(games):
         game = play_game(seed + offset, POLICIES, kong_policy=seat_policy)
         seat0_points += game.point_deltas[0]
+        point_differences.append(float(game.point_deltas[0]))
         seat0_wins += int(game.winner == 0)
         seat0_kongs = [entry for entry in game.kong_log if entry[0] == 0]
         seat0_kong_games += int(bool(seat0_kongs))
@@ -43,6 +46,7 @@ def _run(games: int, seed: int, kong_policy: str) -> dict:
         "kong_policy": kong_policy,
         "games": games,
         "seat0_point_ev": seat0_points / games,
+        "seat0_point_moments": SampleMoments.from_values(point_differences).payload(0.10),
         "seat0_win_rate": seat0_wins / games,
         "seat0_kong_game_rate": seat0_kong_games / games,
         "seat0_kong_types": dict(kong_types),
@@ -51,13 +55,49 @@ def _run(games: int, seed: int, kong_policy: str) -> dict:
     }
 
 
+def _paired(games: int, seed: int, baseline: str, tested: str) -> dict:
+    differences: list[float] = []
+    for offset in range(games):
+        baseline_game = play_game(
+            seed + offset,
+            POLICIES,
+            kong_policy=(baseline, "none", "none", "none"),
+        )
+        tested_game = play_game(
+            seed + offset,
+            POLICIES,
+            kong_policy=(tested, "none", "none", "none"),
+        )
+        differences.append(
+            float(tested_game.point_deltas[0] - baseline_game.point_deltas[0])
+        )
+    return {
+        "baseline_policy": baseline,
+        "tested_policy": tested,
+        "games": games,
+        "seed": seed,
+        "paired_difference_moments": SampleMoments.from_values(differences).payload(0.10),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--games", type=int, required=True)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--kong-policy", choices=("none", "concealed_added", "all"), required=True)
+    parser.add_argument("--compare-to", choices=("none", "concealed_added", "all"))
     args = parser.parse_args()
-    print(json.dumps(_run(args.games, args.seed, args.kong_policy)))
+    result = (
+        _run(args.games, args.seed, args.kong_policy)
+        if args.compare_to is None
+        else _paired(
+            args.games,
+            args.seed,
+            args.compare_to,
+            args.kong_policy,
+        )
+    )
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":
