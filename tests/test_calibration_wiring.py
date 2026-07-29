@@ -34,9 +34,16 @@ def _real_entry(payload, discard):
 
 
 def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monkeypatch):
+    # risk_ev and net_ev are sample means over terminal rollouts (ev.py:895),
+    # so comparing two calibrations compares two expectations and needs enough
+    # trials to survive one expensive terminal. At the old REFINE_SIMS=3 this
+    # inverted on luck alone: 4.333 = 13/3, a single 13-unit terminal carrying
+    # the entire low-calibration mean. Swept on this exact position, the
+    # ordering holds from ten samples up -- risk 1.30/2.10 at 10, 1.60/1.68 at
+    # 50, 1.45/1.65 at 200. Do not lower these back.
     monkeypatch.setattr(quiz, "EV_SIMS", 2)
-    monkeypatch.setattr(quiz, "REFINE_SIMS", 3)
-    monkeypatch.setattr(quiz, "ESCALATE_SIMS", 4)
+    monkeypatch.setattr(quiz, "REFINE_SIMS", 50)
+    monkeypatch.setattr(quiz, "ESCALATE_SIMS", 51)
     quiz._rank_cached.cache_clear()
     api._SESSIONS.clear()
     active = [_context("extreme-low", 0.001)]
@@ -62,7 +69,7 @@ def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monk
         hand="123m123p123s11122233z",
         river="9m9p1z",
         turns=1,
-        sims=2,
+        sims=50,
         seed=17,
         scheme="3-1",
     ))
@@ -83,7 +90,7 @@ def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monk
         hand="123m123p123s11122233z",
         river="9m9p1z",
         turns=1,
-        sims=2,
+        sims=50,
         seed=17,
         scheme="3-1",
     ))
@@ -93,6 +100,19 @@ def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monk
     assert (
         _real_entry(high_stateless, stateless_discard)["risk_ev"]
         > _real_entry(low_stateless, stateless_discard)["risk_ev"]
+    )
+
+    # net_ev is the more robust witness of the same property. risk_ev sees only
+    # the loss side, and a calibrated ron ENDS the hand, so raising deal-in
+    # probability truncates future losses and future gains together and moves
+    # risk_ev by little -- 1.45 -> 1.65 at 200 trials despite a 200x change in
+    # probability. net_ev separates cleanly over the same span, +0.41 -> -1.65.
+    # More deal-in risk must never make a decision look better.
+    assert high_quiz["grade"]["chosen"]["net_ev"] < low_quiz["grade"]["chosen"]["net_ev"]
+    assert high_trainer["feedback"]["chosen"]["net_ev"] < low_trainer["feedback"]["chosen"]["net_ev"]
+    assert (
+        _real_entry(high_stateless, stateless_discard)["net_ev"]
+        < _real_entry(low_stateless, stateless_discard)["net_ev"]
     )
     assert high_quiz["calibration_id"] == high_trainer["calibration_id"] == "extreme-high"
     assert high_stateless["calibration_id"] == "extreme-high"
