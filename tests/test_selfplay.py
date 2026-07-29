@@ -1,3 +1,4 @@
+from dataclasses import replace
 from math import sqrt
 from pathlib import Path
 
@@ -15,11 +16,13 @@ from taimahjong.calibration import (
     table_document,
     write_merged_table,
 )
+from taimahjong.config import DEFAULT_RULES, resolve_ron_claims
 from taimahjong.selfplay import (
     Player,
     _choose_discard,
     _declared,
-    _robbing_winner,
+    _robbing_winners,
+    _settle_ron_winners,
     _settlement,
     head_to_head,
     play_game,
@@ -71,6 +74,46 @@ def test_point_accounting_conserves_and_charges_the_actual_loser():
                 assert delta == -expected
         else:
             assert game.point_deltas == (0, 0, 0, 0)
+
+
+def test_multi_ron_policy_changes_winners_and_conserves_every_payment():
+    players = [Player("attack") for _ in range(4)]
+    players[1].hand = list(parse_tiles("123456m123p123s111z5z"))
+    players[2].hand = list(parse_tiles("123456p123m789s222z5z"))
+    tile = next(index for index, count in enumerate(parse_tiles("5z")) if count)
+
+    def can_ron(seat):
+        if seat not in (1, 2):
+            return False
+        completed = list(players[seat].hand)
+        completed[tile] += 1
+        return shanten(tuple(completed), _declared(players[seat])) == -1
+
+    nearest = resolve_ron_claims(0, can_ron, DEFAULT_RULES)
+    all_rules = replace(
+        DEFAULT_RULES, rules_id="taiwanese-multi-ron-v1", multi_ron="all",
+    )
+    all_winners = resolve_ron_claims(0, can_ron, all_rules)
+
+    assert nearest == (1,)
+    assert all_winners == (1, 2)
+
+    winning_hands = {}
+    for winner in all_winners:
+        completed = list(players[winner].hand)
+        completed[tile] += 1
+        winning_hands[winner] = tuple(completed)
+    nearest_deltas, _ = _settle_ron_winners(
+        nearest, 0, players, winning_hands, tile,
+    )
+    all_deltas, _ = _settle_ron_winners(
+        all_winners, 0, players, winning_hands, tile,
+    )
+
+    assert sum(nearest_deltas) == sum(all_deltas) == 0
+    assert nearest_deltas[1] > 0 and nearest_deltas[2] == 0
+    assert all_deltas[1] > 0 and all_deltas[2] > 0
+    assert all_deltas[0] < nearest_deltas[0] < 0
 
 
 def _ron_settlement(winner, discarder, dealer_streak=0):
@@ -269,10 +312,10 @@ def test_added_kong_can_be_robbed():
     players[2].hand = list(parse_tiles("112233m112233p1122s"))
     players[3].hand = list(parse_tiles("112233m112233p1122s"))
     six_s = next(index for index, count in enumerate(parse_tiles("6s")) if count)
-    assert _robbing_winner(players, konger=0, tile=six_s) == 1
+    assert _robbing_winners(players, konger=0, tile=six_s) == (1,)
     # A tile nobody waits on cannot be robbed.
     one_z = next(index for index, count in enumerate(parse_tiles("1z")) if count)
-    assert _robbing_winner(players, konger=0, tile=one_z) is None
+    assert _robbing_winners(players, konger=0, tile=one_z) == ()
 
 
 def test_kong_bloom_flag_reaches_settlement_and_adds_one_tai():

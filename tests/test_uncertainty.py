@@ -2,7 +2,7 @@
 
 from server import api
 from taimahjong.ev import EVRankEntry, paired_delta_moments, ev_rank
-from taimahjong.moments import SampleMoments
+from taimahjong.moments import ClusteredSampleMoments, SampleMoments
 from taimahjong.selfplay import head_to_head
 from taimahjong.tiles import parse_tiles
 
@@ -18,6 +18,18 @@ def test_chunk_merged_mean_and_se_equal_single_run():
     assert merged == single
     assert merged.mean == single.mean
     assert merged.standard_error == single.standard_error
+
+
+def test_clustered_se_does_not_treat_reused_hidden_worlds_as_independent():
+    values = (0.0, 10.0) * 100
+    clusters = (0, 1) * 100
+
+    independent = SampleMoments.from_values(values)
+    clustered = ClusteredSampleMoments.from_clustered_values(values, clusters)
+
+    assert clustered.mean == independent.mean == 5.0
+    assert clustered.standard_error == 5.0
+    assert clustered.standard_error > 10 * independent.standard_error
 
 
 def test_head_to_head_seed_chunks_merge_to_single_run_se():
@@ -69,6 +81,32 @@ def test_boundary_top_gap_whose_paired_ci_crosses_zero_is_uncertain():
     assert payload is not None
     assert payload["crosses_zero"] is True
     assert payload["wording"] == "uncertain"
+    assert "ci95" not in payload
+    assert len(payload["descriptive_interval95"]) == 2
+    assert "not a selection-adjusted" in payload["interval_note"]
+
+
+def test_single_sample_never_emits_a_zero_width_95_percent_ci():
+    moments = SampleMoments.from_values((0.0,))
+    payload = moments.payload()
+
+    assert moments.sample_variance is None
+    assert moments.standard_error is None
+    assert moments.ci95 is None
+    assert "ci95" not in payload
+    assert payload["uncertainty"] == "unavailable: fewer than two samples"
+
+    response = api.ev_rank_endpoint(api.EvRankRequest(
+        hand="123456789m11234p567s",
+        turns=1,
+        sims=1,
+        seed=77,
+        exhaustive=True,
+    ))
+    assert all(entry["ci95"] == [None, None] for entry in response["entries"])
+    assert "ci95" not in response["top1_vs_top2"]
+    assert response["top1_vs_top2"]["uncertainty"].startswith("unavailable")
+    assert response["top1_vs_top2"]["wording"] == "uncertain"
 
 
 def test_stateless_ev_response_adds_ci_paired_gap_and_candidate_scope():

@@ -8,8 +8,9 @@ resolving opponents with the same bot policies and rules as
 :func:`taimahjong.selfplay.play_game`.
 
 Trainer scope (deliberate, documented):
-- The human seat may make sound self-draw 暗槓/加槓 choices and pon/chi call
-  choices; opponents retain the existing no-kong trainer behavior.
+- The human seat may make every legal self-draw 暗槓/加槓 choice and pon/chi call
+  choices, plus any legal 大明槓; opponents retain the existing no-kong
+  trainer behavior.
 - No flowers or guo-shui are modelled, matching the self-play simplifications.
 """
 
@@ -21,6 +22,7 @@ from random import Random
 from . import quiz  # budget/adaptive constants read live (quiz.*) so tests can monkeypatch them
 from .analysis import AnalysisContext, DEFAULT_ANALYSIS_CONTEXT
 from .calibration import Calibration
+from .config import DEFAULT_RULES, RulesConfig, resolve_ron_claims
 from .ev import WinValueContext, declaration_ev, estimate_win_value, evaluate_discard, ev_rank
 from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
 from .scoring import DEFAULT_SCHEME, ScoringScheme
@@ -28,15 +30,17 @@ from .selfplay import (
     DEALER_SEAT,
     Player,
     RiverEntry,
+    _apply_big_kong,
     _best_call,
     _cached_shanten,
-    _call_options,
     _choose_discard,
     _declare_kong,
     _declared,
     _decision_snapshot,
-    _kong_worsens_shanten,
-    _robbing_winner,
+    _legal_call_options,
+    _policy_call_options,
+    _robbing_winners,
+    _settle_ron_winners,
     _settlement,
 )
 
@@ -50,16 +54,16 @@ class TrainerDecision:
 
 @dataclass(frozen=True)
 class CallOption:
-    """One legal pon/chi the human could declare on an opponent's discard."""
+    """One rule-legal 大明槓/pon/chi on an opponent's discard."""
 
-    kind: str  # "pon" or "chi"
-    meld: tuple[int, int, int]  # the completed 3-tile set (sorted)
-    consumed: tuple[int, int]  # the two tiles taken from the concealed hand
+    kind: str  # "kong", "pon", or "chi"
+    meld: tuple[int, ...]  # the completed 3- or 4-tile set (sorted)
+    consumed: tuple[int, ...]  # tiles taken from the concealed hand
 
 
 @dataclass(frozen=True)
 class TrainerCallDecision:
-    """A pon/chi the human MAY declare on an opponent's discard (or pass).
+    """A 大明槓/pon/chi the human MAY declare on an opponent's discard (or pass).
 
     ``position`` reuses the quiz view for rendering (its ``drawn_tile`` carries
     the callable tile, relabelled by the UI). ``options`` are the legal calls;
@@ -74,7 +78,7 @@ class TrainerCallDecision:
 
 @dataclass(frozen=True)
 class KongOption:
-    """One sound self-draw kong the human may declare."""
+    """One rule-legal self-draw kong the human may declare."""
 
     kind: str  # "concealed" (暗槓) or "added" (加槓)
     tile: int
@@ -83,11 +87,10 @@ class KongOption:
 
 @dataclass(frozen=True)
 class TrainerKongDecision:
-    """A sound self-draw 暗槓/加槓 the human MAY declare (or skip).
+    """A rule-legal self-draw 暗槓/加槓 the human MAY declare (or skip).
 
-    ``position`` is the ordinary post-draw quiz view. ``options`` contains all
-    legal kongs that do not worsen shanten; the caller sends an option index to
-    declare, or None/-1 to continue to the normal discard.
+    ``position`` is the ordinary post-draw quiz view. The caller sends an option
+    index to declare, or None/-1 to continue to the normal discard.
     """
 
     position: QuizPosition
@@ -139,12 +142,20 @@ class CallEvaluation:
         )
 
     def _action_shanten(self, choice: int | None) -> int:
-        """Shanten of the hand refined for this action — post-call for an option
-        (a call strictly advances the hand), the concealed hand for a pass. The
-        cost gate keys on this, not the pre-call hand."""
+        """Shanten used to gate adaptive refinement for this action."""
         if choice is None:
             return self.decision.position.shanten
-        post, melds = _post_call(self.decision.position, self.decision.options[choice])
+        option = self.decision.options[choice]
+        if option.kind == "kong":
+            post = list(self.decision.position.hand)
+            post[option.meld[0]] -= 3
+            return _cached_shanten(
+                tuple(post),
+                len(self.decision.position.own_melds)
+                + len(self.decision.position.own_kongs)
+                + 1,
+            )
+        post, melds = _post_call(self.decision.position, option)
         return _cached_shanten(post, len(melds) + len(self.decision.position.own_kongs))
 
     def verdict_for(self, choice: int | None) -> CallVerdict:
@@ -161,8 +172,7 @@ class CallEvaluation:
             best_ev = self.best_ev if sims == self.best_ev_sims else self._action_ev(self.best_index, sims)
             return best_ev - self._action_ev(choice, sims), best_ev
 
-        # Gate on whichever refined hand is farther from tenpai (a call advances
-        # the hand, so the pre-call shanten would under-count), keeping both
+        # Gate on whichever refined hand is farther from tenpai, keeping both
         # actions' escalation cheap.
         gate_shanten = max(self._action_shanten(self.best_index), self._action_shanten(choice))
         outcome, best_ev = quiz.resolve_adaptive(estimate, gate_shanten)
@@ -261,27 +271,38 @@ class TrainerOutcome:
         return f"對手{who}（座位 {self.winner}）"
 
 
-def _ron_winner(current: int, tile: int, players: list[Player]) -> int | None:
-    """Closest downstream seat that wins on ``tile`` (includes the human)."""
-    for offset in range(1, 4):
-        index = (current + offset) % 4
+def _ron_winners(
+    current: int,
+    tile: int,
+    players: list[Player],
+    rules: RulesConfig = DEFAULT_RULES,
+) -> tuple[int, ...]:
+    """Seats that win on ``tile`` (including the human), under ``rules``."""
+    def can_win(index: int) -> bool:
         hand = players[index].hand
         completed = tuple(hand[:tile] + [hand[tile] + 1] + hand[tile + 1:])
-        if _cached_shanten(completed, _declared(players[index])) == -1:
-            return index
-    return None
+        return _cached_shanten(completed, _declared(players[index])) == -1
+
+    return resolve_ron_claims(current, can_win, rules)
 
 
 def _outcome(outcome: str, winner: int | None, discarder: int | None,
              human_seat: int, deltas: tuple[int, int, int, int], turns: int,
-             dealer_streak: int = 0, robbed_kong: bool = False) -> TrainerOutcome:
+             dealer_streak: int = 0, robbed_kong: bool = False,
+             rules: RulesConfig = DEFAULT_RULES,
+             winners: tuple[int, ...] = ()) -> TrainerOutcome:
     # 流局連莊: the dealer (seat 0) keeps dealership and the streak grows on a
     # draw or a dealer win; otherwise dealership passes, which we emulate by
     # rotating the human one seat downstream and resetting the streak.
-    dealer_keeps = outcome == "draw" or winner == DEALER_SEAT
+    terminal_winners = winners or (() if winner is None else (winner,))
+    dealer_keeps = (
+        outcome == "draw" and rules.dealer_continues_on_draw
+    ) or (
+        DEALER_SEAT in terminal_winners and rules.dealer_continues_on_win
+    )
     return TrainerOutcome(
         outcome=outcome,
-        human_won=winner == human_seat,
+        human_won=human_seat in terminal_winners,
         human_dealt_in=outcome == "ron" and discarder == human_seat,
         winner=winner,
         discarder=discarder,
@@ -294,17 +315,20 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
     )
 
 
-def _human_call_options(player: Player, tile: int, is_next_seat: bool) -> tuple[CallOption, ...]:
-    """All legal pon (any seat) and chi (next seat only) calls on ``tile``.
-
-    Reuses selfplay's shanten-improving call enumeration, so only calls that
-    strictly advance the hand are offered — passing always remains a choice.
-    """
+def _human_call_options(
+    player: Player,
+    tile: int,
+    is_next_seat: bool,
+    can_kong: bool = True,
+) -> tuple[CallOption, ...]:
+    """All rule-legal discard calls, ordered 大明槓 then pon then chi."""
     options: list[CallOption] = []
-    for removed, meld, _ in _call_options(player, tile, chi=False):
+    if can_kong and player.hand[tile] == 3:
+        options.append(CallOption("kong", (tile, tile, tile, tile), (tile, tile, tile)))
+    for removed, meld in _legal_call_options(player, tile, chi=False):
         options.append(CallOption("pon", meld, removed))
     if is_next_seat:
-        for removed, meld, _ in _call_options(player, tile, chi=True):
+        for removed, meld in _legal_call_options(player, tile, chi=True):
             options.append(CallOption("chi", meld, removed))
     return tuple(options)
 
@@ -319,9 +343,12 @@ def _trainer_position(
 ) -> QuizPosition:
     """Build a trainer quiz view, preserving own kong visibility and type."""
     player = players[player_index]
-    position = _position_from(_decision_snapshot(player_index, drawn_tile, players, wall_remaining), seed)
+    snapshot = _decision_snapshot(player_index, drawn_tile, players, wall_remaining)
+    validation_melds = snapshot.melds + tuple((tile, tile, tile) for tile, _ in player.kongs)
+    position = _position_from(replace(snapshot, melds=validation_melds), seed)
     return replace(
         position,
+        own_melds=tuple(player.melds),
         own_kongs=tuple(player.kongs),
         shanten=_cached_shanten(tuple(player.hand), _declared(player)),
         migi_declared=player.declared,
@@ -358,15 +385,15 @@ def _declaration_advice(position: QuizPosition, scheme: ScoringScheme = DEFAULT_
 
 
 def _human_kong_options(player: Player) -> tuple[KongOption, ...]:
-    """Enumerate every legal self-draw kong that does not worsen shanten."""
+    """Enumerate every rule-legal self-draw 暗槓 or 加槓."""
     options: list[KongOption] = []
     for tile in range(34):
-        if player.hand[tile] == 4 and not _kong_worsens_shanten(player, tile, True):
+        if player.hand[tile] == 4:
             post = list(player.hand)
             post[tile] -= 4
             options.append(KongOption("concealed", tile, _cached_shanten(tuple(post), _declared(player) + 1)))
     for tile, second, third in player.melds:
-        if tile == second == third and player.hand[tile] >= 1 and not _kong_worsens_shanten(player, tile, False):
+        if tile == second == third and player.hand[tile] >= 1:
             post = list(player.hand)
             post[tile] -= 1
             options.append(KongOption("added", tile, _cached_shanten(tuple(post), _declared(player))))
@@ -374,7 +401,8 @@ def _human_kong_options(player: Player) -> tuple[KongOption, ...]:
 
 
 def _apply_call(player: Player, discarder: Player, option: CallOption) -> None:
-    """Mutate state for a declared call: consume hand tiles, add the meld."""
+    """Apply a selected pon/chi; 大明槓 uses ``_apply_big_kong`` instead."""
+    assert option.kind in ("pon", "chi")
     discarder.river.pop()
     for consumed in option.consumed:
         player.hand[consumed] -= 1
@@ -382,7 +410,8 @@ def _apply_call(player: Player, discarder: Player, option: CallOption) -> None:
 
 
 def _post_call(position: QuizPosition, option: CallOption) -> tuple[tuple[int, ...], tuple[tuple[int, int, int], ...]]:
-    """The concealed hand and meld set after declaring ``option`` (hand opens)."""
+    """The concealed hand and meld set after declaring a pon/chi."""
+    assert option.kind in ("pon", "chi")
     post = list(position.hand)
     for consumed in option.consumed:
         post[consumed] -= 1
@@ -414,6 +443,10 @@ def _option_rank(
     calibration: Calibration | None = None,
 ) -> tuple[float, int | None]:
     """Cheap best post-call discard EV of declaring ``option``, and its tile."""
+    if option.kind == "kong":
+        return _open_kong_call_ev(
+            decision, option, base_seed, sims, scheme, calibration,
+        ), None
     position = decision.position
     post, melds = _post_call(position, option)
     ranked = ev_rank(
@@ -442,6 +475,10 @@ def _refine_option(
     """Re-estimate declaring ``option`` at ``sims`` by re-scoring just its
     cheap-best post-call discard — the single deciding candidate, exactly as the
     discard grader refines one tile rather than re-ranking the whole set."""
+    if option.kind == "kong":
+        return _open_kong_call_ev(
+            decision, option, base_seed, sims, scheme, calibration,
+        )
     if discard is None:
         return 0.0
     position = decision.position
@@ -478,6 +515,41 @@ def _best_discard_ev(
     )
     playable = [entry.net_ev for entry in ranked if not entry.is_fold]
     return max(playable, default=0.0)
+
+
+def _open_kong_call_ev(
+    decision: TrainerCallDecision,
+    option: CallOption,
+    base_seed: int,
+    sims: int,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    calibration: Calibration | None = None,
+) -> float:
+    """Replacement-draw expectation for one legal 大明槓 call."""
+    position = decision.position
+    tile = option.meld[0]
+    hand = list(position.hand)
+    hand[tile] -= 3
+    public = list(position.public_counts)
+    public[tile] += 3  # the discarded fourth copy is already public
+    kongs = position.own_kongs + ((tile, False),)
+    concealed = tuple(hand)
+    public_counts = tuple(public)
+    unseen = [4 - concealed[index] - public_counts[index] for index in range(34)]
+    total = sum(count for count in unseen if count > 0)
+    if total <= 0:
+        return 0.0
+    expected = 0.0
+    for replacement, copies in enumerate(unseen):
+        if copies <= 0:
+            continue
+        post = list(concealed)
+        post[replacement] += 1
+        expected += copies * _best_discard_ev(
+            position, tuple(post), position.own_melds, kongs, public_counts,
+            base_seed, sims, scheme, calibration,
+        )
+    return expected / total
 
 
 def _post_kong_state(
@@ -570,11 +642,13 @@ def evaluate_call(
     cuts verdict noise ~sqrt(EV_SIMS/REFINE_SIMS) without paying the high budget
     on every option.
 
-    Approximations (documented, Phase 2a): calling opens the hand (loses 門清
+    Approximations (documented, Phase 2a): pon/chi opens the hand (loses 門清
     and the migi option) and lets the player act now; its value is the best
-    post-call discard EV via ``ev_rank``. Passing keeps the concealed hand; its
-    value is the self-draw win EV of continuing, with no immediate discard risk.
-    Tempo and the pass branch's future deal-in risk are not fully modelled.
+    post-call discard EV via ``ev_rank``. 大明槓 additionally averages that EV
+    over the observable unseen replacement distribution. Passing keeps the
+    concealed hand; its value is the self-draw win EV of continuing, with no
+    immediate discard risk. Tempo and the pass branch's future deal-in risk are
+    not fully modelled.
     """
     context = quiz._analysis_context(scheme, analysis)
     scheme = context.game.scheme
@@ -610,7 +684,7 @@ def evaluate_kong(
     scheme: ScoringScheme = DEFAULT_SCHEME,
     analysis: AnalysisContext | None = None,
 ) -> KongEvaluation:
-    """EV-grade each sound kong against declining it, under shared CRN.
+    """EV-grade each legal kong against declining it, under shared CRN.
 
     The non-kong action uses the ordinary best discard EV from the current
     concealed hand. Each kong action removes its tiles, treats the kong as one
@@ -651,6 +725,7 @@ def play_trainer(
     policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious"),
     dealer_streak: int = 0,
     analysis: AnalysisContext = DEFAULT_ANALYSIS_CONTEXT,
+    rules: RulesConfig = DEFAULT_RULES,
 ):
     """Generator: yields a discard or call decision at each human choice point.
 
@@ -660,10 +735,10 @@ def play_trainer(
     streak and the next hand's streak/human seat (see :func:`_outcome`).
 
     Yields :class:`TrainerDecision` (a discard; send back a tile index),
-    :class:`TrainerKongDecision` (a sound self-draw 暗槓/加槓; send an option
-    index, or None/-1 to skip), or :class:`TrainerCallDecision` (a pon/chi you
-    may declare on an opponent's discard; send an option index, or None/-1 to
-    pass).
+    :class:`TrainerKongDecision` (a legal self-draw 暗槓/加槓; send an option
+    index, or None/-1 to skip), or :class:`TrainerCallDecision` (a
+    大明槓/pon/chi you may declare on an opponent's discard; send an option
+    index, or None/-1 to pass).
 
     Protocol::
 
@@ -695,6 +770,7 @@ def play_trainer(
     wall = tiles
     current = 0
     needs_draw = True
+    pending_drawn_tile: int | None = None
     any_call = False
     actions = 0
 
@@ -702,14 +778,18 @@ def play_trainer(
         actions += 1
         assert actions < 1000, "trainer game did not terminate"
         player = players[current]
-        drawn_tile: int | None = None
+        drawn_tile = pending_drawn_tile
+        pending_drawn_tile = None
 
         if needs_draw:
             if not wall:
                 deltas, _ = _settlement(
                     "draw", None, None, players, None, None, dealer_streak, scheme,
                 )
-                yield _outcome("draw", None, None, human_seat, deltas, actions, dealer_streak)
+                yield _outcome(
+                    "draw", None, None, human_seat, deltas, actions,
+                    dealer_streak, rules=rules,
+                )
                 return
             drawn_tile = wall.pop()
             player.hand[drawn_tile] += 1
@@ -719,7 +799,10 @@ def play_trainer(
                     "tsumo", current, None, players, winning_hand, drawn_tile,
                     dealer_streak, scheme,
                 )
-                yield _outcome("tsumo", current, None, human_seat, deltas, actions, dealer_streak)
+                yield _outcome(
+                    "tsumo", current, None, human_seat, deltas, actions,
+                    dealer_streak, rules=rules,
+                )
                 return
 
         if drawn_tile is not None and current == human_seat and not player.declared and dead:
@@ -732,17 +815,30 @@ def play_trainer(
                 elif isinstance(choice, int) and not isinstance(choice, bool) and 0 <= choice < len(options):
                     option = options[choice]
                     if option.kind == "added":
-                        robber = _robbing_winner(players, current, option.tile)
-                        if robber is not None:
-                            robbed_hand = list(players[robber].hand)
-                            robbed_hand[option.tile] += 1
-                            deltas, _ = _settlement(
-                                "ron", robber, current, players, tuple(robbed_hand), option.tile,
-                                dealer_streak, scheme, robbed_kong=True,
+                        robbers = _robbing_winners(
+                            players, current, option.tile, rules,
+                        )
+                        if robbers:
+                            winning_hands = {}
+                            for robber in robbers:
+                                robbed_hand = list(players[robber].hand)
+                                robbed_hand[option.tile] += 1
+                                winning_hands[robber] = tuple(robbed_hand)
+                            deltas, _ = _settle_ron_winners(
+                                robbers,
+                                current,
+                                players,
+                                winning_hands,
+                                option.tile,
+                                dealer_streak,
+                                scheme,
+                                robbed_kong=True,
                             )
+                            robber = robbers[0]
                             yield _outcome(
                                 "ron", robber, current, human_seat, deltas, actions,
-                                dealer_streak, robbed_kong=True,
+                                dealer_streak, robbed_kong=True, rules=rules,
+                                winners=robbers,
                             )
                             return
                     drawn_tile = _declare_kong(player, option.tile, option.kind == "concealed", dead)
@@ -752,7 +848,10 @@ def play_trainer(
                             "tsumo", current, None, players, winning_hand, drawn_tile,
                             dealer_streak, scheme, kong_bloom=True,
                         )
-                        yield _outcome("tsumo", current, None, human_seat, deltas, actions, dealer_streak)
+                        yield _outcome(
+                            "tsumo", current, None, human_seat, deltas, actions,
+                            dealer_streak, rules=rules,
+                        )
                         return
                 else:
                     raise ValueError("sent kong choice must be an option index or None to skip")
@@ -783,51 +882,85 @@ def play_trainer(
             if _declaration_advice(declared_position, scheme).should_declare:
                 player.declared_at = len(player.river) - 1
 
-        winner = _ron_winner(current, tile, players)
-        if winner is not None:
-            winning_hand = list(players[winner].hand)
-            winning_hand[tile] += 1
-            deltas, _ = _settlement(
-                "ron", winner, current, players, tuple(winning_hand), tile,
+        winners = _ron_winners(current, tile, players, rules)
+        if winners:
+            winning_hands = {}
+            for ron_winner in winners:
+                winning_hand = list(players[ron_winner].hand)
+                winning_hand[tile] += 1
+                winning_hands[ron_winner] = tuple(winning_hand)
+            deltas, _ = _settle_ron_winners(
+                winners, current, players, winning_hands, tile,
                 dealer_streak, scheme,
             )
-            yield _outcome("ron", winner, current, human_seat, deltas, actions, dealer_streak)
+            winner = winners[0]
+            yield _outcome(
+                "ron", winner, current, human_seat, deltas, actions,
+                dealer_streak, rules=rules, winners=winners,
+            )
             return
 
         # A call may be declared on this discard unless the discarder is a
-        # migi-declared player. Priority: pon (closest downstream) beats chi
-        # (next seat only). The human is offered their call when it has
-        # priority; passing hands the tile to the next-priority opponent.
+        # migi-declared player. rules.claim_priority is 胡 > 槓 > 碰 > 吃;
+        # same-kind pon ties use the closest downstream seat. Human candidates
+        # use pure legality; opponents retain their existing bot policy.
         caller: int | None = None
         selected: tuple[tuple[int, int], tuple[int, int, int]] | None = None
         human_option: CallOption | None = None
         if not player.declared:
-            def priority(seats: set[int]) -> tuple[int, str] | None:
-                for off in range(1, 4):
-                    idx = (current + off) % 4
-                    if idx in seats and _call_options(players[idx], tile, chi=False):
-                        return idx, "pon"
-                idx = (current + 1) % 4
-                if idx in seats and _call_options(players[idx], tile, chi=True):
-                    return idx, "chi"
+            is_next = (current + 1) % 4 == human_seat
+            human_calls = _human_call_options(
+                players[human_seat], tile, is_next, can_kong=bool(dead),
+            )
+
+            def priority(seats: set[int], human_kind: str | None = None) -> tuple[int, str] | None:
+                for kind in rules.claim_priority:
+                    if kind == "ron":
+                        continue  # wins were resolved above
+                    if kind == "kong":
+                        if human_seat in seats and human_kind == "kong":
+                            return human_seat, kind
+                    elif kind == "pon":
+                        for off in range(1, 4):
+                            idx = (current + off) % 4
+                            if idx not in seats:
+                                continue
+                            available = (
+                                human_kind == kind
+                                if idx == human_seat
+                                else bool(_policy_call_options(players[idx], tile, chi=False))
+                            )
+                            if available:
+                                return idx, kind
+                    elif kind == "chi":
+                        idx = (current + 1) % 4
+                        if idx in seats:
+                            available = (
+                                human_kind == kind
+                                if idx == human_seat
+                                else bool(_policy_call_options(players[idx], tile, chi=True))
+                            )
+                            if available:
+                                return idx, kind
                 return None
 
             eligible = {s for s in range(4) if s != current and not players[s].declared}
-            top = priority(eligible)
-            if top is not None and top[0] == human_seat:
-                is_next = (current + 1) % 4 == human_seat
-                options = _human_call_options(players[human_seat], tile, is_next)
-                if options:
-                    position = _trainer_position(human_seat, tile, players, len(wall), seed)
-                    choice = yield TrainerCallDecision(position, tile, current, options)
-                    if choice is None or choice == -1:
-                        top = priority(eligible - {human_seat})
-                    elif isinstance(choice, int) and not isinstance(choice, bool) and 0 <= choice < len(options):
-                        human_option = options[choice]
-                    else:
-                        raise ValueError("sent call choice must be an option index or None to pass")
-                else:
+            options = tuple(
+                option for option in human_calls
+                if priority(eligible, option.kind) == (human_seat, option.kind)
+            )
+            if options:
+                position = _trainer_position(human_seat, tile, players, len(wall), seed)
+                choice = yield TrainerCallDecision(position, tile, current, options)
+                if choice is None or choice == -1:
                     top = priority(eligible - {human_seat})
+                elif isinstance(choice, int) and not isinstance(choice, bool) and 0 <= choice < len(options):
+                    human_option = options[choice]
+                    top = None
+                else:
+                    raise ValueError("sent call choice must be an option index or None to pass")
+            else:
+                top = priority(eligible - {human_seat})
             if human_option is None and top is not None and top[0] != human_seat:
                 idx, kind = top
                 selected = _best_call(players[idx], tile, chi=(kind == "chi"))
@@ -835,7 +968,25 @@ def play_trainer(
                     caller = idx
 
         if human_option is not None:
-            _apply_call(players[human_seat], players[current], human_option)
+            if human_option.kind == "kong":
+                players[current].river.pop()
+                replacement = _apply_big_kong(players[human_seat], tile, dead)
+                if _cached_shanten(
+                    tuple(players[human_seat].hand), _declared(players[human_seat]),
+                ) == -1:
+                    winning_hand = tuple(players[human_seat].hand)
+                    deltas, _ = _settlement(
+                        "tsumo", human_seat, None, players, winning_hand,
+                        replacement, dealer_streak, scheme,
+                    )
+                    yield _outcome(
+                        "tsumo", human_seat, None, human_seat, deltas, actions,
+                        dealer_streak, rules=rules,
+                    )
+                    return
+                pending_drawn_tile = replacement
+            else:
+                _apply_call(players[human_seat], players[current], human_option)
             any_call = True
             current = human_seat
             needs_draw = False

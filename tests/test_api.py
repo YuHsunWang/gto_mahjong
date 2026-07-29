@@ -7,6 +7,9 @@ from server import api
 from taimahjong import endgame
 
 
+pytestmark = pytest.mark.timeout(30)
+
+
 @pytest.fixture(autouse=True)
 def fast_budgets(monkeypatch):
     """Shrink the Monte Carlo budgets so endpoint flows stay fast; the verdict
@@ -18,10 +21,22 @@ def fast_budgets(monkeypatch):
     # into (or out of) this module's tiny-budget runs.
     from taimahjong import quiz
 
-    for cache in (api._quiz_position, api._endgame_position, quiz._rank_cached, api._calibration_context):
+    for cache in (
+        api._quiz_position,
+        api._endgame_position,
+        quiz._rank_cached,
+        quiz._display_rank_cached,
+        api._calibration_context,
+    ):
         cache.cache_clear()
     yield
-    for cache in (api._quiz_position, api._endgame_position, quiz._rank_cached, api._calibration_context):
+    for cache in (
+        api._quiz_position,
+        api._endgame_position,
+        quiz._rank_cached,
+        quiz._display_rank_cached,
+        api._calibration_context,
+    ):
         clear = getattr(cache, "cache_clear", None)
         if clear:
             clear()
@@ -65,7 +80,13 @@ def test_quiz_grade_rejects_a_tile_not_in_hand(client):
     assert response.status_code == 422
 
 
-def test_quiz_grade_honors_the_scoring_scheme(client):
+def test_quiz_grade_honors_the_scoring_scheme(client, monkeypatch):
+    # Observed terminal payments need enough trials to include a non-draw
+    # outcome; keep the module-wide tiny budget for every other API test.
+    monkeypatch.setattr("taimahjong.quiz.REFINE_SIMS", 24)
+    from taimahjong import quiz
+    quiz._display_rank_cached.cache_clear()
+
     position = client.post("/api/quiz/new", json={"seed": 1, "scheme": "3-1"}).json()["position"]
     tile = _some_hand_tile(position)
     body = {"seed": position["seed"], "tile": tile}
@@ -255,6 +276,47 @@ def test_ev_rank_rejects_melds_without_river(client):
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sims", 5_001),
+        ("turns", 25),
+        ("wall_remaining", 137),
+        ("sims", 0),
+        ("turns", -1),
+        ("wall_remaining", -1),
+    ],
+)
+def test_ev_rank_rejects_budgets_outside_safe_bounds(client, field, value):
+    response = client.post("/api/ev/rank", json={
+        "hand": "123m123p123s11122233z",
+        "wall_remaining": 0,
+        "sims": 1,
+        field: value,
+    })
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "/api/ev/rank",
+            {"hand": "123m123p123s11122233z", "wall_remaining": 0, "sims": 1},
+        ),
+        (
+            "/api/ukeire",
+            {"hand": "4678s123m789m22p1z", "melds_declared": 1},
+        ),
+    ],
+)
+def test_api_rejects_unknown_request_fields(client, path, payload):
+    response = client.post(path, json={**payload, "unexpected": True})
+
+    assert response.status_code == 422
+
+
 def test_score_endpoint_matches_engine(client):
     from taimahjong.scoring import score_hand, WinContext
     from taimahjong.tiles import parse_tiles
@@ -292,6 +354,19 @@ def test_score_endpoint_rejects_more_than_four_physical_copies(client):
 
     assert response.status_code == 422
     assert "more than four" in response.json()["detail"]
+
+
+def test_score_endpoint_rejects_impossible_heavenly_context(client):
+    response = client.post("/api/score", json={
+        "hand": "22z",
+        "melds": "123m;456p;789s;111z;555z",
+        "win_tile": "2z",
+        "heavenly": True,
+        "migi": True,
+    })
+
+    assert response.status_code == 422
+    assert "heavenly" in response.json()["detail"]
 
 
 def _tile(text: str) -> int:

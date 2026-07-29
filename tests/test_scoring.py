@@ -152,6 +152,71 @@ def test_validation_errors():
         score_hand(parse_tiles("123456789m123p11678s"), (), WinContext(winning_tile=_tile("9p")))
 
 
+@pytest.mark.parametrize(
+    "context",
+    [
+        {
+            "dealer": False,
+            "self_draw": False,
+            "heavenly": True,
+            "exposed_melds": 5,
+        },
+        {"dealer": True, "self_draw": False, "heavenly": True},
+        {
+            "dealer": True,
+            "self_draw": True,
+            "heavenly": True,
+            "exposed_melds": 1,
+        },
+        {"dealer": True, "self_draw": True, "earthly": True},
+        {"dealer": False, "self_draw": False, "earthly": True},
+        {
+            "dealer": False,
+            "self_draw": True,
+            "earthly": True,
+            "exposed_melds": 1,
+        },
+    ],
+)
+def test_heavenly_and_earthly_reject_impossible_win_contexts(context):
+    with pytest.raises(ValueError):
+        WinContext(winning_tile=_tile("2z"), **context)
+
+
+def test_legitimate_heavenly_hand_still_scores():
+    hand = parse_tiles("123m111555666777z22z")
+    context = WinContext(
+        winning_tile=_tile("2z"),
+        dealer=True,
+        self_draw=True,
+        heavenly=True,
+        exposed_melds=0,
+    )
+
+    result = score_hand(hand, (), context)
+
+    assert "heavenly (天胡)" in _names(result)
+
+
+def test_score_hand_revalidates_heavenly_against_actual_exposed_melds():
+    melds = [
+        (_tile("1m"), _tile("2m"), _tile("3m")),
+        (_tile("4p"), _tile("5p"), _tile("6p")),
+        (_tile("7s"), _tile("8s"), _tile("9s")),
+        (_tile("1z"),) * 3,
+        (_tile("5z"),) * 3,
+    ]
+    context = WinContext(
+        winning_tile=_tile("2z"),
+        dealer=True,
+        self_draw=True,
+        heavenly=True,
+    )
+
+    with pytest.raises(ValueError, match="no exposed melds"):
+        score_hand(parse_tiles("22z"), melds, context)
+
+
 def test_scoring_rejects_more_than_four_tiles_across_concealed_and_melds():
     hand = parse_tiles("111123m456p789s22z")
 

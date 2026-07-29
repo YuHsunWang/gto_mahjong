@@ -1,20 +1,40 @@
-"""Tai-unit EV approximations with survival-discounted self-draw attack."""
+"""Tai-unit EV ranking from coherent four-seat terminal rollouts.
+
+Each production ranking sample is one mutually exclusive game terminal and
+``net_ev`` is the mean signed payment to the acting seat.  The injectable
+discard policy is an unvalidated opponent-model choice; reference-corpus
+agreement certifies terminal/settlement/aggregation machinery, not its realism.
+"""
 
 from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
+from itertools import permutations
 from math import ceil, comb
+from typing import TYPE_CHECKING, Sequence
 
 from .calibration import Calibration
+from .config import DEFAULT_RULES, RulesConfig
 from .danger import OpponentView, RiverEntry, _flush_suit, danger_score, fold_score, tenpai_score
-from .moments import SampleMoments
+from .moments import ClusteredSampleMoments, SampleMoments
 from .scoring import BASE_UNITS, DEFAULT_SCHEME, ScoringScheme, WinContext, score_hand
 from .shanten import shanten
-from .simulate import DiscardPolicy, TrialTrace, policy_trials, winning_trials
+from .simulate import (
+    DiscardPolicy,
+    TrialTrace,
+    policy_trials,
+    winning_trials,
+)
+from .shanten import _honor_options, _numeric_options
 from .tiles import validate_counts
 from .ukeire import discard_analysis
+
+if TYPE_CHECKING:
+    from .rollout import DiscardPolicy as TerminalDiscardPolicy
+    from .rollout import TerminalResult
+    from .selfplay import Player
 
 
 # UNCALIBRATED visible-state opponent-value and fallback-risk constants.
@@ -38,6 +58,7 @@ BASE_OPPONENT_HAZARD = 0.03
 FOLD_HAZARD_CUTOFF = 0.60
 DRAW_VALUE = 0.0
 SCREENING_EFFECT_MARGIN = 0.10
+PRODUCTION_HIDDEN_WORLD_STRATA = 32
 
 
 @dataclass(frozen=True)
@@ -62,9 +83,9 @@ class WinValueEstimate:
     win_count: int = 0
     value_sum: float = 0.0
     value_sum_squares: float = 0.0
-    standard_error: float = 0.0
-    ci95_low: float = 0.0
-    ci95_high: float = 0.0
+    standard_error: float | None = None
+    ci95_low: float | None = None
+    ci95_high: float | None = None
     trial_values: tuple[float, ...] = field(default=(), repr=False, compare=False)
     traces: tuple[TrialTrace, ...] = field(default=(), repr=False, compare=False)
 
@@ -95,11 +116,12 @@ class EVRankEntry:
     win_count: int = 0
     value_sum: float = 0.0
     value_sum_squares: float = 0.0
-    standard_error: float = 0.0
-    ci95_low: float = 0.0
-    ci95_high: float = 0.0
+    standard_error: float | None = None
+    ci95_low: float | None = None
+    ci95_high: float | None = None
     action_plan: FoldActionPlan | None = None
     trial_values: tuple[float, ...] = field(default=(), repr=False, compare=False)
+    trial_strata: tuple[int, ...] = field(default=(), repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -146,7 +168,8 @@ def _with_moments(
     traces: tuple[TrialTrace, ...] = (),
 ) -> WinValueEstimate:
     moments = SampleMoments.from_values(values)
-    low, high = moments.ci95
+    interval = moments.ci95
+    low, high = (None, None) if interval is None else interval
     return replace(
         estimate,
         sample_count=moments.n,
@@ -162,13 +185,20 @@ def _with_moments(
 
 
 def paired_delta_moments(first: EVRankEntry, second: EVRankEntry) -> SampleMoments:
-    """Paired top-gap moments from candidates evaluated under the same CRN."""
+    """Descriptive paired top-gap moments under CRN after selecting the pair."""
     if not first.trial_values or len(first.trial_values) != len(second.trial_values):
-        return SampleMoments()
-    return SampleMoments.from_values(
+        return SampleMoments(post_selection=True)
+    deltas = tuple(
         left - right
         for left, right in zip(first.trial_values, second.trial_values)
     )
+    if first.trial_strata and first.trial_strata == second.trial_strata:
+        return ClusteredSampleMoments.from_clustered_values(
+            deltas,
+            first.trial_strata,
+            post_selection=True,
+        )
+    return SampleMoments.from_values(deltas, post_selection=True)
 
 
 def remaining_draws(
@@ -509,6 +539,7 @@ def _fold_policy(
     return choose
 
 
+# Legacy decomposition helpers remain for private compatibility; production ev_rank never calls them.
 def _future_policy_losses(
     traces: tuple[TrialTrace, ...],
     opponents: tuple[OpponentView, ...],
@@ -563,6 +594,7 @@ def _entry_from_policy(
     label: str | None = None,
     action_plan: FoldActionPlan | None = None,
 ) -> EVRankEntry:
+    """Legacy adapter for standalone attack/risk estimators; not used by ev_rank."""
     opponent_losses = tuple(
         immediate + future
         for immediate, future in zip(immediate_losses, future_losses)
@@ -574,11 +606,12 @@ def _entry_from_policy(
             for value, future in zip(attack.trial_values, future_trial_losses)
         )
         moments = SampleMoments.from_values(net_values)
-        low, high = moments.ci95
+        interval = moments.ci95
+        low, high = (None, None) if interval is None else interval
     else:
         net_values = ()
         moments = SampleMoments()
-        low = high = attack.net_ev - risk
+        low = high = None
     return EVRankEntry(
         discard,
         attack.p_win,
@@ -603,6 +636,292 @@ def _entry_from_policy(
     )
 
 
+@dataclass(frozen=True)
+class _TrialWorld:
+    players: tuple[Player, Player, Player, Player]
+    wall: tuple[int, ...]
+    terminal_seed: int | None = None
+    wall_order: tuple[int, ...] | None = None
+    hidden_stratum: int | None = None
+
+
+class _OrderedWallRandom:
+    """Minimal randrange source that makes resolve_terminal draw one order."""
+
+    def __init__(self, wall: tuple[int, ...], order: tuple[int, ...]):
+        remaining = [0] * 34
+        for tile in wall:
+            remaining[tile] += 1
+        choices = []
+        stops = []
+        for tile in order:
+            if not remaining[tile]:
+                raise ValueError("wall order is not a permutation of the wall")
+            stops.append(sum(remaining))
+            choices.append(sum(remaining[:tile]))
+            remaining[tile] -= 1
+        self._choices = iter(choices)
+        self._stops = iter(stops)
+
+    def randrange(self, stop: int) -> int:
+        expected = next(self._stops)
+        if stop != expected:
+            raise ValueError("terminal rollout consumed an unexpected wall size")
+        return next(self._choices)
+
+
+@lru_cache(maxsize=None)
+def _production_group_profile(
+    options: tuple[tuple[int, int, int], ...],
+) -> tuple[tuple[int, int, int], ...]:
+    """Drop group states dominated at the same meld/head counts."""
+    best: dict[tuple[int, int], int] = {}
+    for melds, taatsu, heads in options:
+        key = (melds, min(1, heads))
+        best[key] = max(best.get(key, -1), taatsu)
+    return tuple(
+        (melds, taatsu, has_head)
+        for (melds, has_head), taatsu in best.items()
+    )
+
+
+@lru_cache(maxsize=200_000)
+def _production_shanten(
+    hand: tuple[int, ...],
+    melds_declared: int,
+) -> int:
+    """Fast exact shanten for validated internal rollout hands."""
+    states = {(melds_declared, 0): 0}
+    groups = (
+        _production_group_profile(_numeric_options(hand[0:9])),
+        _production_group_profile(_numeric_options(hand[9:18])),
+        _production_group_profile(_numeric_options(hand[18:27])),
+        _production_group_profile(_production_honor_options(hand[27:34])),
+    )
+    for group in groups:
+        combined: dict[tuple[int, int], int] = {}
+        for (melds, has_head), taatsu in states.items():
+            for add_melds, add_taatsu, add_heads in group:
+                total_melds = melds + add_melds
+                if total_melds > 5:
+                    continue
+                key = (total_melds, min(1, has_head + add_heads))
+                combined[key] = max(
+                    combined.get(key, -1),
+                    taatsu + add_taatsu,
+                )
+        states = combined
+    best = max(
+        2 * melds + min(taatsu, 5 - melds) + has_head
+        for (melds, has_head), taatsu in states.items()
+    )
+    return 10 - best
+
+
+@lru_cache(maxsize=None)
+def _production_honor_options(
+    honors: tuple[int, ...],
+) -> tuple[tuple[int, int, int], ...]:
+    return _honor_options(honors)
+
+
+@lru_cache(maxsize=100_000)
+def _production_discard_analysis(
+    hand17: tuple[int, ...],
+    melds_declared: int,
+) -> tuple[tuple[int, tuple[int, ...]], ...]:
+    """Cache the hand-only part of the rollout policy's ukeire comparison."""
+    candidates: list[tuple[int, tuple[int, ...]]] = []
+    best_shanten = 11
+    for tile, count in enumerate(hand17):
+        if not count:
+            continue
+        reduced = list(hand17)
+        reduced[tile] -= 1
+        after = tuple(reduced)
+        after_shanten = _production_shanten(after, melds_declared)
+        if after_shanten < best_shanten:
+            best_shanten = after_shanten
+            candidates = [(tile, after)]
+        elif after_shanten == best_shanten:
+            candidates.append((tile, after))
+
+    analyzed = []
+    for tile, after in candidates:
+        improving = []
+        for draw, count in enumerate(after):
+            if count >= 4:
+                continue
+            next_hand = list(after)
+            next_hand[draw] += 1
+            if _production_shanten(tuple(next_hand), melds_declared) < best_shanten:
+                improving.append(draw)
+        analyzed.append((tile, tuple(improving)))
+    return tuple(analyzed)
+
+
+def _production_discard_policy(
+    hand17: tuple[int, ...],
+    remaining: tuple[int, ...],
+    melds_declared: int,
+) -> int:
+    """Default deterministic rollout policy; realism is not yet validated."""
+    return max(
+        _production_discard_analysis(hand17, melds_declared),
+        key=lambda item: (
+            sum(remaining[draw] for draw in item[1]),
+            -item[0],
+        ),
+    )[0]
+
+
+def _copy_view_player(view: OpponentView | None) -> Player:
+    from .selfplay import Player
+
+    if view is None:
+        return Player("attack")
+    return Player(
+        "attack",
+        river=list(view.river),
+        melds=list(view.melds),
+        declared_at=view.declared_at,
+        dealer_streak=view.dealer_streak if view.is_dealer else 0,
+    )
+
+
+def _production_seats(
+    views: tuple[OpponentView, ...],
+    context_template: WinContext | WinValueContext | None,
+) -> tuple[int, tuple[OpponentView | None, ...], int]:
+    context, _, _ = _template(context_template)
+    acting_seat = 0 if context.dealer else 1
+    seats: list[OpponentView | None] = [None] * 4
+    remaining_seats = [seat for seat in range(4) if seat != acting_seat]
+    dealer_view = next((view for view in views if view.is_dealer), None)
+    if acting_seat != 0 and dealer_view is not None:
+        seats[0] = dealer_view
+        remaining_seats.remove(0)
+    for view in views:
+        if view is dealer_view and acting_seat != 0:
+            continue
+        if not remaining_seats:
+            raise ValueError("ev_rank accepts at most three opponents")
+        seats[remaining_seats.pop(0)] = view
+    dealer_streak = (
+        context.dealer_streak
+        if acting_seat == 0
+        else next(
+            (view.dealer_streak for view in views if view.is_dealer),
+            0,
+        )
+    )
+    return acting_seat, tuple(seats), dealer_streak
+
+
+def _sample_production_world(
+    hand: tuple[int, ...],
+    seen: tuple[int, ...],
+    views: tuple[OpponentView, ...],
+    turns: int,
+    context_template: WinContext | WinValueContext | None,
+    world_seed: int,
+) -> _TrialWorld:
+    from .selfplay import Player
+
+    acting_seat, seat_views, dealer_streak = _production_seats(
+        views, context_template,
+    )
+    context, actor_melds, actor_kongs = _template(context_template)
+    players = [_copy_view_player(view) for view in seat_views]
+    players[acting_seat] = Player(
+        "attack",
+        list(hand),
+        melds=list(actor_melds),
+        dealer_streak=dealer_streak if acting_seat == 0 else 0,
+        kongs=list(actor_kongs),
+    )
+    pool = [
+        tile
+        for tile in range(34)
+        for _ in range(4 - hand[tile] - seen[tile])
+    ]
+    rng = random.Random(world_seed)
+    rng.shuffle(pool)
+    offset = 0
+    for seat, player in enumerate(players):
+        if seat == acting_seat:
+            continue
+        view = seat_views[seat]
+        concealed = (
+            view.hand_count
+            if view is not None and view.hand_count > 0
+            else 16 - 3 * len(player.melds)
+        )
+        if concealed < 0 or offset + concealed > len(pool):
+            raise ValueError("visible state leaves too few tiles for opponent hands")
+        for tile in pool[offset:offset + concealed]:
+            player.hand[tile] += 1
+        offset += concealed
+    wall = tuple(pool[offset:offset + min(4 * turns, len(pool) - offset)])
+    return _TrialWorld(
+        tuple(players),
+        wall,
+        terminal_seed=rng.randrange(2**64),
+    )
+
+
+def _rollout_entry(
+    discard: int,
+    terminals: tuple[TerminalResult, ...],
+    acting_seat: int,
+    hidden_strata: tuple[int, ...] = (),
+) -> EVRankEntry:
+    payments = tuple(
+        float(terminal.deltas[acting_seat]) for terminal in terminals
+    )
+    moments = (
+        ClusteredSampleMoments.from_clustered_values(payments, hidden_strata)
+        if hidden_strata
+        else SampleMoments.from_values(payments)
+    )
+    interval = moments.ci95
+    low, high = (None, None) if interval is None else interval
+    actor_wins = tuple(
+        terminal
+        for terminal in terminals
+        if terminal.kind in ("self_tsumo", "self_ron")
+    )
+    attack_ev = sum(max(0.0, payment) for payment in payments) / moments.n
+    risk_ev = sum(max(0.0, -payment) for payment in payments) / moments.n
+    p_win = len(actor_wins) / moments.n
+    return EVRankEntry(
+        discard=discard,
+        p_win=p_win,
+        mean_win_value=(
+            None
+            if not actor_wins
+            else sum(result.value_units for result in actor_wins) / len(actor_wins)
+        ),
+        # Compatibility diagnostics derived from these same coherent payments;
+        # net_ev itself is never composed from them.
+        attack_ev=attack_ev,
+        opponent_losses=(),
+        risk_ev=risk_ev,
+        net_ev=moments.mean,
+        survival_adjusted_p_win=p_win,
+        p_draw=sum(result.kind == "draw" for result in terminals) / moments.n,
+        sample_count=moments.n,
+        win_count=len(actor_wins),
+        value_sum=moments.total,
+        value_sum_squares=moments.sum_squares,
+        standard_error=moments.standard_error,
+        ci95_low=low,
+        ci95_high=high,
+        trial_values=payments,
+        trial_strata=hidden_strata,
+    )
+
+
 def ev_rank(
     counts17: tuple[int, ...] | list[int],
     opponents: tuple[OpponentView, ...] | list[OpponentView],
@@ -619,90 +938,187 @@ def ev_rank(
     declaration_eligible: bool = False,
     exhaustive: bool = False,
     reference_fixed_top_k: bool = False,
+    discard_policy: TerminalDiscardPolicy | None = None,
+    rollout_players: Sequence[Player] | None = None,
+    rollout_wall: Sequence[int] | None = None,
+    acting_seat: int | None = None,
+    next_seat: int | None = None,
+    dealer_streak: int | None = None,
+    rules: RulesConfig = DEFAULT_RULES,
+    _target_discard: int | None = None,
 ) -> list[EVRankEntry]:
-    """Rank candidates by policy EV.
+    """Rank discards by mean signed actor payment from terminal rollouts.
 
-    The production default uses two-stage confidence-bound screening.
-    ``exhaustive`` is an opt-in reference mode that evaluates every legal discard under one
-    CRN seed. ``reference_fixed_top_k`` reproduces the pre-MJ-008 selector for
-    benchmark attribution only; neither reference flag is used by production.
+    Every candidate sample is one call to :func:`resolve_terminal`, hence one
+    coherent game with one mutually exclusive terminal. Candidates share trial
+    worlds and random streams (CRN). ``discard_policy`` remains injectable
+    because corpus agreement with the oracle certifies rollout machinery only,
+    not the realism of the default production opponent model.
+
+    Supplying ``rollout_players`` and ``rollout_wall`` injects a fully known
+    state for machinery validation. Short injected walls (up to four tiles)
+    use every physical draw order before repeating, eliminating shallow-gate
+    sampling error while retaining the actual payment sample for uncertainty.
     """
-    if top_k < 1:
-        raise ValueError("top_k must be >= 1")
+    if top_k < 1 or sims < 1 or turns < 0:
+        raise ValueError("top_k and sims must be positive and turns non-negative")
+    from .rollout import resolve_terminal
+
+    if (rollout_players is None) != (rollout_wall is None):
+        raise ValueError("rollout_players and rollout_wall must be supplied together")
     hand = validate_counts(counts17)
     seen = validate_counts(visible)
+    if any(hand[tile] + seen[tile] > 4 for tile in range(34)):
+        raise ValueError("hand and visible tiles exceed four physical copies")
     views = tuple(opponents)
     analyses = discard_analysis(hand, melds_declared, seen)
+    target_analysis = None
+    if _target_discard is not None:
+        target_analysis = next(
+            (
+                analysis
+                for analysis in analyses
+                if analysis.discard == _target_discard
+            ),
+            None,
+        )
+        if target_analysis is None:
+            raise ValueError("discard must be present in the acting hand")
     ranked_danger: list[tuple[object, float]] = []
     for analysis in analyses:
         post = list(hand)
         post[analysis.discard] -= 1
         max_danger = max((danger_score(analysis.discard, view, seen, tuple(post)).score for view in views), default=0.0)
         ranked_danger.append((analysis, max_danger))
-    survival = survival_by_turn(turns, views, own_river)
-    # CRN (common random numbers) reduces variance in differences between
-    # candidates: identical randomness cancels shared sampling noise. Each
-    # absolute EV still has Monte Carlo error that only more sims reduces.
     base_seed = random.randrange(2**64) if seed is None else seed
+    policy = _production_discard_policy if discard_policy is None else discard_policy
+
+    worlds: list[_TrialWorld] = []
+    if rollout_players is not None and rollout_wall is not None:
+        injected_players = tuple(rollout_players)
+        if len(injected_players) != 4:
+            raise ValueError("rollout_players must contain exactly four players")
+        resolved_acting = 0 if acting_seat is None else acting_seat
+        resolved_next = (
+            (resolved_acting + 1) % 4 if next_seat is None else next_seat
+        )
+        resolved_streak = 0 if dealer_streak is None else dealer_streak
+        wall = tuple(rollout_wall)
+        orders = (
+            tuple(permutations(wall))
+            if len(wall) <= 4
+            else ()
+        )
+        if orders:
+            offset = base_seed % len(orders)
+            for trial in range(sims):
+                worlds.append(_TrialWorld(
+                    injected_players,
+                    wall,
+                    wall_order=orders[(offset + trial) % len(orders)],
+                ))
+        else:
+            rng = random.Random(base_seed)
+            worlds = [
+                _TrialWorld(
+                    injected_players,
+                    wall,
+                    terminal_seed=rng.randrange(2**64),
+                )
+                for _ in range(sims)
+            ]
+    else:
+        resolved_acting, _, resolved_streak = _production_seats(
+            views, context_template,
+        )
+        resolved_next = (resolved_acting + 1) % 4
+        rng = random.Random(base_seed)
+        hidden_worlds = [
+            replace(
+                _sample_production_world(
+                    hand,
+                    seen,
+                    views,
+                    turns,
+                    context_template,
+                    rng.randrange(2**64),
+                ),
+                hidden_stratum=stratum,
+            )
+            for stratum in range(min(sims, PRODUCTION_HIDDEN_WORLD_STRATA))
+        ]
+        # Balanced reuse of a bounded set of hidden-hand determinizations keeps
+        # the opponent-model integration affordable and cache-friendly. Wall
+        # randomness remains fresh per trial, and all candidates share both
+        # layers as CRN.
+        worlds = [
+            replace(
+                hidden_worlds[trial % len(hidden_worlds)],
+                terminal_seed=rng.randrange(2**64),
+            )
+            for trial in range(sims)
+        ]
+
+    terminal_cache: dict[int, list[TerminalResult]] = {}
 
     def evaluate(analysis, budget: int) -> EVRankEntry:
-        post = list(hand)
-        post[analysis.discard] -= 1
-        attack_visible = list(seen)
-        attack_visible[analysis.discard] += 1
-        if declaration_eligible and shanten(tuple(post), melds_declared) == 0:
-            advice = declaration_ev(
-                tuple(post), tuple(attack_visible), turns, context_template, budget,
-                base_seed, views, scheme, own_river,
+        terminals = terminal_cache.setdefault(analysis.discard, [])
+        for world in worlds[len(terminals):budget]:
+            terminal_rng = (
+                _OrderedWallRandom(world.wall, world.wall_order)
+                if world.wall_order is not None
+                else random.Random(world.terminal_seed)
             )
-            attack = advice.declared if advice.should_declare else advice.undeclared
-        else:
-            attack = _discounted_win_estimate(
-                tuple(post), turns, melds_declared, tuple(attack_visible), budget, base_seed, context_template, survival, scheme,
-            )
-        immediate = _discard_losses(
-            analysis.discard, tuple(post), seen, views, calibration, scheme,
+            terminals.append(resolve_terminal(
+                world.players,
+                world.wall,
+                resolved_acting,
+                resolved_next,
+                analysis.discard,
+                policy,
+                terminal_rng,
+                dealer_streak=resolved_streak,
+                scheme=scheme,
+                rules=rules,
+            ))
+        hidden_strata = tuple(
+            world.hidden_stratum
+            for world in worlds[:budget]
+            if world.hidden_stratum is not None
         )
-        future, future_trials = _future_policy_losses(
-            attack.traces, views, calibration, scheme, survival,
-        )
-        return _entry_from_policy(
-            analysis.discard, attack, immediate, future, future_trials,
+        return _rollout_entry(
+            analysis.discard,
+            tuple(terminals[:budget]),
+            resolved_acting,
+            hidden_strata,
         )
 
+    if target_analysis is not None:
+        return [evaluate(target_analysis, sims)]
+
+    fold_discard = _fold_choice(hand, seen, views, calibration, scheme)
     if exhaustive:
         entries = [evaluate(analysis, sims) for analysis, _ in ranked_danger]
     elif reference_fixed_top_k:
-        selected = ranked_danger[:top_k]
-        baseline = min((danger for _, danger in selected), default=0.0)
-        selected.extend(
-            item for item in ranked_danger[top_k:]
-            if item[1] < baseline
-        )
+        # Legacy benchmark selector retained only for historical attribution.
         entries = [
             evaluate(analysis, sims)
-            for analysis, _ in selected[:top_k + 2]
+            for analysis, _ in ranked_danger[:top_k + 2]
         ]
     else:
-        # MJ-008 reference corpus missed top-1 under fixed top-k.  Stage one
-        # therefore gives every legal discard a small same-CRN pilot. Stage two
-        # spends the requested budget only on candidates whose conservative
-        # confidence bound can still beat the best lower bound.
-        pilot_sims = min(sims, 4)
+        pilot_sims = min(sims, 24)
         pilots = [
             (analysis, evaluate(analysis, pilot_sims))
             for analysis, _ in ranked_danger
         ]
 
         def radius(entry: EVRankEntry) -> float:
-            # A floor prevents a zero-win pilot from claiming zero uncertainty.
             floor = 0.50 / max(1.0, pilot_sims ** 0.5)
-            return 1.959963984540054 * max(entry.standard_error, floor)
+            return 1.959963984540054 * max(
+                entry.standard_error or 0.0, floor,
+            )
 
-        best_lower = max(
-            entry.net_ev - radius(entry)
-            for _, entry in pilots
-        )
+        best_lower = max(entry.net_ev - radius(entry) for _, entry in pilots)
         screened = [
             (analysis, entry)
             for analysis, entry in pilots
@@ -713,24 +1129,64 @@ def ev_rank(
                 pilots,
                 key=lambda item: (-item[1].net_ev, item[1].discard),
             )[:min(top_k, len(pilots))]
+        else:
+            screened = sorted(
+                screened,
+                key=lambda item: (-item[1].net_ev, item[1].discard),
+            )[:top_k]
+        if all(
+            analysis.discard != fold_discard
+            for analysis, _ in screened
+        ):
+            screened.append(next(
+                item
+                for item in pilots
+                if item[0].discard == fold_discard
+            ))
         entries = (
             [entry for _, entry in screened]
             if pilot_sims == sims
             else [evaluate(analysis, sims) for analysis, _ in screened]
         )
 
-    entries.append(evaluate_fold_policy(
-        hand,
-        views,
-        seen,
-        melds_declared,
-        turns,
-        sims,
-        base_seed,
-        context_template,
-        calibration,
-        scheme,
-        own_river,
+    fold_entry = next(
+        (entry for entry in entries if entry.discard == fold_discard),
+        None,
+    )
+    if fold_entry is None or fold_entry.sample_count != sims:
+        fold_analysis = next(
+            analysis
+            for analysis, _ in ranked_danger
+            if analysis.discard == fold_discard
+        )
+        fold_entry = evaluate(fold_analysis, sims)
+    safe_inventory = tuple(
+        tile for tile, count in enumerate(hand) if count
+        and sum(_discard_losses(
+            tile,
+            tuple(
+                count - 1 if index == tile else value
+                for index, value in enumerate(hand)
+            ),
+            seen,
+            views,
+            calibration,
+            scheme,
+        )) == 0.0
+    )
+    entries.append(replace(
+        fold_entry,
+        is_fold=True,
+        label="defense_policy",
+        action_plan=FoldActionPlan(
+            fold_discard,
+            safe_inventory,
+            (
+                "genbutsu_first",
+                "minimum_conditional_loss_for_opening_discard",
+                "preserve_safe_inventory",
+            ),
+        ),
     ))
     return sorted(entries, key=lambda entry: (entry.is_fold, -entry.net_ev, entry.discard))
 
@@ -750,43 +1206,25 @@ def evaluate_discard(
     own_river: tuple[RiverEntry | int, ...] | list[RiverEntry | int] = (),
     declaration_eligible: bool = False,
 ) -> EVRankEntry:
-    """Net-EV of one discard using the exact discounted-attack, survival, and
-    CRN-seed logic of :func:`ev_rank`'s per-candidate body.
-
-    This lets a caller re-estimate an already-selected candidate at a higher
-    ``sims`` budget while sharing the ranking's CRN ``seed`` — so the difference
-    between two re-estimated candidates stays variance-reduced, but each one's
-    absolute Monte Carlo error shrinks ~``sqrt(cheap_sims / sims)``. It does not
-    re-rank or re-simulate the whole candidate set.
-    """
-    hand = validate_counts(counts17)
-    seen = validate_counts(visible)
-    views = tuple(opponents)
-    survival = survival_by_turn(turns, views, own_river)
-    base_seed = random.randrange(2**64) if seed is None else seed
-    post = list(hand)
-    post[discard] -= 1
-    attack_visible = list(seen)
-    attack_visible[discard] += 1
-    if declaration_eligible and shanten(tuple(post), melds_declared) == 0:
-        advice = declaration_ev(
-            tuple(post), tuple(attack_visible), turns, context_template, sims,
-            base_seed, views, scheme, own_river,
-        )
-        attack = advice.declared if advice.should_declare else advice.undeclared
-    else:
-        attack = _discounted_win_estimate(
-            tuple(post), turns, melds_declared, tuple(attack_visible), sims, base_seed, context_template, survival, scheme,
-        )
-    immediate = _discard_losses(
-        discard, tuple(post), seen, views, calibration, scheme,
+    """Return one candidate from the same coherent terminal path as ev_rank."""
+    ranked = ev_rank(
+        counts17,
+        opponents,
+        visible,
+        melds_declared,
+        turns,
+        sims,
+        seed,
+        context_template,
+        calibration,
+        top_k=34,
+        scheme=scheme,
+        own_river=own_river,
+        declaration_eligible=declaration_eligible,
+        exhaustive=True,
+        _target_discard=discard,
     )
-    future, future_trials = _future_policy_losses(
-        attack.traces, views, calibration, scheme, survival,
-    )
-    return _entry_from_policy(
-        discard, attack, immediate, future, future_trials,
-    )
+    return ranked[0]
 
 
 def evaluate_fold_policy(
@@ -802,69 +1240,22 @@ def evaluate_fold_policy(
     scheme: ScoringScheme = DEFAULT_SCHEME,
     own_river: tuple[RiverEntry | int, ...] | list[RiverEntry | int] = (),
 ) -> EVRankEntry:
-    """Evaluate the executable defense policy at a chosen MC budget."""
-    hand = validate_counts(counts17)
-    seen = validate_counts(visible)
-    views = tuple(opponents)
-    survival = survival_by_turn(turns, views, own_river)
-    base_seed = random.randrange(2**64) if seed is None else seed
-    discard = _fold_choice(hand, seen, views, calibration, scheme)
-    post = list(hand)
-    post[discard] -= 1
-    attack_visible = list(seen)
-    attack_visible[discard] += 1
-    attack = _discounted_win_estimate(
-        tuple(post),
-        turns,
+    """Evaluate the defense opening through the coherent terminal path."""
+    return next(entry for entry in ev_rank(
+        counts17,
+        opponents,
+        visible,
         melds_declared,
-        tuple(attack_visible),
+        turns,
         sims,
-        base_seed,
+        seed,
         context_template,
-        survival,
-        scheme,
-        _fold_policy(views, calibration, scheme),
-    )
-    immediate = _discard_losses(
-        discard, tuple(post), seen, views, calibration, scheme,
-    )
-    future, future_trials = _future_policy_losses(
-        attack.traces, views, calibration, scheme, survival,
-    )
-    safe_inventory = tuple(
-        tile
-        for tile, count in enumerate(hand)
-        if count
-        and sum(_discard_losses(
-            tile,
-            tuple(
-                count - 1 if index == tile else value
-                for index, value in enumerate(hand)
-            ),
-            seen,
-            views,
-            calibration,
-            scheme,
-        )) == 0.0
-    )
-    return _entry_from_policy(
-        discard,
-        attack,
-        immediate,
-        future,
-        future_trials,
-        is_fold=True,
-        label="defense_policy",
-        action_plan=FoldActionPlan(
-            discard,
-            safe_inventory,
-            (
-                "genbutsu_first",
-                "minimum_conditional_loss_each_turn",
-                "preserve_safe_inventory",
-            ),
-        ),
-    )
+        calibration,
+        top_k=34,
+        scheme=scheme,
+        own_river=own_river,
+        exhaustive=True,
+    ) if entry.is_fold)
 
 
 def declaration_ev(

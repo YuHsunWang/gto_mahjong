@@ -99,18 +99,22 @@ def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monk
 
 
 def test_calibration_hash_is_in_quiz_cache_key_and_same_hash_reproduces(monkeypatch):
+    # ``_rank`` is the displayed ranking and is keyed through
+    # ``_display_rank_cached`` at REFINE_SIMS; ``_rank_cached`` now only backs
+    # ``_screen_rank``. Watch the cache this call actually consults.
     monkeypatch.setattr(quiz, "EV_SIMS", 2)
-    quiz._rank_cached.cache_clear()
+    monkeypatch.setattr(quiz, "REFINE_SIMS", 2)
+    quiz._display_rank_cached.cache_clear()
     position = next(api.play_trainer(1)).position
     first = _context("hash-a", 0.01)
     second = _context("hash-b", 0.20)
 
     ranked_a = quiz._rank(position, analysis=first)
-    after_a = quiz._rank_cached.cache_info()
+    after_a = quiz._display_rank_cached.cache_info()
     assert quiz._rank(position, analysis=first) == ranked_a
-    after_repeat = quiz._rank_cached.cache_info()
+    after_repeat = quiz._display_rank_cached.cache_info()
     quiz._rank(position, analysis=second)
-    after_b = quiz._rank_cached.cache_info()
+    after_b = quiz._display_rank_cached.cache_info()
 
     assert after_repeat.hits == after_a.hits + 1
     assert after_b.misses == after_repeat.misses + 1

@@ -39,13 +39,11 @@ MAX_ATTEMPTS = 80
 # Fixed quiz evaluation budget.  The position seed is transformed below and
 # passed to every EV call, so Monte Carlo sampling remains reproducible.
 #
-# Two-stage evaluation: EV_SIMS is the cheap budget used to rank every
-# candidate and pick the list and its order (CRN stabilises that ranking).
-# REFINE_SIMS is spent only on the two candidates that decide a grade — the
-# rank-best and the one the player chose — re-estimated under the same CRN
-# base seed. That cuts the verdict/ev_delta sampling noise to ~sqrt(EV_SIMS/
-# REFINE_SIMS) without paying the high budget on all 5-7 candidates. The
-# absolute EVs still carry Monte Carlo error that only more sims can reduce.
+# Two-stage evaluation: EV_SIMS is the cheap budget used only to find suitable
+# teaching positions. The ranking shown to the player uses REFINE_SIMS, which
+# is also the base grading tier, so the displayed order and verdict compare the
+# same estimates. The hidden-world layer remains capped at the production
+# stratum count and is reflected separately in the reported SE.
 EV_SIMS = 24
 REFINE_SIMS = 200
 EV_TOP_K = 5
@@ -380,18 +378,50 @@ def _rank_cached(position: QuizPosition, analysis: AnalysisContext) -> tuple[EVR
     ))
 
 
+@lru_cache(maxsize=256)
+def _display_rank_cached(position: QuizPosition, analysis: AnalysisContext) -> tuple[EVRankEntry, ...]:
+    return tuple(ev_rank(
+        position.hand,
+        [opponent.view() for opponent in position.opponents],
+        position.public_counts,
+        len(position.own_melds) + len(position.own_kongs),
+        position.draws_remaining,
+        REFINE_SIMS,
+        _evaluation_seed(position),
+        _score_template(position),
+        calibration=analysis.calibration.calibration,
+        top_k=EV_TOP_K,
+        scheme=analysis.game.scheme,
+        own_river=position.own_river,
+        declaration_eligible=position.migi_eligible,
+    ))
+
+
+def _screen_rank(
+    position: QuizPosition,
+    analysis: AnalysisContext,
+) -> tuple[EVRankEntry, ...]:
+    return tuple(
+        entry for entry in _rank_cached(
+            replace(position, candidate_ev_gap=0.0),
+            analysis,
+        )
+        if not entry.is_fold
+    )
+
+
 def _rank(
     position: QuizPosition,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     analysis: AnalysisContext | None = None,
 ) -> tuple[EVRankEntry, ...]:
-    """Cheap EV ranking keyed by the fixed analysis context.
+    """Displayed refined EV ranking keyed by the fixed analysis context.
 
     The display-only gap is removed from the position key; scheme and
     calibration identity remain in the immutable context key.
     """
     return tuple(
-        entry for entry in _rank_cached(
+        entry for entry in _display_rank_cached(
             replace(position, candidate_ev_gap=0.0),
             _analysis_context(scheme, analysis),
         )
@@ -404,7 +434,7 @@ def _full_rank(
     scheme: ScoringScheme = DEFAULT_SCHEME,
     analysis: AnalysisContext | None = None,
 ) -> tuple[EVRankEntry, ...]:
-    return _rank_cached(
+    return _display_rank_cached(
         replace(position, candidate_ev_gap=0.0),
         _analysis_context(scheme, analysis),
     )
@@ -415,7 +445,7 @@ def best_discard(
     scheme: ScoringScheme = DEFAULT_SCHEME,
     analysis: AnalysisContext | None = None,
 ) -> int:
-    """Return the cheap ranking's best discard, equal to ``grade().best.discard``."""
+    """Return the displayed ranking's best discard, equal to ``grade().best.discard``."""
     return _rank(position, scheme, analysis)[0].discard
 
 
@@ -445,7 +475,10 @@ def generate_position(
             position = _position_from(snapshot, game_seed)
             if not _interesting(position):
                 continue
-            ranked = _rank(position, analysis=analysis)
+            ranked = _screen_rank(
+                position,
+                _analysis_context(analysis=analysis),
+            )
             gap = ranked[0].net_ev - ranked[-1].net_ev
             if gap >= EV_GAP_MIN:
                 return replace(position, candidate_ev_gap=gap)
@@ -460,8 +493,8 @@ def _refine(
     analysis: AnalysisContext | None = None,
 ) -> EVRankEntry:
     """Re-estimate one discard at ``sims`` sims, sharing the ranking's CRN base
-    seed so the best/chosen difference stays variance-reduced while its absolute
-    Monte Carlo error shrinks ~``sqrt(EV_SIMS / sims)``."""
+    seed so the best/chosen difference stays variance-reduced while additional
+    trials reduce the within-hidden-world wall component of Monte Carlo error."""
     context = _analysis_context(scheme, analysis)
     return evaluate_discard(
         position.hand,
@@ -486,11 +519,12 @@ def grade(
     scheme: ScoringScheme = DEFAULT_SCHEME,
     analysis: AnalysisContext | None = None,
 ) -> QuizGrade:
-    """Grade a legal discard under the 底/台 ``scheme``: rank candidates cheaply,
-    decide the verdict from the rank-best and chosen candidates re-estimated at
-    REFINE_SIMS, and only when that ev_delta sits on a verdict boundary
-    re-estimate both at the higher ESCALATE_SIMS — so the extra budget is spent
-    solely on borderline verdicts."""
+    """Grade a legal discard under the 底/台 ``scheme``.
+
+    The displayed rank and base verdict share REFINE_SIMS estimates. Only when
+    that ev_delta sits on a verdict boundary are the deciding pair re-estimated
+    at ESCALATE_SIMS.
+    """
     if not isinstance(chosen_tile, int) or isinstance(chosen_tile, bool) or not 0 <= chosen_tile < 34:
         raise ValueError("chosen tile must be an index from 0 through 33")
     if not position.hand[chosen_tile]:
@@ -502,20 +536,45 @@ def grade(
         (entry for entry in full_ranked if entry.is_fold),
         None,
     )
+    rank_position = next((index for index, entry in enumerate(ranked, start=1) if entry.discard == chosen_tile), None)
+    chosen_refined = next(
+        (entry for entry in ranked if entry.discard == chosen_tile),
+        None,
+    )
+    if chosen_refined is None:
+        chosen_refined = _refine(
+            position,
+            chosen_tile,
+            REFINE_SIMS,
+            analysis=context,
+        )
+        ranked = tuple(sorted(
+            (*ranked, chosen_refined),
+            key=lambda entry: (-entry.net_ev, entry.discard),
+        ))
+        rank_position = next(
+            index
+            for index, entry in enumerate(ranked, start=1)
+            if entry.discard == chosen_tile
+        )
     top_gap = (
         paired_delta_moments(ranked[0], ranked[1])
         if len(ranked) >= 2
         else SampleMoments()
     )
-    rank_position = next((index for index, entry in enumerate(ranked, start=1) if entry.discard == chosen_tile), None)
-    # The verdict comes from two same-CRN-seed estimates; the ranked table keeps
-    # its cheaper EV_SIMS values. Choosing the rank-best tile is an exact tie
-    # (ev_delta 0), never escalated or flagged marginal.
+
+    # Choosing the displayed rank-best tile is an exact tie (ev_delta 0), never
+    # escalated or flagged marginal.
     if chosen_tile == ranked[0].discard:
-        best = chosen = _refine(position, ranked[0].discard, REFINE_SIMS, analysis=context)
+        best = chosen = ranked[0]
         outcome = Verdict.exact_tie(REFINE_SIMS)
     else:
         def estimate(sims: int) -> tuple[float, tuple[EVRankEntry, EVRankEntry]]:
+            if sims == REFINE_SIMS:
+                return (
+                    ranked[0].net_ev - chosen_refined.net_ev,
+                    (ranked[0], chosen_refined),
+                )
             best_entry = _refine(position, ranked[0].discard, sims, analysis=context)
             chosen_entry = _refine(position, chosen_tile, sims, analysis=context)
             return best_entry.net_ev - chosen_entry.net_ev, (best_entry, chosen_entry)

@@ -1,5 +1,6 @@
 """Known-answer tests for M5b tai-unit EV approximations."""
 
+from dataclasses import replace
 from math import comb
 
 import pytest
@@ -16,7 +17,14 @@ from taimahjong.ev import (
     remaining_draws,
     TileAccounting,
 )
+from taimahjong.reference_ev import (
+    _policy_discard,
+    evaluate_candidate,
+    representative_reference_cases,
+    standard_small_wall_state,
+)
 from taimahjong.scoring import EARTHLY_TAI, HEAVENLY_TAI, WinContext, score_hand
+from taimahjong.selfplay import Player
 from taimahjong.tiles import parse_tiles
 
 
@@ -57,29 +65,65 @@ def test_part0_confirmed_scoring_totals():
     assert score_hand(parse_tiles("22z"), melds, WinContext(_tile("2z"))).total_tai == 4
 
 
-def test_ev_rank_is_seed_deterministic_and_attack_only_orders_by_attack_ev():
+def test_ev_rank_is_seed_deterministic_and_net_ev_is_signed_payment_mean():
     first = ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19)
     assert first == ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19)
     real = [entry for entry in first if not entry.is_fold]
-    assert [entry.attack_ev for entry in real] == sorted(
-        (entry.attack_ev for entry in real),
-        reverse=True,
+    assert [entry.net_ev for entry in real] == sorted(
+        (entry.net_ev for entry in real), reverse=True,
     )
-    assert all(entry.risk_ev == 0 for entry in first)
+    assert all(
+        entry.net_ev == sum(entry.trial_values) / entry.sample_count
+        for entry in first
+    )
+    assert all(
+        entry.net_ev == pytest.approx(entry.attack_ev - entry.risk_ev)
+        for entry in first
+    )
 
 
-def test_declared_safe_discard_dominates_equal_efficiency_risky_discard():
-    # 3m and 2p both leave shanten 0 with four ukeire; only 3m is discarded
-    # after the opponent's declaration and therefore hard-excluded by M4a+.
-    opponent = OpponentView(parse_river("1m3m"), [], declared_at=0)
-    visible = _visible_with_opponent(opponent)
-    entries = ev_rank(POST_DRAW, [opponent], visible, turns=1, sims=400, seed=11, top_k=10)
-    by_tile = {entry.discard: entry for entry in entries}
-    safe, risky = by_tile[_tile("3m")], by_tile[_tile("2p")]
-    # The first 3m is genbutsu; total policy risk can still be non-zero after
-    # the next draw because MJ-007 now prices the policy's subsequent discard.
-    assert risky.risk_ev > 0
-    assert safe.net_ev > risky.net_ev
+def test_immediate_actor_deal_in_is_a_negative_terminal_payment():
+    state = standard_small_wall_state(wall=())
+    references = list(state.players)
+    references[2] = replace(
+        references[2],
+        hand=parse_tiles("123456m123p123s333z6z"),
+    )
+    state = replace(state, players=tuple(references))
+    players = tuple(
+        Player(
+            "attack",
+            list(reference.hand),
+            declared_at=reference.declared_at,
+        )
+        for reference in state.players
+    )
+
+    entries = ev_rank(
+        state.players[state.acting_seat].hand,
+        (),
+        (0,) * 34,
+        turns=0,
+        sims=2,
+        seed=11,
+        scheme=state.scheme,
+        exhaustive=True,
+        discard_policy=_policy_discard,
+        rollout_players=players,
+        rollout_wall=state.wall,
+        acting_seat=state.acting_seat,
+        next_seat=state.next_seat,
+        dealer_streak=state.dealer_streak,
+    )
+    deal_in = next(
+        entry for entry in entries
+        if not entry.is_fold and entry.discard == _tile("6z")
+    )
+
+    assert deal_in.net_ev < 0
+    assert deal_in.attack_ev == 0
+    assert deal_in.risk_ev == -deal_in.net_ev
+    assert len(set(deal_in.trial_values)) == 1
 
 
 def test_declaration_dead_wait_is_zero_and_not_recommended():
@@ -149,17 +193,56 @@ def test_explicit_wall_and_derived_accounting_return_the_same_turns():
     )
 
 
-def test_opponent_hazard_survival_strictly_reduces_attack_ev_and_net_ev():
-    opponent = OpponentView(parse_river("123456789m123456789p"), [], None)
-    visible = _visible_with_opponent(opponent)
-    safe = {entry.discard: entry for entry in ev_rank(POST_DRAW, [], visible, turns=3, sims=80, seed=19, top_k=10) if not entry.is_fold}
-    threatened = {
-        entry.discard: entry
-        for entry in ev_rank(POST_DRAW, [opponent], visible, turns=3, sims=80, seed=19, top_k=10)
-        if not entry.is_fold
+def test_opponent_tsumo_payment_is_included_in_actor_ev():
+    case = next(
+        case
+        for case in representative_reference_cases()
+        if case.strata.branch_character == "opponent-tsumo"
+    )
+    exact = {
+        discard: evaluate_candidate(case.state, discard)
+        for discard in case.state.legal_discards
     }
-    assert all(threatened[tile].attack_ev < entry.attack_ev for tile, entry in safe.items() if entry.attack_ev > 0)
-    assert all(threatened[tile].net_ev < entry.net_ev for tile, entry in safe.items() if entry.attack_ev > 0)
+    target = next(
+        discard
+        for discard, evaluation in exact.items()
+        if any(
+            outcome.outcome.kind == "opponent_tsumo"
+            and outcome.outcome.payment.deltas[case.state.acting_seat] < 0
+            for outcome in evaluation.outcomes
+        )
+    )
+    players = tuple(
+        Player(
+            "attack",
+            list(reference.hand),
+            declared_at=reference.declared_at,
+        )
+        for reference in case.state.players
+    )
+    entry = next(
+        entry
+        for entry in ev_rank(
+            case.state.players[case.state.acting_seat].hand,
+            (),
+            (0,) * 34,
+            turns=1,
+            sims=24,
+            seed=case.seed,
+            scheme=case.state.scheme,
+            exhaustive=True,
+            discard_policy=_policy_discard,
+            rollout_players=players,
+            rollout_wall=case.state.wall,
+            acting_seat=case.state.acting_seat,
+            next_seat=case.state.next_seat,
+            dealer_streak=case.state.dealer_streak,
+        )
+        if not entry.is_fold and entry.discard == target
+    )
+
+    assert entry.net_ev == float(exact[target].actor_ev)
+    assert any(payment < 0 for payment in entry.trial_values)
 
 
 def test_folded_opponent_contributes_zero_hazard():
@@ -177,45 +260,74 @@ def test_own_river_can_make_an_opponent_folded_for_survival_hazard():
     assert opponent_hazards([target], own_river)[0] == 0.0
 
 
-def test_zero_hazard_attack_ev_is_exactly_the_pre_m7_value():
-    entries = [entry for entry in ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19) if not entry.is_fold]
-    sample = entries[0]
-    post = list(POST_DRAW)
-    post[sample.discard] -= 1
-    attack_visible = [0] * 34
-    attack_visible[sample.discard] = 1
-    previous = estimate_win_value(tuple(post), 3, visible=attack_visible, sims=80, seed=19)
-    assert sample.attack_ev == previous.expected_win_ev
-    assert sample.survival_adjusted_p_win == previous.p_win
+def test_production_rank_does_not_call_legacy_attack_composition(monkeypatch):
+    def fail(*args, **kwargs):
+        raise AssertionError("legacy attack estimator entered production rank")
+
+    monkeypatch.setattr(ev, "_discounted_win_estimate", fail)
+    monkeypatch.setattr(ev, "_entry_from_policy", fail)
+
+    ranked = ev_rank(
+        POST_DRAW, [], (0,) * 34, turns=1, sims=2, seed=19, exhaustive=True,
+    )
+    assert ranked
 
 
-def test_ev_attack_pool_marks_each_candidate_discard_visible(monkeypatch):
-    hand = parse_tiles("123m123p123s11122z333z")
-    captured = {}
+def test_crn_reuses_the_same_wall_order_for_every_candidate(monkeypatch):
+    import taimahjong.rollout as rollout
 
-    def fake_estimate(
-        counts16, turns, melds_declared, visible, sims, seed,
-        context_template, survival, scheme, discard_policy=None,
+    state = standard_small_wall_state()
+    players = tuple(
+        Player(
+            "attack",
+            list(reference.hand),
+            declared_at=reference.declared_at,
+        )
+        for reference in state.players
+    )
+    choices = {}
+
+    def fake_terminal(
+        players, wall, acting_seat, next_seat, discard, discard_policy, rng,
+        **kwargs,
     ):
-        discard = next(tile for tile in range(34) if counts16[tile] < hand[tile])
-        captured[discard] = visible
-        return ev.WinValueEstimate(0.0, None, 0.0)
+        choices.setdefault(discard, []).append(
+            None if not wall else rng.randrange(len(wall))
+        )
+        return rollout.TerminalResult(
+            "draw", None, None, None, (0, 0, 0, 0), 0,
+        )
 
-    monkeypatch.setattr(ev, "_discounted_win_estimate", fake_estimate)
-    ev_rank(hand, [], (0,) * 34, turns=1, sims=1, seed=1, top_k=34)
+    monkeypatch.setattr(rollout, "resolve_terminal", fake_terminal)
+    ev_rank(
+        state.players[state.acting_seat].hand,
+        (),
+        (0,) * 34,
+        turns=1,
+        sims=12,
+        seed=47,
+        exhaustive=True,
+        discard_policy=_policy_discard,
+        rollout_players=players,
+        rollout_wall=state.wall,
+        acting_seat=state.acting_seat,
+        next_seat=state.next_seat,
+    )
 
-    assert captured[29][29] == 1
-    assert sum(captured[29]) == 1
+    schedules = [schedule[:12] for schedule in choices.values()]
+    assert schedules
+    assert all(schedule == schedules[0] for schedule in schedules[1:])
 
 
-def test_draw_value_shifts_net_ev_by_exact_draw_term(monkeypatch):
+def test_legacy_draw_value_cannot_change_zero_payment_draw_terminals(monkeypatch):
     baseline = {entry.discard: entry for entry in ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19) if not entry.is_fold}
     assert DRAW_VALUE == 0.0
     monkeypatch.setattr(ev, "DRAW_VALUE", 2.5)
     shifted = {entry.discard: entry for entry in ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19) if not entry.is_fold}
     for tile, before in baseline.items():
         after = shifted[tile]
-        assert after.net_ev - before.net_ev == after.p_draw * 2.5
+        assert after.trial_values == before.trial_values
+        assert after.net_ev == before.net_ev
 
 
 def test_defense_policy_is_last_labeled_and_has_an_executable_first_discard():

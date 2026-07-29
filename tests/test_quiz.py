@@ -8,6 +8,7 @@ import pytest
 
 import taimahjong.quiz as quiz
 from taimahjong.ev import EVRankEntry, evaluate_discard
+from taimahjong.moments import SampleMoments
 from taimahjong.quiz import (
     ESCALATE_SIMS,
     EV_GAP_MIN,
@@ -19,6 +20,7 @@ from taimahjong.quiz import (
     QuizGrade,
     Verdict,
     _component_lines,
+    _display_rank_cached,
     _evaluation_seed,
     _rank,
     _rank_cached,
@@ -131,11 +133,12 @@ def test_single_legal_candidate_has_no_paired_gap(position, monkeypatch):
 
 
 def test_rank_cache_normalizes_candidate_ev_gap():
-    _rank_cached.cache_clear()
+    _display_rank_cached.cache_clear()
     generated = generate_position(1)
-    before = _rank_cached.cache_info()
+    _rank(generated)
+    before = _display_rank_cached.cache_info()
     grade(generated, generated.drawn_tile)
-    after = _rank_cached.cache_info()
+    after = _display_rank_cached.cache_info()
     assert after.hits >= before.hits + 1
 
 
@@ -175,8 +178,8 @@ def _refined(position, tile, sims):
 
 
 def test_grade_verdict_and_delta_come_from_two_same_seed_estimates(position):
-    # The verdict rests on the rank-best and chosen candidates re-estimated at
-    # the verdict's budget (shared CRN seed), not on the cheap ranked EVs.
+    # The displayed ranking and verdict share the same refined, same-seed
+    # estimates; an escalated boundary decision still re-estimates its pair.
     ranked = _rank(position)
     chosen_tile = ranked[-1].discard
     result = grade(position, chosen_tile)
@@ -185,8 +188,6 @@ def test_grade_verdict_and_delta_come_from_two_same_seed_estimates(position):
     assert result.best == _refined(position, ranked[0].discard, result.refined_sims)
     assert result.chosen == _refined(position, chosen_tile, result.refined_sims)
     assert result.ev_delta == result.best.net_ev - result.chosen.net_ev
-    # The displayed ranked table keeps its cheaper EV_SIMS values, so the refined
-    # best generally differs from the cheap ranked[0] it was refined from.
     assert result.ranked == ranked
 
     # Fixed seed is reproducible down to the refined estimates and marginal flag.
@@ -219,6 +220,15 @@ def test_grade_escalation_gate_is_selective_and_deterministic(position, monkeypa
 def test_grade_marginal_flag_tracks_boundary_band(position, monkeypatch):
     chosen_tile = _rank(position)[-1].discard
     monkeypatch.setattr("taimahjong.quiz.ESCALATE_MARGIN", 0.0)  # keep it cheap, no escalation
+    # Isolate the verdict-boundary flag from the independent ranking-uncertainty
+    # flag; the rewritten rollout's cheap top gap is legitimately uncertain.
+    monkeypatch.setattr(
+        "taimahjong.quiz.paired_delta_moments",
+        lambda *_: SampleMoments.from_values(
+            (1.0, 1.0),
+            post_selection=True,
+        ),
+    )
 
     monkeypatch.setattr("taimahjong.quiz.MARGINAL_BAND", 999.0)
     assert grade(position, chosen_tile).marginal is True

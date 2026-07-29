@@ -20,7 +20,7 @@ Documented stacking choices (adjust constants if the house disagrees):
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .danger import DECLARED_TAI
 from .shanten import shanten
@@ -108,6 +108,7 @@ class WinContext:
     migi_declared: bool = False
     heavenly: bool = False
     earthly: bool = False
+    exposed_melds: int = 0
     round_wind: int | None = None
     seat_wind: int | None = None
     # 槓上開花: self-draw on a kong's replacement tile. House rule — only a kong
@@ -127,6 +128,20 @@ class WinContext:
             raise ValueError("dealer_streak requires dealer=True")
         if self.heavenly and self.earthly:
             raise ValueError("a win cannot be both heavenly and earthly")
+        if not 0 <= self.exposed_melds <= 5:
+            raise ValueError("exposed_melds must be between 0 and 5")
+        if self.heavenly and (
+            not self.dealer or not self.self_draw or self.exposed_melds
+        ):
+            raise ValueError(
+                "heavenly (天胡) requires dealer=True, self_draw=True, and no exposed melds"
+            )
+        if self.earthly and (
+            self.dealer or not self.self_draw or self.exposed_melds
+        ):
+            raise ValueError(
+                "earthly (地胡) requires dealer=False, self_draw=True, and no exposed melds"
+            )
         if self.kong_bloom and not self.self_draw:
             raise ValueError("kong_bloom (槓上開花) is a self-draw win")
         if self.robbed_kong and self.self_draw:
@@ -355,6 +370,9 @@ def score_hand(
     kong_sets = [("tri", tile) for tile, _ in kongs]
     concealed_kong_count = sum(1 for _, concealed_flag in kongs if concealed_flag)
     open_kong_count = len(kongs) - concealed_kong_count
+    actual_exposed_melds = len(meld_sets) + open_kong_count
+    if context.exposed_melds != actual_exposed_melds:
+        context = replace(context, exposed_melds=actual_exposed_melds)
 
     expected = 17 - 3 * declared_sets
     if sum(checked) != expected:

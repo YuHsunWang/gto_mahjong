@@ -111,7 +111,7 @@ efficiency and danger into one score — you weigh them yourself.
 
 Give it a winning hand and it scores it, item by item.
 
-The tai table follows standard Taiwanese house rules, baked into the code: dealer 1,
+The project defaults to the following tai and house-rule choices: dealer 1,
 連N拉N is 2N, 門清/自摸/獨聽 1, 平胡/全求人/三暗刻 2, 碰碰胡/混一色/小三元 4, 四暗刻 5,
 清一色/大三元/小四喜/五暗刻 8, 字一色/大四喜 16, 圈風/門風/三元牌刻 1. One 底 equals
 3 tai. 天胡/地胡 are 16/8 tai. It enumerates every way to read the hand and takes the
@@ -127,6 +127,8 @@ A few documented house-rule calls:
   table rules differently.**
 - The **連莊** premium applies to every payment leg between the dealer and the winner;
   even at streak 0, the leg paid to the dealer is one unit dearer than a peer's.
+- If multiple players can ron one discard, the default awards the nearest downstream
+  seat. Set `RulesConfig.multi_ron="all"` for 一炮多響; the discarder pays each winner.
 
 ```bash
 python3 -m taimahjong "22z" --score --my-melds "123m;456p;789s;111z;555z" \

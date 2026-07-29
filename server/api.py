@@ -30,7 +30,7 @@ if _REPO_ROOT not in sys.path:
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from taimahjong.analysis import AnalysisContext, CalibrationProvider
 from taimahjong.calibration import Calibration
@@ -248,7 +248,11 @@ def _grade_payload(result: QuizGrade) -> dict[str, Any]:
 
 # 底/台 payout scheme. Absent → the house default (底3台1). A caller may send
 # the preset id or the exact pair; no third product scheme is accepted.
-class SchemeRequest(BaseModel):
+class ApiRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class SchemeRequest(ApiRequest):
     scheme: str | None = None
     base_units: int | None = None
     tai_units: int | None = None
@@ -583,9 +587,9 @@ class EvRankRequest(SchemeRequest):
     melds: str = ""
     declared_at: int | None = None
     visible: str = ""
-    turns: int = 0  # 0 = derive from wall_remaining or the visible pool
-    wall_remaining: int | None = None
-    sims: int = 400
+    turns: int = Field(default=0, ge=0, le=24)  # 0 = derive from wall_remaining or the visible pool
+    wall_remaining: int | None = Field(default=None, ge=0, le=136)
+    sims: int = Field(default=400, ge=1, le=5_000)
     seed: int = 7
     exhaustive: bool = False
 
@@ -665,6 +669,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
 def score_endpoint(request: ScoreRequest) -> dict[str, Any]:
     def run() -> dict[str, Any]:
         config = _game_config(request)
+        melds = tuple(_parse_melds(request.melds))
         context = WinContext(
             winning_tile=_tile_from_compact(request.win_tile),
             self_draw=request.self_draw,
@@ -673,10 +678,11 @@ def score_endpoint(request: ScoreRequest) -> dict[str, Any]:
             migi_declared=request.migi,
             heavenly=request.heavenly,
             earthly=request.earthly,
+            exposed_melds=len(melds),
             round_wind=None if request.round_wind is None else _tile_from_compact(request.round_wind),
             seat_wind=None if request.seat_wind is None else _tile_from_compact(request.seat_wind),
         )
-        result = score_hand(parse_tiles(request.hand), tuple(_parse_melds(request.melds)), context)
+        result = score_hand(parse_tiles(request.hand), melds, context)
         return {
             "items": [{"name": name, "tai": tai} for name, tai in result.items],
             "total_tai": result.total_tai,
@@ -694,7 +700,7 @@ def score_endpoint(request: ScoreRequest) -> dict[str, Any]:
 # Carlo, so it is fast and deterministic.
 
 
-class UkeireRequest(BaseModel):
+class UkeireRequest(ApiRequest):
     hand: str
     melds_declared: int = 0
     visible: str = ""
