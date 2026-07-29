@@ -818,6 +818,88 @@ def _production_seats(
     return acting_seat, tuple(seats), dealer_streak
 
 
+def _draw_pool_tiles(
+    remaining: list[int],
+    count: int,
+    rng: random.Random,
+) -> list[int]:
+    """Draw tile counts uniformly without replacement from one shared pool."""
+    hand = [0] * 34
+    total = sum(remaining)
+    for _ in range(count):
+        choice = rng.randrange(total)
+        for tile, available in enumerate(remaining):
+            if choice < available:
+                remaining[tile] -= 1
+                hand[tile] += 1
+                total -= 1
+                break
+            choice -= available
+    return hand
+
+
+def _construct_tenpai_hand(
+    remaining: list[int],
+    concealed: int,
+    melds_declared: int,
+    rng: random.Random,
+) -> list[int] | None:
+    """Build a legal standard tenpai hand without repeated shanten searches."""
+    melds_needed = 5 - melds_declared
+    if melds_needed < 0 or concealed != 16 - 3 * melds_declared:
+        return None
+    available = remaining.copy()
+    completed = [0] * 34
+    failed: set[tuple[tuple[int, ...], int]] = set()
+
+    def add_melds(left: int) -> bool:
+        if left == 0:
+            return True
+        state = (tuple(available), left)
+        if state in failed:
+            return False
+        melds = [
+            (tile, tile, tile)
+            for tile, count in enumerate(available)
+            if count >= 3
+        ]
+        melds.extend(
+            (tile, tile + 1, tile + 2)
+            for tile in range(27)
+            if tile % 9 <= 6
+            and available[tile]
+            and available[tile + 1]
+            and available[tile + 2]
+        )
+        rng.shuffle(melds)
+        for meld in melds:
+            for tile in meld:
+                available[tile] -= 1
+                completed[tile] += 1
+            if add_melds(left - 1):
+                return True
+            for tile in meld:
+                available[tile] += 1
+                completed[tile] -= 1
+        failed.add(state)
+        return False
+
+    pairs = [tile for tile, count in enumerate(available) if count >= 2]
+    rng.shuffle(pairs)
+    for pair in pairs:
+        available[pair] -= 2
+        completed[pair] += 2
+        if add_melds(melds_needed):
+            removed = rng.choice([
+                tile for tile, count in enumerate(completed) if count
+            ])
+            completed[removed] -= 1
+            return completed
+        available[pair] += 2
+        completed[pair] -= 2
+    return None
+
+
 def _sample_production_world(
     hand: tuple[int, ...],
     seen: tuple[int, ...],
@@ -825,6 +907,7 @@ def _sample_production_world(
     turns: int,
     context_template: WinContext | WinValueContext | None,
     world_seed: int,
+    tenpai_quantiles: tuple[float, ...] | None = None,
 ) -> _TrialWorld:
     from .selfplay import Player
 
@@ -840,14 +923,12 @@ def _sample_production_world(
         dealer_streak=dealer_streak if acting_seat == 0 else 0,
         kongs=list(actor_kongs),
     )
-    pool = [
-        tile
+    remaining = [
+        4 - hand[tile] - seen[tile]
         for tile in range(34)
-        for _ in range(4 - hand[tile] - seen[tile])
     ]
     rng = random.Random(world_seed)
-    rng.shuffle(pool)
-    offset = 0
+    opponent_ordinal = 0
     for seat, player in enumerate(players):
         if seat == acting_seat:
             continue
@@ -857,12 +938,38 @@ def _sample_production_world(
             if view is not None and view.hand_count > 0
             else 16 - 3 * len(player.melds)
         )
-        if concealed < 0 or offset + concealed > len(pool):
+        if concealed < 0 or concealed > sum(remaining):
             raise ValueError("visible state leaves too few tiles for opponent hands")
-        for tile in pool[offset:offset + concealed]:
-            player.hand[tile] += 1
-        offset += concealed
-    wall = tuple(pool[offset:offset + min(4 * turns, len(pool) - offset)])
+        public_state = view if view is not None else OpponentView([], [])
+        tenpai_draw = (
+            rng.random()
+            if tenpai_quantiles is None
+            else tenpai_quantiles[opponent_ordinal]
+        )
+        opponent_ordinal += 1
+        target_tenpai = tenpai_draw < tenpai_score(
+            public_state, len(public_state.river),
+        ).score
+        sampled = (
+            _construct_tenpai_hand(
+                remaining, concealed, len(player.melds), rng,
+            )
+            if target_tenpai
+            else None
+        )
+        if sampled is None:
+            sampled = _draw_pool_tiles(remaining, concealed, rng)
+        else:
+            for tile, count in enumerate(sampled):
+                remaining[tile] -= count
+        player.hand[:] = sampled
+    pool = [
+        tile
+        for tile, count in enumerate(remaining)
+        for _ in range(count)
+    ]
+    rng.shuffle(pool)
+    wall = tuple(pool[:min(4 * turns, len(pool))])
     return _TrialWorld(
         tuple(players),
         wall,
@@ -1074,6 +1181,17 @@ def ev_rank(
         )
         resolved_next = (resolved_acting + 1) % 4
         rng = random.Random(base_seed)
+        hidden_count = min(sims, PRODUCTION_HIDDEN_WORLD_STRATA)
+        # Stratify each opponent's latent tenpai draw independently so the
+        # bounded hidden-world layer represents their public-state score.
+        opponent_quantiles = []
+        for _ in range(3):
+            quantiles = [
+                (stratum + rng.random()) / hidden_count
+                for stratum in range(hidden_count)
+            ]
+            rng.shuffle(quantiles)
+            opponent_quantiles.append(quantiles)
         hidden_worlds = [
             replace(
                 _sample_production_world(
@@ -1083,10 +1201,14 @@ def ev_rank(
                     turns,
                     context_template,
                     rng.randrange(2**64),
+                    tuple(
+                        quantiles[stratum]
+                        for quantiles in opponent_quantiles
+                    ),
                 ),
                 hidden_stratum=stratum,
             )
-            for stratum in range(min(sims, PRODUCTION_HIDDEN_WORLD_STRATA))
+            for stratum in range(hidden_count)
         ]
         # Balanced reuse of a bounded set of hidden-hand determinizations keeps
         # the opponent-model integration affordable and cache-friendly. Wall

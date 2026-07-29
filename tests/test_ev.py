@@ -84,6 +84,58 @@ def test_ev_rank_is_seed_deterministic_and_net_ev_is_signed_payment_mean():
     )
 
 
+def test_determinized_opponents_track_public_tenpai_state_and_conserve_tiles():
+    hand = parse_tiles("123m456m789m11223p345s")
+    river_tiles = (6, 7, 8, 14, 15, 16, 18, 19, 20, 21, 22, 23, 24, 25)
+
+    def sampled_rate(opponent, samples=200):
+        visible = _visible_with_opponent(opponent)
+        acting_seat, seats, _ = ev._production_seats((opponent,), None)
+        opponent_seat = next(
+            seat for seat, view in enumerate(seats)
+            if seat != acting_seat and view is opponent
+        )
+        tenpai = 0
+        for index in range(samples):
+            world = ev._sample_production_world(
+                hand, visible, (opponent,), 8, None, 100_000 + index,
+            )
+            repeat = ev._sample_production_world(
+                hand, visible, (opponent,), 8, None, 100_000 + index,
+            )
+            assert world == repeat
+            concealed = world.players[opponent_seat].hand
+            tenpai += ev._production_shanten(tuple(concealed), 0) == 0
+            for tile in range(34):
+                accounted = (
+                    hand[tile]
+                    + visible[tile]
+                    + sum(
+                        player.hand[tile]
+                        for seat, player in enumerate(world.players)
+                        if seat != acting_seat
+                    )
+                    + world.wall.count(tile)
+                )
+                assert accounted <= 4
+        return tenpai / samples
+
+    silent = OpponentView(list(river_tiles), [])
+    threatening = OpponentView(
+        [ev.RiverEntry(tile, "tsumogiri") for tile in river_tiles], [],
+    )
+    silent_rate = sampled_rate(silent)
+    threatening_rate = sampled_rate(threatening)
+    assert abs(silent_rate - ev.tenpai_score(silent, 14).score) < 0.08
+    assert abs(threatening_rate - ev.tenpai_score(threatening, 14).score) < 0.08
+    assert threatening_rate > silent_rate + 0.25
+
+    declared = OpponentView(
+        [ev.RiverEntry(6), ev.RiverEntry(7)], [], declared_at=1,
+    )
+    assert sampled_rate(declared, samples=32) == 1.0
+
+
 def test_immediate_actor_deal_in_is_a_negative_terminal_payment():
     class CalibrationMustNotRun:
         def deal_in_probability(self, _danger_score):
@@ -133,7 +185,7 @@ def test_immediate_actor_deal_in_is_a_negative_terminal_payment():
     assert len(set(deal_in.trial_values)) == 1
 
 
-def test_determinized_rollout_uses_calibration_but_missing_calibration_is_zero_risk():
+def test_determinized_rollout_has_physical_risk_without_calibration():
     class FixedCalibration:
         def deal_in_probability(self, _danger_score):
             return 1.0
@@ -159,8 +211,11 @@ def test_determinized_rollout_uses_calibration_but_missing_calibration_is_zero_r
         exhaustive=True,
     )
 
-    assert all(entry.risk_ev == 0.0 for entry in uncalibrated)
+    assert any(entry.risk_ev > 0.0 for entry in uncalibrated)
     assert all(entry.risk_ev > 0.0 for entry in calibrated)
+    assert sum(entry.risk_ev for entry in calibrated) > sum(
+        entry.risk_ev for entry in uncalibrated
+    )
     assert all(
         entry.net_ev == entry.attack_ev - entry.risk_ev
         for entry in calibrated
