@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import subprocess
@@ -34,6 +35,7 @@ HOLDOUT_MODULUS = 5
 HOLDOUT_REMAINDER = 4
 EV_MODEL_IDENTIFIER = "coherent-terminal-rollout-v1"
 EV_MODEL_SOURCE_DATE = "2026-07-29"
+CALIBRATION_INPUT = Path(__file__).resolve().parents[1] / "data" / "calibration.json"
 
 
 def _deal_in_trials(game) -> tuple[tuple[float, bool], ...]:
@@ -124,6 +126,7 @@ def _quality_record(fit_counts: dict, trials: list[tuple[float, bool]]) -> dict:
     squared_error = 0.0
     negative_log_likelihood = 0.0
     evaluated = 0
+    deal_ins = 0
     for score, outcome in trials:
         probability = calibration.deal_in_probability(score)
         if probability is None:
@@ -131,6 +134,7 @@ def _quality_record(fit_counts: dict, trials: list[tuple[float, bool]]) -> dict:
         squared_error += (probability - int(outcome)) ** 2
         negative_log_likelihood -= math.log(probability if outcome else 1.0 - probability)
         evaluated += 1
+        deal_ins += int(outcome)
         cell = reliability[danger_bucket(score)]
         cell["prediction_sum"] += probability
         cell["observations"] += 1
@@ -184,9 +188,30 @@ def _quality_record(fit_counts: dict, trials: list[tuple[float, bool]]) -> dict:
             },
         }
     )
+    brier_score = squared_error / evaluated
+    log_loss = negative_log_likelihood / evaluated
+    base_rate = deal_ins / evaluated
+    brier_base = base_rate * (1.0 - base_rate)
+    log_loss_base = -(
+        (base_rate * math.log(base_rate) if base_rate else 0.0)
+        + (
+            (1.0 - base_rate) * math.log(1.0 - base_rate)
+            if base_rate < 1.0 else 0.0
+        )
+    )
     return {
-        "brier_score": squared_error / evaluated,
-        "log_loss": negative_log_likelihood / evaluated,
+        "brier_score": brier_score,
+        "brier_base": brier_base,
+        "brier_skill_score": (
+            1.0 - brier_score / brier_base if brier_base else None
+        ),
+        "log_loss": log_loss,
+        "log_loss_base": log_loss_base,
+        "log_loss_skill_score": (
+            1.0 - log_loss / log_loss_base if log_loss_base else None
+        ),
+        "held_out_deal_ins": deal_ins,
+        "held_out_base_rate": base_rate,
         "evaluated_observations": evaluated,
         "total_holdout_observations": len(trials),
         "reliability_curve": curve,
@@ -218,6 +243,21 @@ def _write_document(path: Path, document: dict) -> None:
         stream.write("\n")
 
 
+def _previous_calibration_record() -> dict:
+    if not CALIBRATION_INPUT.exists():
+        return {
+            "consumed_previous_calibration": False,
+            "path": "data/calibration.json",
+            "calibration_id": None,
+        }
+    content = CALIBRATION_INPUT.read_bytes()
+    return {
+        "consumed_previous_calibration": True,
+        "path": "data/calibration.json",
+        "calibration_id": f"sha256:{hashlib.sha256(content).hexdigest()}",
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--games", type=int, default=2000)
@@ -240,6 +280,7 @@ def main() -> None:
         for index, seed in enumerate(seeds)
         if index % HOLDOUT_MODULUS == HOLDOUT_REMAINDER
     }
+    previous_calibration = _previous_calibration_record()
     started = perf_counter()
     results = _generate(seeds, holdout, args.workers)
     elapsed = perf_counter() - started
@@ -292,6 +333,7 @@ def main() -> None:
             ),
         },
         "policy_mix": list(POLICIES),
+        "calibration_feedback": previous_calibration,
         "ev_model": {
             "identifier": EV_MODEL_IDENTIFIER,
             "source_date": EV_MODEL_SOURCE_DATE,

@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from math import comb
+from random import Random
 
 import pytest
 
@@ -23,6 +24,7 @@ from taimahjong.reference_ev import (
     representative_reference_cases,
     standard_small_wall_state,
 )
+from taimahjong.rollout import CalibratedRonClaim, resolve_terminal
 from taimahjong.scoring import EARTHLY_TAI, HEAVENLY_TAI, WinContext, score_hand
 from taimahjong.selfplay import Player
 from taimahjong.tiles import parse_tiles
@@ -83,6 +85,10 @@ def test_ev_rank_is_seed_deterministic_and_net_ev_is_signed_payment_mean():
 
 
 def test_immediate_actor_deal_in_is_a_negative_terminal_payment():
+    class CalibrationMustNotRun:
+        def deal_in_probability(self, _danger_score):
+            raise AssertionError("known rollout hands must remain physical")
+
     state = standard_small_wall_state(wall=())
     references = list(state.players)
     references[2] = replace(
@@ -106,6 +112,7 @@ def test_immediate_actor_deal_in_is_a_negative_terminal_payment():
         turns=0,
         sims=2,
         seed=11,
+        calibration=CalibrationMustNotRun(),
         scheme=state.scheme,
         exhaustive=True,
         discard_policy=_policy_discard,
@@ -124,6 +131,62 @@ def test_immediate_actor_deal_in_is_a_negative_terminal_payment():
     assert deal_in.attack_ev == 0
     assert deal_in.risk_ev == -deal_in.net_ev
     assert len(set(deal_in.trial_values)) == 1
+
+
+def test_determinized_rollout_uses_calibration_but_missing_calibration_is_zero_risk():
+    class FixedCalibration:
+        def deal_in_probability(self, _danger_score):
+            return 1.0
+
+    opponent = OpponentView(parse_river("9m"), [], None)
+    uncalibrated = ev_rank(
+        POST_DRAW,
+        [opponent],
+        parse_tiles("9m"),
+        turns=0,
+        sims=2,
+        seed=17,
+        exhaustive=True,
+    )
+    calibrated = ev_rank(
+        POST_DRAW,
+        [opponent],
+        parse_tiles("9m"),
+        turns=0,
+        sims=2,
+        seed=17,
+        calibration=FixedCalibration(),
+        exhaustive=True,
+    )
+
+    assert all(entry.risk_ev == 0.0 for entry in uncalibrated)
+    assert all(entry.risk_ev > 0.0 for entry in calibrated)
+    assert all(
+        entry.net_ev == entry.attack_ev - entry.risk_ev
+        for entry in calibrated
+    )
+
+
+def test_calibrated_ron_is_one_zero_sum_terminal_payment():
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand = list(POST_DRAW)
+    terminal = resolve_terminal(
+        players,
+        (),
+        0,
+        1,
+        _tile("1m"),
+        _policy_discard,
+        Random(1),
+        calibrated_ron=lambda _players, _discarder, _tile: (
+            CalibratedRonClaim(1, 1.0, 7),
+        ),
+    )
+
+    assert terminal.kind == "opponent_ron"
+    assert terminal.deltas == (-7, 7, 0, 0)
+    assert terminal.value_units == 7
+    assert terminal.ron_winners == (1,)
 
 
 def test_declaration_dead_wait_is_zero_and_not_recommended():

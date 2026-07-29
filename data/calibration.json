@@ -241,6 +241,11 @@
     }
   },
   "metadata": {
+    "calibration_feedback": {
+      "calibration_id": "sha256:b4a732e7e0e82e9b5da257e11e1a1584f278e637e455047a04362cc2b9aa4236",
+      "consumed_previous_calibration": true,
+      "path": "data/calibration.json"
+    },
     "danger_modifiers": {
       "MELD_FLUSH": 2.0,
       "MELD_FLUSH_HONOR": 1.5,
@@ -283,9 +288,15 @@
     }
   },
   "quality": {
+    "brier_base": 0.004756198449953372,
     "brier_score": 0.004742940646179143,
+    "brier_skill_score": 0.002787479099901402,
     "evaluated_observations": 55032,
+    "held_out_base_rate": 0.00477903765082134,
+    "held_out_deal_ins": 263,
     "log_loss": 0.028550853292476336,
+    "log_loss_base": 0.030304464354228913,
+    "log_loss_skill_score": 0.05786642658502772,
     "reliability_curve": [
       {
         "bucket": "0-1",

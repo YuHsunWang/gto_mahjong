@@ -922,6 +922,47 @@ def _rollout_entry(
     )
 
 
+def _calibrated_ron(
+    calibration: Calibration,
+    acting_seat: int,
+    scheme: ScoringScheme,
+):
+    from .rollout import CalibratedRonClaim
+    from .selfplay import _public_counts, _view
+
+    def claims(
+        players: Sequence[Player],
+        discarder: int,
+        tile: int,
+    ) -> tuple[CalibratedRonClaim, ...]:
+        public = _public_counts(list(players))
+        # The acting hand is real information throughout the rollout; never
+        # let an invented opponent hand leak into the danger features.
+        known_hand = tuple(players[acting_seat].hand)
+        estimates = []
+        for seat, player in enumerate(players):
+            if seat in (discarder, acting_seat):
+                continue
+            opponent = _view(player, seat)
+            assessment = danger_score(tile, opponent, public, known_hand)
+            probability = (
+                0.0
+                if (
+                    opponent.declared_at is not None
+                    and "declared_safe" in assessment.modifiers
+                )
+                else calibration.deal_in_probability(assessment.score)
+            )
+            estimates.append(CalibratedRonClaim(
+                seat,
+                min(1.0, max(0.0, probability or 0.0)),
+                int(opponent_value_estimate(opponent, scheme)),
+            ))
+        return tuple(estimates)
+
+    return claims
+
+
 def ev_rank(
     counts17: tuple[int, ...] | list[int],
     opponents: tuple[OpponentView, ...] | list[OpponentView],
@@ -1060,6 +1101,11 @@ def ev_rank(
         ]
 
     terminal_cache: dict[int, list[TerminalResult]] = {}
+    calibrated_ron = (
+        _calibrated_ron(calibration, resolved_acting, scheme)
+        if calibration is not None and rollout_players is None
+        else None
+    )
 
     def evaluate(analysis, budget: int) -> EVRankEntry:
         terminals = terminal_cache.setdefault(analysis.discard, [])
@@ -1080,6 +1126,7 @@ def ev_rank(
                 dealer_streak=resolved_streak,
                 scheme=scheme,
                 rules=rules,
+                calibrated_ron=calibrated_ron,
             ))
         hidden_strata = tuple(
             world.hidden_stratum

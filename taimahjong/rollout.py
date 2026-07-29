@@ -7,6 +7,7 @@ from random import Random
 from typing import Callable, Sequence
 
 from .config import DEFAULT_RULES, RulesConfig, resolve_ron_claims
+from .danger import RiverEntry
 from .scoring import DEFAULT_SCHEME, ScoringScheme
 from .selfplay import (
     Player,
@@ -26,6 +27,29 @@ OUTCOME_KINDS = frozenset({
     "opponent_tsumo",
     "draw",
 })
+
+
+@dataclass(frozen=True)
+class CalibratedRonClaim:
+    """Public-state RON probability and value for one non-actor seat."""
+
+    seat: int
+    probability: float
+    value_units: int
+
+    def __post_init__(self) -> None:
+        if self.seat not in range(4):
+            raise ValueError("calibrated RON seat must be 0-3")
+        if not 0.0 <= self.probability <= 1.0:
+            raise ValueError("calibrated RON probability must be between 0 and 1")
+        if self.value_units < 0:
+            raise ValueError("calibrated RON value must be non-negative")
+
+
+CalibratedRon = Callable[
+    [Sequence[Player], int, int],
+    tuple[CalibratedRonClaim, ...],
+]
 
 
 @dataclass(frozen=True)
@@ -139,6 +163,83 @@ def _ron_terminal(
     )
 
 
+def _resolved_ron_terminal(
+    players: list[Player],
+    discarder: int,
+    winning_tile: int,
+    acting_seat: int,
+    dealer_streak: int,
+    scheme: ScoringScheme,
+    rules: RulesConfig,
+    calibrated_ron: CalibratedRon,
+    rng: Random,
+) -> TerminalResult | None:
+    physical_actor_claim = False
+    if discarder != acting_seat:
+        hand = players[acting_seat].hand
+        if hand[winning_tile] < 4:
+            completed = hand.copy()
+            completed[winning_tile] += 1
+            physical_actor_claim = (
+                _cached_shanten(
+                    tuple(completed), _declared(players[acting_seat]),
+                )
+                == -1
+            )
+    estimates = {
+        claim.seat: claim
+        for claim in calibrated_ron(players, discarder, winning_tile)
+    }
+    if discarder in estimates or acting_seat in estimates:
+        raise ValueError("calibrated RON claims must exclude discarder and acting seat")
+    sampled = {
+        seat
+        for seat, claim in sorted(estimates.items())
+        if rng.random() < claim.probability
+    }
+    winners = resolve_ron_claims(
+        discarder,
+        lambda seat: (
+            physical_actor_claim if seat == acting_seat else seat in sampled
+        ),
+        rules,
+    )
+    if not winners:
+        return None
+
+    deltas = [0, 0, 0, 0]
+    values: list[int] = []
+    for winner in winners:
+        if winner == acting_seat:
+            completed = players[winner].hand.copy()
+            completed[winning_tile] += 1
+            payment, value = _settlement(
+                "ron",
+                winner,
+                discarder,
+                players,
+                tuple(completed),
+                winning_tile,
+                dealer_streak,
+                scheme,
+            )
+            deltas = [total + delta for total, delta in zip(deltas, payment)]
+        else:
+            value = estimates[winner].value_units
+            deltas[winner] += value
+            deltas[discarder] -= value
+        values.append(value)
+    return _terminal(
+        "self_ron" if acting_seat in winners else "opponent_ron",
+        winners[0],
+        discarder,
+        winning_tile,
+        tuple(deltas),
+        sum(values),
+        winners,
+    )
+
+
 def resolve_terminal(
     players: Sequence[Player],
     wall: Sequence[int],
@@ -151,6 +252,7 @@ def resolve_terminal(
     dealer_streak: int = 0,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     rules: RulesConfig = DEFAULT_RULES,
+    calibrated_ron: CalibratedRon | None = None,
 ) -> TerminalResult:
     """Sample one wall order and return its one coherent terminal payment."""
     if acting_seat not in range(4) or next_seat not in range(4):
@@ -162,19 +264,36 @@ def resolve_terminal(
         raise ValueError("discard must be present in the acting hand")
 
     trial_players[acting_seat].hand[discard] -= 1
-    immediate = _ron_claims(
-        trial_players, acting_seat, discard, rules,
-    )
-    if immediate:
-        return _ron_terminal(
+    if calibrated_ron is not None:
+        immediate_terminal = _resolved_ron_terminal(
             trial_players,
-            immediate,
             acting_seat,
             discard,
             acting_seat,
             dealer_streak,
             scheme,
+            rules,
+            calibrated_ron,
+            rng,
         )
+        if immediate_terminal is not None:
+            return immediate_terminal
+        trial_players[acting_seat].river.append(RiverEntry(discard))
+        trial_players[acting_seat].discards += 1
+    else:
+        immediate = _ron_claims(
+            trial_players, acting_seat, discard, rules,
+        )
+        if immediate:
+            return _ron_terminal(
+                trial_players,
+                immediate,
+                acting_seat,
+                discard,
+                acting_seat,
+                dealer_streak,
+                scheme,
+            )
 
     remaining = [0] * 34
     for tile in wall:
@@ -221,19 +340,37 @@ def resolve_terminal(
         if discarded not in range(34) or not player.hand[discarded]:
             raise ValueError("discard policy returned a tile absent from the hand")
         player.hand[discarded] -= 1
-        claims = _ron_claims(
-            trial_players, current, discarded, rules,
-        )
-        if claims:
-            return _ron_terminal(
+        if calibrated_ron is not None:
+            ron_terminal = _resolved_ron_terminal(
                 trial_players,
-                claims,
                 current,
                 discarded,
                 acting_seat,
                 dealer_streak,
                 scheme,
+                rules,
+                calibrated_ron,
+                rng,
             )
+            if ron_terminal is not None:
+                return ron_terminal
+            origin = "tsumogiri" if discarded == tile else "tedashi"
+            player.river.append(RiverEntry(discarded, origin))
+            player.discards += 1
+        else:
+            claims = _ron_claims(
+                trial_players, current, discarded, rules,
+            )
+            if claims:
+                return _ron_terminal(
+                    trial_players,
+                    claims,
+                    current,
+                    discarded,
+                    acting_seat,
+                    dealer_streak,
+                    scheme,
+                )
         current = (current + 1) % 4
 
     return _terminal("draw", None, None, None, (0, 0, 0, 0), 0)
