@@ -71,6 +71,7 @@ class RulesConfig:
     claim_priority: tuple[str, ...] = CLAIM_PRIORITY
     dealer_continues_on_draw: bool = True
     dealer_continues_on_win: bool = True
+    earthly_by_ron: bool = False
 
     def __post_init__(self) -> None:
         if not self.rules_id:
@@ -83,6 +84,8 @@ class RulesConfig:
             raise ValueError("dealer_continues_on_draw must be a boolean")
         if not isinstance(self.dealer_continues_on_win, bool):
             raise ValueError("dealer_continues_on_win must be a boolean")
+        if not isinstance(self.earthly_by_ron, bool):
+            raise ValueError("earthly_by_ron must be a boolean")
 
 
 DEFAULT_RULES = RulesConfig()

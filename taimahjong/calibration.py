@@ -9,6 +9,8 @@ from .danger import MELD_FLUSH, MELD_FLUSH_HONOR, SUIT_SCARCE, SUIT_VOID
 
 
 MIN_CELL_COUNT = 30
+BETA_PRIOR_ALPHA = 0.5
+BETA_PRIOR_BETA = 0.5
 TURN_BUCKETS = ("1-6", "7-12", "13+")
 RUN_BUCKETS = ("0", "1-2", "3+")
 DANGER_EDGES = (0.0, 1.0, 2.0, 4.0, 6.0, 9.0, 13.0)
@@ -113,14 +115,20 @@ def merge_counts(left: dict, right: dict) -> dict:
 
 
 def _isotonic_probabilities(cells: list[dict]) -> list[float | None]:
-    """Weighted pool-adjacent-violators calibration for ordered danger bins."""
+    """Jeffreys-smoothed PAV calibration for ordered danger bins."""
     blocks: list[dict] = []
     for index, cell in enumerate(cells):
         observations = cell["observations"]
         if not observations:
             blocks.append({"indexes": [index], "weight": 0, "successes": 0})
             continue
-        blocks.append({"indexes": [index], "weight": observations, "successes": cell["deal_ins"]})
+        blocks.append(
+            {
+                "indexes": [index],
+                "weight": observations + BETA_PRIOR_ALPHA + BETA_PRIOR_BETA,
+                "successes": cell["deal_ins"] + BETA_PRIOR_ALPHA,
+            }
+        )
         while len(blocks) >= 2 and blocks[-2]["weight"] and blocks[-1]["weight"] and (
             blocks[-2]["successes"] / blocks[-2]["weight"] > blocks[-1]["successes"] / blocks[-1]["weight"]
         ):

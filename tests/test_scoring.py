@@ -1,7 +1,10 @@
 """Known-answer tests for the tai scoring module."""
 
+from dataclasses import replace
+
 import pytest
 
+from taimahjong.config import DEFAULT_RULES
 from taimahjong.scoring import WinContext, score_hand
 from taimahjong.tiles import parse_tiles
 
@@ -181,6 +184,32 @@ def test_validation_errors():
 def test_heavenly_and_earthly_reject_impossible_win_contexts(context):
     with pytest.raises(ValueError):
         WinContext(winning_tile=_tile("2z"), **context)
+
+
+def test_earthly_ron_house_rule_is_opt_in_and_default_is_unchanged():
+    context = {
+        "winning_tile": _tile("2z"),
+        "dealer": False,
+        "self_draw": False,
+        "earthly": True,
+        "exposed_melds": 0,
+    }
+    assert DEFAULT_RULES.earthly_by_ron is False
+    message = (
+        "earthly (地胡) requires dealer=False, self_draw=True, and no exposed melds"
+    )
+    with pytest.raises(ValueError) as implicit_default:
+        WinContext(**context)
+    with pytest.raises(ValueError) as explicit_default:
+        WinContext(**context, rules=DEFAULT_RULES)
+    assert str(implicit_default.value) == str(explicit_default.value) == message
+
+    ron_rules = replace(
+        DEFAULT_RULES,
+        rules_id="taiwanese-earthly-ron-v1",
+        earthly_by_ron=True,
+    )
+    assert WinContext(**context, rules=ron_rules).earthly
 
 
 def test_legitimate_heavenly_hand_still_scores():

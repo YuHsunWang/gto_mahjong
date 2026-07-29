@@ -21,8 +21,12 @@ Documented stacking choices (adjust constants if the house disagrees):
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 
 from .danger import DECLARED_TAI
+
+if TYPE_CHECKING:
+    from .config import RulesConfig
 from .shanten import shanten
 from .tiles import validate_counts
 
@@ -118,6 +122,7 @@ class WinContext:
     kong_bloom: bool = False
     robbed_kong: bool = False  # 搶槓: ron on an opponent's added-kong tile
     extra: tuple[tuple[str, int], ...] = ()  # reserved: flowers, ...
+    rules: RulesConfig | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not 0 <= self.winning_tile < 34:
@@ -136,11 +141,18 @@ class WinContext:
             raise ValueError(
                 "heavenly (天胡) requires dealer=True, self_draw=True, and no exposed melds"
             )
-        if self.earthly and (
+        earthly_by_ron = self.rules.earthly_by_ron if self.rules is not None else False
+        if self.earthly and not earthly_by_ron and (
             self.dealer or not self.self_draw or self.exposed_melds
         ):
             raise ValueError(
                 "earthly (地胡) requires dealer=False, self_draw=True, and no exposed melds"
+            )
+        if self.earthly and earthly_by_ron and (
+            self.dealer or self.exposed_melds
+        ):
+            raise ValueError(
+                "earthly (地胡) requires dealer=False and no exposed melds"
             )
         if self.kong_bloom and not self.self_draw:
             raise ValueError("kong_bloom (槓上開花) is a self-draw win")

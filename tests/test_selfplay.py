@@ -2,21 +2,26 @@ from dataclasses import replace
 from math import sqrt
 from pathlib import Path
 
+import pytest
 import taimahjong.selfplay as selfplay
 
 from taimahjong.calibration import (
+    BETA_PRIOR_ALPHA,
+    BETA_PRIOR_BETA,
     Calibration,
     DANGER_BUCKETS,
     DANGER_MODIFIERS,
     DANGER_REFERENCE,
     MIN_CELL_COUNT,
     counts_from_games,
+    empty_counts,
     load_table,
     merge_counts,
     table_document,
     write_merged_table,
 )
 from taimahjong.config import DEFAULT_RULES, resolve_ron_claims
+from taimahjong.danger import OpponentView, danger_score
 from taimahjong.selfplay import (
     Player,
     _choose_discard,
@@ -233,14 +238,48 @@ def test_calibration_lookup_interpolates_and_falls_back_for_small_cells():
     calibration = Calibration(table_document(counts))
     assert calibration.tenpai_probability(0, 1, 0) == 0.2
     assert calibration.tenpai_probability(1, 1, 0) is None
-    assert calibration.deal_in_probability(1.0) == 0.2
+    expected = (
+        (3 + BETA_PRIOR_ALPHA) / (30 + BETA_PRIOR_ALPHA + BETA_PRIOR_BETA)
+        + (9 + BETA_PRIOR_ALPHA) / (30 + BETA_PRIOR_ALPHA + BETA_PRIOR_BETA)
+    ) / 2
+    assert calibration.deal_in_probability(1.0) == pytest.approx(expected)
     assert Calibration(table_document(counts), min_cell_count=31).deal_in_probability(1.0) is None
+
+
+def test_jeffreys_smoothing_keeps_observed_zero_deal_in_bucket_positive():
+    five_z = next(index for index, count in enumerate(parse_tiles("5z")) if count)
+    opponent = OpponentView([five_z], [])
+    visible = list(parse_tiles("5z"))
+    post_discard_hand = list(parse_tiles("5z"))
+    assessment = danger_score(
+        five_z, opponent, tuple(visible), tuple(post_discard_hand),
+    )
+    assert [shape.name for shape in assessment.feasible_shapes] == ["tanki"]
+    assert assessment.score == 0.3
+
+    counts = empty_counts()
+    counts["deal_in"]["0-1"] = {"observations": MIN_CELL_COUNT, "deal_ins": 0}
+
+    calibration = Calibration(table_document(counts))
+
+    assert calibration.deal_in_probability(assessment.score) == (
+        BETA_PRIOR_ALPHA
+        / (MIN_CELL_COUNT + BETA_PRIOR_ALPHA + BETA_PRIOR_BETA)
+    )
+    assert calibration.deal_in_probability(assessment.score) > 0.0
 
 
 def test_committed_calibration_has_signal_and_monotonic_tenpai():
     document_path = Path(__file__).parents[1] / "data" / "calibration.json"
     calibration = Calibration.from_path(document_path)
-    assert calibration.document["counts"]["games"] >= 2000
+    assert calibration.document["counts"]["games"] == calibration.document["metadata"]["fit_games"]
+    assert calibration.document["metadata"]["games"] >= 2000
+    assert calibration.document["metadata"]["held_out_games"] > 0
+    assert calibration.document["metadata"]["seed_range"]["start"] > 30040
+    assert calibration.document["metadata"]["ev_model"]["source_date"] == "2026-07-29"
+    assert calibration.document["quality"]["brier_score"] >= 0
+    assert calibration.document["quality"]["log_loss"] >= 0
+    assert len(calibration.document["quality"]["reliability_curve"]) == len(DANGER_BUCKETS)
     assert calibration.document["metadata"]["danger_reference"] == DANGER_REFERENCE
     assert calibration.document["metadata"]["danger_modifiers"] == DANGER_MODIFIERS
     assert calibration.document["metadata"]["policy_mix"] == ["attack", "cautious", "ev_aware", "ev_aware"]
@@ -250,11 +289,18 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
     # This is NOT asserted for the late game (turn 13+): there, open hands that
     # failed to complete keep tsumogiri-ing without being tenpai — and harder
     # dealer-folding (M3) feeds that pool — so the relationship legitimately
-    # inverts. (Regenerated from seeds 30001-30040, mix attack/cautious/ev/ev.)
+    # inverts. Restrict this broad structural check to cells with 10x the
+    # lookup minimum so sparse early-game run buckets do not turn sampling
+    # noise into a committed-table failure.
     checked_buckets = 0
     for turn in ("1-6", "7-12"):
         for run in ("0", "1-2", "3+"):
-            populated = [table[f"{melds}|{turn}|{run}"] for melds in range(6) if table[f"{melds}|{turn}|{run}"]["observations"] >= 30]
+            populated = [
+                table[f"{melds}|{turn}|{run}"]
+                for melds in range(6)
+                if table[f"{melds}|{turn}|{run}"]["observations"]
+                >= 10 * MIN_CELL_COUNT
+            ]
             if len(populated) >= 2:
                 values = [cell["probability"] for cell in populated]
                 assert values == sorted(values), f"{turn}|{run} not monotonic: {values}"
