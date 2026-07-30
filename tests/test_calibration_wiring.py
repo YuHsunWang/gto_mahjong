@@ -36,14 +36,21 @@ def _real_entry(payload, discard):
 def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monkeypatch):
     # risk_ev and net_ev are sample means over terminal rollouts (ev.py:895),
     # so comparing two calibrations compares two expectations and needs enough
-    # trials to survive one expensive terminal. At the old REFINE_SIMS=3 this
-    # inverted on luck alone: 4.333 = 13/3, a single 13-unit terminal carrying
-    # the entire low-calibration mean. Swept on this exact position, the
-    # ordering holds from ten samples up -- risk 1.30/2.10 at 10, 1.60/1.68 at
-    # 50, 1.45/1.65 at 200. Do not lower these back.
+    # trials for the difference to clear the sampling noise. Swept on this exact
+    # position against the current model, low/high risk_ev runs:
+    #
+    #      50   2.8800 / 2.8800   <- exact tie, a knife edge
+    #     100   2.9800 / 3.1700
+    #     150   3.0267 / 3.5333
+    #     200   3.1600 / 3.8250
+    #     300   3.0300 / 3.7467
+    #
+    # The separation grows with samples and settles near 0.7, so 200 sits on a
+    # plateau rather than on the edge that 50 turned out to be. net_ev separates
+    # at every size tested, including 50. Do not lower these back.
     monkeypatch.setattr(quiz, "EV_SIMS", 2)
-    monkeypatch.setattr(quiz, "REFINE_SIMS", 50)
-    monkeypatch.setattr(quiz, "ESCALATE_SIMS", 51)
+    monkeypatch.setattr(quiz, "REFINE_SIMS", 200)
+    monkeypatch.setattr(quiz, "ESCALATE_SIMS", 201)
     quiz._rank_cached.cache_clear()
     api._SESSIONS.clear()
     active = [_context("extreme-low", 0.001)]
@@ -105,8 +112,10 @@ def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monk
     # net_ev is the more robust witness of the same property. risk_ev sees only
     # the loss side, and a calibrated ron ENDS the hand, so raising deal-in
     # probability truncates future losses and future gains together and moves
-    # risk_ev by little -- 1.45 -> 1.65 at 200 trials despite a 200x change in
-    # probability. net_ev separates cleanly over the same span, +0.41 -> -1.65.
+    # risk_ev less than the change in probability would suggest -- 3.160 to
+    # 3.825 at 200 trials for a 200x change. net_ev separates far more widely
+    # over the same span, -2.245 to -3.825, and separated at every sample size
+    # tested including the one where risk_ev tied.
     # More deal-in risk must never make a decision look better.
     assert high_quiz["grade"]["chosen"]["net_ev"] < low_quiz["grade"]["chosen"]["net_ev"]
     assert high_trainer["feedback"]["chosen"]["net_ev"] < low_trainer["feedback"]["chosen"]["net_ev"]

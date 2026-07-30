@@ -31,19 +31,25 @@ OUTCOME_KINDS = frozenset({
 
 @dataclass(frozen=True)
 class CalibratedRonClaim:
-    """Public-state RON probability and value for one non-actor seat."""
+    """RON probability plus either legacy value or a physically scored hand."""
 
     seat: int
     probability: float
-    value_units: int
+    value_units: int | None = None
+    winning_hand: tuple[int, ...] | None = None
+    scoring_tile: int | None = None
 
     def __post_init__(self) -> None:
         if self.seat not in range(4):
             raise ValueError("calibrated RON seat must be 0-3")
         if not 0.0 <= self.probability <= 1.0:
             raise ValueError("calibrated RON probability must be between 0 and 1")
-        if self.value_units < 0:
+        if self.value_units is not None and self.value_units < 0:
             raise ValueError("calibrated RON value must be non-negative")
+        if (self.winning_hand is None) != (self.scoring_tile is None):
+            raise ValueError("calibrated RON hand and scoring tile must be supplied together")
+        if (self.value_units is None) == (self.winning_hand is None):
+            raise ValueError("calibrated RON requires exactly one value source")
 
 
 CalibratedRon = Callable[
@@ -225,9 +231,27 @@ def _resolved_ron_terminal(
             )
             deltas = [total + delta for total, delta in zip(deltas, payment)]
         else:
-            value = estimates[winner].value_units
-            deltas[winner] += value
-            deltas[discarder] -= value
+            claim = estimates[winner]
+            if claim.winning_hand is not None:
+                payment, value = _settlement(
+                    "ron",
+                    winner,
+                    discarder,
+                    players,
+                    claim.winning_hand,
+                    claim.scoring_tile,
+                    dealer_streak,
+                    scheme,
+                )
+                deltas = [
+                    total + delta
+                    for total, delta in zip(deltas, payment)
+                ]
+            else:
+                assert claim.value_units is not None
+                value = claim.value_units
+                deltas[winner] += value
+                deltas[discarder] -= value
         values.append(value)
     return _terminal(
         "self_ron" if acting_seat in winners else "opponent_ron",

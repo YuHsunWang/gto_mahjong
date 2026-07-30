@@ -643,6 +643,12 @@ class _TrialWorld:
     terminal_seed: int | None = None
     wall_order: tuple[int, ...] | None = None
     hidden_stratum: int | None = None
+    ron_value_hands: tuple[
+        tuple[tuple[int, ...], int] | None,
+        tuple[tuple[int, ...], int] | None,
+        tuple[tuple[int, ...], int] | None,
+        tuple[tuple[int, ...], int] | None,
+    ] = (None, None, None, None)
 
 
 class _OrderedWallRandom:
@@ -900,6 +906,58 @@ def _construct_tenpai_hand(
     return None
 
 
+def _ron_value_hand(
+    hand: list[int],
+    available: list[int],
+    melds_declared: int,
+    rng: random.Random,
+) -> tuple[tuple[int, ...], int]:
+    """Return one physical completion used only to value a calibrated RON.
+
+    A sampled tenpai hand keeps its exact tiles.  A non-tenpai sample conflicts
+    with the calibrated event, so redeterminize that seat from its own tiles
+    plus the still-unassigned pool, conditional on tenpai.  In both cases the
+    returned tile is a real wait with a physically available copy.
+    """
+    source = [
+        available[tile] + hand[tile]
+        for tile in range(34)
+    ]
+    tenpai = (
+        hand.copy()
+        if _production_shanten(tuple(hand), melds_declared) == 0
+        else None
+    )
+
+    def physical_waits(candidate: list[int]) -> list[int]:
+        waits = []
+        for tile in range(34):
+            if candidate[tile] >= source[tile]:
+                continue
+            completed = candidate.copy()
+            completed[tile] += 1
+            if _production_shanten(tuple(completed), melds_declared) == -1:
+                waits.append(tile)
+        return waits
+
+    waits = [] if tenpai is None else physical_waits(tenpai)
+    if not waits:
+        tenpai = _construct_tenpai_hand(
+            source,
+            sum(hand),
+            melds_declared,
+            rng,
+        )
+        if tenpai is None:
+            raise RuntimeError("unable to determinize a calibrated RON value hand")
+        waits = physical_waits(tenpai)
+        if not waits:
+            raise RuntimeError("calibrated RON value hand has no physical wait")
+    winning_tile = rng.choice(waits)
+    tenpai[winning_tile] += 1
+    return tuple(tenpai), winning_tile
+
+
 def _sample_production_world(
     hand: tuple[int, ...],
     seen: tuple[int, ...],
@@ -908,6 +966,7 @@ def _sample_production_world(
     context_template: WinContext | WinValueContext | None,
     world_seed: int,
     tenpai_quantiles: tuple[float, ...] | None = None,
+    calibrated_ron_values: bool = False,
 ) -> _TrialWorld:
     from .selfplay import Player
 
@@ -928,6 +987,7 @@ def _sample_production_world(
         for tile in range(34)
     ]
     rng = random.Random(world_seed)
+    value_rng = random.Random(f"calibrated-ron-value:{world_seed}")
     opponent_ordinal = 0
     for seat, player in enumerate(players):
         if seat == acting_seat:
@@ -963,6 +1023,23 @@ def _sample_production_world(
             for tile, count in enumerate(sampled):
                 remaining[tile] -= count
         player.hand[:] = sampled
+    ron_value_hands = (
+        tuple(
+            (
+                None
+                if seat == acting_seat
+                else _ron_value_hand(
+                    player.hand,
+                    remaining,
+                    len(player.melds) + len(player.kongs),
+                    value_rng,
+                )
+            )
+            for seat, player in enumerate(players)
+        )
+        if calibrated_ron_values
+        else (None, None, None, None)
+    )
     pool = [
         tile
         for tile, count in enumerate(remaining)
@@ -974,6 +1051,7 @@ def _sample_production_world(
         tuple(players),
         wall,
         terminal_seed=rng.randrange(2**64),
+        ron_value_hands=ron_value_hands,
     )
 
 
@@ -1032,7 +1110,12 @@ def _rollout_entry(
 def _calibrated_ron(
     calibration: Calibration,
     acting_seat: int,
-    scheme: ScoringScheme,
+    ron_value_hands: tuple[
+        tuple[tuple[int, ...], int] | None,
+        tuple[tuple[int, ...], int] | None,
+        tuple[tuple[int, ...], int] | None,
+        tuple[tuple[int, ...], int] | None,
+    ],
 ):
     from .rollout import CalibratedRonClaim
     from .selfplay import _public_counts, _view
@@ -1060,10 +1143,28 @@ def _calibrated_ron(
                 )
                 else calibration.deal_in_probability(assessment.score)
             )
+            can_complete = player.hand[tile] < 4
+            completed = player.hand.copy()
+            if can_complete:
+                completed[tile] += 1
+            if (
+                can_complete
+                and _production_shanten(
+                    tuple(completed),
+                    len(player.melds) + len(player.kongs),
+                )
+                == -1
+            ):
+                value_hand = (tuple(completed), tile)
+            else:
+                value_hand = ron_value_hands[seat]
+                if value_hand is None:
+                    raise RuntimeError("missing calibrated RON value hand")
             estimates.append(CalibratedRonClaim(
                 seat,
                 min(1.0, max(0.0, probability or 0.0)),
-                int(opponent_value_estimate(opponent, scheme)),
+                winning_hand=value_hand[0],
+                scoring_tile=value_hand[1],
             ))
         return tuple(estimates)
 
@@ -1140,6 +1241,7 @@ def ev_rank(
         ranked_danger.append((analysis, max_danger))
     base_seed = random.randrange(2**64) if seed is None else seed
     policy = _production_discard_policy if discard_policy is None else discard_policy
+    calibration_active = calibration is not None and rollout_players is None
 
     worlds: list[_TrialWorld] = []
     if rollout_players is not None and rollout_wall is not None:
@@ -1205,6 +1307,7 @@ def ev_rank(
                         quantiles[stratum]
                         for quantiles in opponent_quantiles
                     ),
+                    calibration_active,
                 ),
                 hidden_stratum=stratum,
             )
@@ -1223,15 +1326,18 @@ def ev_rank(
         ]
 
     terminal_cache: dict[int, list[TerminalResult]] = {}
-    calibrated_ron = (
-        _calibrated_ron(calibration, resolved_acting, scheme)
-        if calibration is not None and rollout_players is None
-        else None
-    )
-
     def evaluate(analysis, budget: int) -> EVRankEntry:
         terminals = terminal_cache.setdefault(analysis.discard, [])
         for world in worlds[len(terminals):budget]:
+            calibrated_ron = (
+                _calibrated_ron(
+                    calibration,
+                    resolved_acting,
+                    world.ron_value_hands,
+                )
+                if calibration_active
+                else None
+            )
             terminal_rng = (
                 _OrderedWallRandom(world.wall, world.wall_order)
                 if world.wall_order is not None

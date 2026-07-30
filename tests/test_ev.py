@@ -136,6 +136,21 @@ def test_determinized_opponents_track_public_tenpai_state_and_conserve_tiles():
     assert sampled_rate(declared, samples=32) == 1.0
 
 
+def test_calibrated_ron_value_redeterminizes_non_tenpai_to_a_physical_win():
+    hand = list(parse_tiles("147m147p147s1234567z"))
+    available = [4 - count for count in hand]
+
+    first = ev._ron_value_hand(hand, available, 0, Random(41))
+    repeat = ev._ron_value_hand(hand, available, 0, Random(41))
+    completed, winning_tile = first
+
+    assert ev._production_shanten(tuple(hand), 0) > 0
+    assert first == repeat
+    assert ev._production_shanten(completed, 0) == -1
+    assert completed[winning_tile] > 0
+    assert score_hand(completed, (), WinContext(winning_tile)).value_units >= 4
+
+
 def test_immediate_actor_deal_in_is_a_negative_terminal_payment():
     class CalibrationMustNotRun:
         def deal_in_probability(self, _danger_score):
@@ -241,6 +256,41 @@ def test_calibrated_ron_is_one_zero_sum_terminal_payment():
     assert terminal.kind == "opponent_ron"
     assert terminal.deltas == (-7, 7, 0, 0)
     assert terminal.value_units == 7
+    assert terminal.ron_winners == (1,)
+
+
+def test_calibrated_ron_hand_uses_physical_settlement_and_stays_zero_sum():
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand = list(POST_DRAW)
+    completed = parse_tiles("123456m123p123s333z66z")
+    winning_tile = _tile("6z")
+    hand_value = score_hand(
+        completed, (), WinContext(winning_tile),
+    ).value_units
+    terminal = resolve_terminal(
+        players,
+        (),
+        0,
+        1,
+        _tile("1m"),
+        _policy_discard,
+        Random(1),
+        calibrated_ron=lambda _players, _discarder, _tile: (
+            CalibratedRonClaim(
+                1,
+                1.0,
+                winning_hand=completed,
+                scoring_tile=winning_tile,
+            ),
+        ),
+    )
+
+    # Seat 0 is the dealer, so the physical ron settlement adds its bilateral
+    # one-tai dealer leg to the non-dealer winner's hand value.
+    assert terminal.deltas == (-(hand_value + 1), hand_value + 1, 0, 0)
+    assert sum(terminal.deltas) == 0
+    assert terminal.value_units == hand_value
+    assert terminal.kind == "opponent_ron"
     assert terminal.ron_winners == (1,)
 
 
