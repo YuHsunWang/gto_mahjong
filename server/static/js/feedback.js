@@ -96,12 +96,21 @@ export function evDetailsEl(entries, {
   const defense = defensePlanEl(entries.find((entry) => entry.is_fold));
   if (defense) details.append(defense);
   if (topGap) {
+    // The top-two gap is always a post-selection interval, so the payload carries
+    // descriptive_interval95; ci95 only appears on non-selected moments.
+    const interval = topGap.descriptive_interval95 ?? topGap.ci95 ?? null;
     const uncertainty = document.createElement('div');
     uncertainty.className = 'note';
-    uncertainty.textContent = `前兩名 paired 差值 ${topGap.mean.toFixed(2)}，95% CI `
-      + `[${topGap.ci95[0].toFixed(2)}, ${topGap.ci95[1].toFixed(2)}]；`
-      + `${topGap.wording === 'clear' ? '差異達門檻' : '排名不確定／邊緣'}`;
+    uncertainty.textContent = `前兩名 paired 差值 ${topGap.mean.toFixed(2)}`
+      + (interval ? `，95% CI [${interval[0].toFixed(2)}, ${interval[1].toFixed(2)}]` : '')
+      + `；${topGap.wording === 'clear' ? '差異達門檻' : '排名不確定／邊緣'}`;
     details.append(uncertainty);
+    if (topGap.interval_note) {
+      const caveat = document.createElement('div');
+      caveat.className = 'note';
+      caveat.textContent = topGap.interval_note;
+      details.append(caveat);
+    }
   }
   if (explain) {
     const pre = document.createElement('div');

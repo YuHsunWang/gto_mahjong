@@ -1,0 +1,455 @@
+[
+  {
+    "label": "home/phone-compact-320x568",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "home/phone-375x812",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "home/phone-390x844",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "home/phone-landscape-844x390",
+    "blockedLandscape": true,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "home/tablet-portrait-768x1024",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "home/tablet-landscape-1024x768",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "home/desktop-1440x900",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "trainer-setup/phone-compact-320x568",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "trainer-setup/phone-375x812",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "trainer-setup/phone-390x844",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "trainer-setup/phone-landscape-844x390",
+    "blockedLandscape": true,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "trainer-setup/tablet-portrait-768x1024",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "trainer-setup/tablet-landscape-1024x768",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "trainer-setup/desktop-1440x900",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-awaiting/phone-compact-320x568",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-awaiting/phone-375x812",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-awaiting/phone-390x844",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-awaiting/phone-landscape-844x390",
+    "blockedLandscape": true,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-awaiting/tablet-portrait-768x1024",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-awaiting/tablet-landscape-1024x768",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-awaiting/desktop-1440x900",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-feedback/phone-compact-320x568",
+    "blockedLandscape": false,
+    "wanted": "details.evwrap",
+    "wantedPresent": false,
+    "pageErrors": [
+      "Cannot read properties of undefined (reading '0')"
+    ]
+  },
+  {
+    "label": "quiz-feedback/phone-375x812",
+    "blockedLandscape": false,
+    "wanted": "details.evwrap",
+    "wantedPresent": false,
+    "pageErrors": [
+      "Cannot read properties of undefined (reading '0')"
+    ]
+  },
+  {
+    "label": "quiz-feedback/phone-390x844",
+    "blockedLandscape": false,
+    "wanted": "details.evwrap",
+    "wantedPresent": false,
+    "pageErrors": [
+      "Cannot read properties of undefined (reading '0')"
+    ]
+  },
+  {
+    "label": "quiz-feedback/phone-landscape-844x390",
+    "blockedLandscape": true,
+    "wanted": "details.evwrap",
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-feedback/tablet-portrait-768x1024",
+    "blockedLandscape": false,
+    "wanted": "details.evwrap",
+    "wantedPresent": false,
+    "pageErrors": [
+      "Cannot read properties of undefined (reading '0')"
+    ]
+  },
+  {
+    "label": "quiz-feedback/tablet-landscape-1024x768",
+    "blockedLandscape": false,
+    "wanted": "details.evwrap",
+    "wantedPresent": false,
+    "pageErrors": [
+      "Cannot read properties of undefined (reading '0')"
+    ]
+  },
+  {
+    "label": "quiz-feedback/desktop-1440x900",
+    "blockedLandscape": false,
+    "wanted": "details.evwrap",
+    "wantedPresent": false,
+    "pageErrors": [
+      "Cannot read properties of undefined (reading '0')"
+    ]
+  },
+  {
+    "label": "endgame-awaiting/phone-compact-320x568",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-awaiting/phone-375x812",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-awaiting/phone-390x844",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-awaiting/phone-landscape-844x390",
+    "blockedLandscape": true,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-awaiting/tablet-portrait-768x1024",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-awaiting/tablet-landscape-1024x768",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-awaiting/desktop-1440x900",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-feedback/phone-compact-320x568",
+    "blockedLandscape": false,
+    "wanted": "details.evwrap",
+    "wantedPresent": false,
+    "pageErrors": [
+      "Cannot read properties of undefined (reading '0')"
+    ]
+  },
+  {
+    "label": "endgame-feedback/phone-375x812",
+    "blockedLandscape": false,
+    "wanted": "details.evwrap",
+    "wantedPresent": false,
+    "pageErrors": [
+      "Cannot read properties of undefined (reading '0')"
+    ]
+  },
+  {
+    "label": "endgame-feedback/phone-390x844",
+    "blockedLandscape": false,
+    "wanted": "details.evwrap",
+    "wantedPresent": false,
+    "pageErrors": [
+      "Cannot read properties of undefined (reading '0')"
+    ]
+  },
+  {
+    "label": "endgame-feedback/phone-landscape-844x390",
+    "blockedLandscape": true,
+    "wanted": "details.evwrap",
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-feedback/tablet-portrait-768x1024",
+    "blockedLandscape": false,
+    "wanted": "details.evwrap",
+    "wantedPresent": false,
+    "pageErrors": [
+      "Cannot read properties of undefined (reading '0')"
+    ]
+  },
+  {
+    "label": "endgame-feedback/tablet-landscape-1024x768",
+    "blockedLandscape": false,
+    "wanted": "details.evwrap",
+    "wantedPresent": false,
+    "pageErrors": [
+      "Cannot read properties of undefined (reading '0')"
+    ]
+  },
+  {
+    "label": "endgame-feedback/desktop-1440x900",
+    "blockedLandscape": false,
+    "wanted": "details.evwrap",
+    "wantedPresent": false,
+    "pageErrors": [
+      "Cannot read properties of undefined (reading '0')"
+    ]
+  },
+  {
+    "label": "lessons-detail/phone-compact-320x568",
+    "blockedLandscape": false,
+    "wanted": ".evtable",
+    "wantedPresent": true,
+    "pageErrors": []
+  },
+  {
+    "label": "lessons-detail/phone-375x812",
+    "blockedLandscape": false,
+    "wanted": ".evtable",
+    "wantedPresent": true,
+    "pageErrors": []
+  },
+  {
+    "label": "lessons-detail/phone-390x844",
+    "blockedLandscape": false,
+    "wanted": ".evtable",
+    "wantedPresent": true,
+    "pageErrors": []
+  },
+  {
+    "label": "lessons-detail/phone-landscape-844x390",
+    "blockedLandscape": true,
+    "wanted": ".evtable",
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "lessons-detail/tablet-portrait-768x1024",
+    "blockedLandscape": false,
+    "wanted": ".evtable",
+    "wantedPresent": true,
+    "pageErrors": []
+  },
+  {
+    "label": "lessons-detail/tablet-landscape-1024x768",
+    "blockedLandscape": false,
+    "wanted": ".evtable",
+    "wantedPresent": true,
+    "pageErrors": []
+  },
+  {
+    "label": "lessons-detail/desktop-1440x900",
+    "blockedLandscape": false,
+    "wanted": ".evtable",
+    "wantedPresent": true,
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/phone-compact-320x568",
+    "error": "locator.waitFor: Timeout 120000ms exceeded.",
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/phone-375x812",
+    "error": "locator.waitFor: Timeout 120000ms exceeded.",
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/phone-390x844",
+    "error": "locator.waitFor: Timeout 120000ms exceeded.",
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/phone-landscape-844x390",
+    "blockedLandscape": true,
+    "wanted": "details.evwrap",
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/tablet-portrait-768x1024",
+    "error": "locator.waitFor: Timeout 120000ms exceeded.",
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/tablet-landscape-1024x768",
+    "error": "locator.waitFor: Timeout 120000ms exceeded.",
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/desktop-1440x900",
+    "error": "locator.waitFor: Timeout 120000ms exceeded.",
+    "pageErrors": []
+  },
+  {
+    "label": "score-results/phone-compact-320x568",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "score-results/phone-375x812",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "score-results/phone-390x844",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "score-results/phone-landscape-844x390",
+    "blockedLandscape": true,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "score-results/tablet-portrait-768x1024",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "score-results/tablet-landscape-1024x768",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  },
+  {
+    "label": "score-results/desktop-1440x900",
+    "blockedLandscape": false,
+    "wanted": null,
+    "wantedPresent": null,
+    "pageErrors": []
+  }
+]
