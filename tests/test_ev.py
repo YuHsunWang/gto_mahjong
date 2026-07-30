@@ -259,6 +259,34 @@ def test_calibrated_ron_is_one_zero_sum_terminal_payment():
     assert terminal.ron_winners == (1,)
 
 
+def test_calibrated_push_records_opening_discard_before_continuation():
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand = list(POST_DRAW)
+    for player in players[1:]:
+        player.hand = list(TENPAI)
+    snapshots = []
+
+    def no_claims(current, _discarder, _tile):
+        snapshots.append(tuple(len(player.river) for player in current))
+        return ()
+
+    resolve_terminal(
+        players,
+        (_tile("9m"),),
+        0,
+        1,
+        _tile("1m"),
+        lambda hand, _remaining, _melds: next(
+            tile for tile, count in enumerate(hand) if count
+        ),
+        Random(1),
+        calibrated_ron=no_claims,
+    )
+
+    assert snapshots[0][0] == 0
+    assert snapshots[1][0] == 1
+
+
 def test_calibrated_ron_hand_uses_physical_settlement_and_stays_zero_sum():
     players = [Player("attack") for _ in range(4)]
     players[0].hand = list(POST_DRAW)
@@ -485,6 +513,43 @@ def test_crn_reuses_the_same_wall_order_for_every_candidate(monkeypatch):
     schedules = [schedule[:12] for schedule in choices.values()]
     assert schedules
     assert all(schedule == schedules[0] for schedule in schedules[1:])
+
+
+def test_fold_and_push_with_same_discard_have_separate_terminal_cache(monkeypatch):
+    import taimahjong.rollout as rollout
+
+    calls = []
+
+    def fake_terminal(
+        players, wall, acting_seat, next_seat, discard, discard_policy, rng,
+        **kwargs,
+    ):
+        defensive = kwargs["acting_discard_policy"] is not None
+        calls.append((discard, defensive))
+        payment = -1 if defensive else 1
+        deltas = [0, 0, 0, 0]
+        deltas[acting_seat] = payment
+        deltas[(acting_seat + 1) % 4] = -payment
+        return rollout.TerminalResult(
+            "draw", None, None, None, tuple(deltas), 0,
+        )
+
+    monkeypatch.setattr(rollout, "resolve_terminal", fake_terminal)
+    ranked = ev_rank(
+        POST_DRAW, [], (0,) * 34,
+        turns=1, sims=2, seed=19, exhaustive=True,
+    )
+    fold = next(entry for entry in ranked if entry.is_fold)
+    push = next(
+        entry
+        for entry in ranked
+        if not entry.is_fold and entry.discard == fold.discard
+    )
+
+    assert calls.count((fold.discard, False)) == 2
+    assert calls.count((fold.discard, True)) == 2
+    assert push.trial_values == (1.0, 1.0)
+    assert fold.trial_values == (-1.0, -1.0)
 
 
 def test_legacy_draw_value_cannot_change_zero_payment_draw_terminals(monkeypatch):

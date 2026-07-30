@@ -31,6 +31,18 @@ def test_crafted_late_state_fold_beats_push_from_lower_future_risk():
     assert fold.action_plan.principles
 
 
+def test_fold_continuation_preserves_repeated_genbutsu():
+    current = parse_tiles("112m345p678s1234567z")
+    opponent = OpponentView(parse_river("3m12m"), [], 0)
+    visible = (1, 1, 1) + (0,) * 31
+
+    # Both 1m and 2m are declared-safe.  Spending 1m leaves another safe copy;
+    # spending the singleton 2m would remove that safe kind from inventory.
+    assert ev._fold_choice(
+        current, visible, (opponent,), None, ev.DEFAULT_SCHEME,
+    ) == 0
+
+
 def test_trainer_can_execute_the_returned_fold_first_discard(monkeypatch):
     monkeypatch.setattr("taimahjong.quiz.EV_SIMS", 2)
     monkeypatch.setattr("taimahjong.quiz.REFINE_SIMS", 2)

@@ -16,9 +16,14 @@ from .selfplay import (
     _settle_ron_winners,
     _settlement,
 )
+from .tiles import validate_counts
 
 
 DiscardPolicy = Callable[[tuple[int, ...], tuple[int, ...], int], int]
+ContinuationDiscardPolicy = Callable[
+    [tuple[int, ...], tuple[int, ...], tuple[int, ...], int],
+    int,
+]
 PaymentDeltas = tuple[int, int, int, int]
 OUTCOME_KINDS = frozenset({
     "self_tsumo",
@@ -277,12 +282,27 @@ def resolve_terminal(
     scheme: ScoringScheme = DEFAULT_SCHEME,
     rules: RulesConfig = DEFAULT_RULES,
     calibrated_ron: CalibratedRon | None = None,
+    acting_discard_policy: ContinuationDiscardPolicy | None = None,
+    visible: Sequence[int] | None = None,
 ) -> TerminalResult:
-    """Sample one wall order and return its one coherent terminal payment."""
+    """Sample one wall order and return its one coherent terminal payment.
+
+    An acting-seat continuation starts from the caller's validated public
+    counts, then adds the opening discard and every surviving rollout discard
+    exactly once.  It never reconstructs visibility from rollout players,
+    whose river/meld representation may retain a called tile in both places.
+    """
     if acting_seat not in range(4) or next_seat not in range(4):
         raise ValueError("acting and next seats must be 0-3")
     if discard not in range(34):
         raise ValueError("discard must be a tile index from 0 through 33")
+    if acting_discard_policy is not None and visible is None:
+        raise ValueError("acting discard policy requires visible tile counts")
+    running_visible = (
+        list(validate_counts(visible))
+        if acting_discard_policy is not None and visible is not None
+        else None
+    )
     trial_players = _copy_players(players)
     if not trial_players[acting_seat].hand[discard]:
         raise ValueError("discard must be present in the acting hand")
@@ -318,6 +338,11 @@ def resolve_terminal(
                 dealer_streak,
                 scheme,
             )
+        if acting_discard_policy is not None:
+            trial_players[acting_seat].river.append(RiverEntry(discard))
+            trial_players[acting_seat].discards += 1
+    if running_visible is not None:
+        running_visible[discard] += 1
 
     remaining = [0] * 34
     for tile in wall:
@@ -358,8 +383,17 @@ def resolve_terminal(
                 value,
             )
 
-        discarded = discard_policy(
-            tuple(player.hand), tuple(remaining), _declared(player),
+        discarded = (
+            acting_discard_policy(
+                tuple(player.hand),
+                tuple(remaining),
+                tuple(running_visible),
+                _declared(player),
+            )
+            if current == acting_seat and acting_discard_policy is not None
+            else discard_policy(
+                tuple(player.hand), tuple(remaining), _declared(player),
+            )
         )
         if discarded not in range(34) or not player.hand[discarded]:
             raise ValueError("discard policy returned a tile absent from the hand")
@@ -395,6 +429,12 @@ def resolve_terminal(
                     dealer_streak,
                     scheme,
                 )
+            if acting_discard_policy is not None:
+                origin = "tsumogiri" if discarded == tile else "tedashi"
+                player.river.append(RiverEntry(discarded, origin))
+                player.discards += 1
+        if running_visible is not None:
+            running_visible[discarded] += 1
         current = (current + 1) % 4
 
     return _terminal("draw", None, None, None, (0, 0, 0, 0), 0)

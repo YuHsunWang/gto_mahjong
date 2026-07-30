@@ -32,6 +32,7 @@ from .tiles import validate_counts
 from .ukeire import discard_analysis
 
 if TYPE_CHECKING:
+    from .rollout import ContinuationDiscardPolicy
     from .rollout import DiscardPolicy as TerminalDiscardPolicy
     from .rollout import TerminalResult
     from .selfplay import Player
@@ -480,7 +481,7 @@ def _fold_choice(
     calibration: Calibration | None,
     scheme: ScoringScheme,
 ) -> int:
-    """Genbutsu-first, then minimum conditional loss with safe inventory."""
+    """Genbutsu-first, then minimum loss, retaining repeated safe tiles."""
     if not opponents:
         return next(tile for tile, count in enumerate(current) if count)
     candidates: list[tuple[int, float, bool]] = []
@@ -498,15 +499,12 @@ def _fold_choice(
         candidates.append((tile, loss, genbutsu))
     if not candidates:
         raise ValueError("fold policy requires at least one discardable tile")
-    safe_copies = sum(
-        current[tile] for tile, loss, _ in candidates if loss == 0.0
-    )
     ranked = [
         (
             (
                 0 if genbutsu else 1,
                 loss,
-                -(safe_copies - (1 if loss == 0.0 else 0)),
+                -current[tile] if loss == 0.0 else 0,
                 tile,
             ),
             tile,
@@ -520,7 +518,7 @@ def _fold_policy(
     opponents: tuple[OpponentView, ...],
     calibration: Calibration | None,
     scheme: ScoringScheme,
-) -> DiscardPolicy:
+) -> ContinuationDiscardPolicy:
     @lru_cache(maxsize=50_000)
     def cached(
         current: tuple[int, ...],
@@ -1200,9 +1198,11 @@ def ev_rank(
 
     Every candidate sample is one call to :func:`resolve_terminal`, hence one
     coherent game with one mutually exclusive terminal. Candidates share trial
-    worlds and random streams (CRN). ``discard_policy`` remains injectable
-    because corpus agreement with the oracle certifies rollout machinery only,
-    not the realism of the default production opponent model.
+    worlds and random streams (CRN). Push candidates use ``discard_policy`` for
+    every seat; the separately labeled fold entry replaces only the acting
+    seat's continuation with deterministic defense. ``discard_policy`` remains
+    injectable because corpus agreement with the oracle certifies rollout
+    machinery only, not the realism of the default production opponent model.
 
     Supplying ``rollout_players`` and ``rollout_wall`` injects a fully known
     state for machinery validation. Short injected walls (up to four tiles)
@@ -1325,9 +1325,19 @@ def ev_rank(
             for trial in range(sims)
         ]
 
-    terminal_cache: dict[int, list[TerminalResult]] = {}
-    def evaluate(analysis, budget: int) -> EVRankEntry:
-        terminals = terminal_cache.setdefault(analysis.discard, [])
+    # Push and fold are different continuation policies.  Keep their terminal
+    # samples separate even when they share the same opening discard.
+    terminal_cache: dict[tuple[str, int], list[TerminalResult]] = {}
+    def evaluate(
+        analysis,
+        budget: int,
+        *,
+        policy_key: str = "push",
+        acting_discard_policy: ContinuationDiscardPolicy | None = None,
+    ) -> EVRankEntry:
+        terminals = terminal_cache.setdefault(
+            (policy_key, analysis.discard), [],
+        )
         for world in worlds[len(terminals):budget]:
             calibrated_ron = (
                 _calibrated_ron(
@@ -1355,6 +1365,8 @@ def ev_rank(
                 scheme=scheme,
                 rules=rules,
                 calibrated_ron=calibrated_ron,
+                acting_discard_policy=acting_discard_policy,
+                visible=seen,
             ))
         hidden_strata = tuple(
             world.hidden_stratum
@@ -1424,17 +1436,17 @@ def ev_rank(
             else [evaluate(analysis, sims) for analysis, _ in screened]
         )
 
-    fold_entry = next(
-        (entry for entry in entries if entry.discard == fold_discard),
-        None,
+    fold_analysis = next(
+        analysis
+        for analysis, _ in ranked_danger
+        if analysis.discard == fold_discard
     )
-    if fold_entry is None or fold_entry.sample_count != sims:
-        fold_analysis = next(
-            analysis
-            for analysis, _ in ranked_danger
-            if analysis.discard == fold_discard
-        )
-        fold_entry = evaluate(fold_analysis, sims)
+    fold_entry = evaluate(
+        fold_analysis,
+        sims,
+        policy_key="fold",
+        acting_discard_policy=_fold_policy(views, calibration, scheme),
+    )
     safe_inventory = tuple(
         tile for tile, count in enumerate(hand) if count
         and sum(_discard_losses(
@@ -1457,8 +1469,9 @@ def ev_rank(
             fold_discard,
             safe_inventory,
             (
+                "defensive_continuation_each_turn",
                 "genbutsu_first",
-                "minimum_conditional_loss_for_opening_discard",
+                "minimum_conditional_loss_each_turn",
                 "preserve_safe_inventory",
             ),
         ),

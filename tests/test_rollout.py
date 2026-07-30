@@ -6,6 +6,7 @@ from math import sqrt
 from random import Random
 
 from taimahjong.config import DEFAULT_RULES
+from taimahjong.danger import RiverEntry
 from taimahjong.ev import _production_discard_policy
 from taimahjong.reference_ev import (
     OUTCOME_KINDS,
@@ -134,6 +135,70 @@ def test_resolve_terminal_supports_declared_melds_including_actor():
         ) == 1
         assert len(terminal.deltas) == 4
         assert sum(terminal.deltas) == 0
+
+
+def test_acting_continuation_advances_caller_visible_by_each_discard_once():
+    concealed = parse_tiles("147m147p147s1234567z")
+    actor_concealed = parse_tiles("147m147p147s12345z")
+    called = next(
+        tile for tile, count in enumerate(parse_tiles("5s")) if count
+    )
+    opening = next(
+        tile for tile, count in enumerate(parse_tiles("1m")) if count
+    )
+    wall = tuple(
+        tile
+        for text in ("2m", "3m", "5m", "6m", "8m", "9m", "2p", "3p")
+        for tile, count in enumerate(parse_tiles(text))
+        if count
+    )
+    players = [Player("attack", list(concealed)) for _ in range(4)]
+    players[0].hand = list(actor_concealed)
+    players[0].melds.append((called, called, called))
+    players[1].river.append(RiverEntry(called))
+    players[2].river.append(RiverEntry(called))
+    visible = [0] * 34
+    visible[called] = 4
+    opponent_discards = []
+    actor_discards = []
+    snapshots = []
+
+    def rollout_discard(hand, _remaining, _melds):
+        discarded = next(tile for tile in wall if hand[tile])
+        opponent_discards.append(discarded)
+        return discarded
+
+    def acting_discard(hand, _remaining, public, _melds):
+        snapshots.append(public)
+        discarded = next(tile for tile in wall if hand[tile])
+        actor_discards.append(discarded)
+        return discarded
+
+    terminal = resolve_terminal(
+        players,
+        wall,
+        0,
+        1,
+        opening,
+        rollout_discard,
+        Random(7),
+        acting_discard_policy=acting_discard,
+        visible=visible,
+    )
+
+    first_expected = visible.copy()
+    first_expected[opening] += 1
+    for discarded in opponent_discards[:3]:
+        first_expected[discarded] += 1
+    second_expected = first_expected.copy()
+    second_expected[actor_discards[0]] += 1
+    for discarded in opponent_discards[3:6]:
+        second_expected[discarded] += 1
+
+    assert terminal.kind == "draw"
+    assert snapshots == [tuple(first_expected), tuple(second_expected)]
+    assert snapshots[0][opening] == snapshots[1][opening] == 1
+    assert snapshots[0][called] == snapshots[1][called] == 4
 
 
 def test_rollout_converges_to_exact_oracle_and_covers_reachable_kinds():
