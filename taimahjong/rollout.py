@@ -36,7 +36,13 @@ OUTCOME_KINDS = frozenset({
 
 @dataclass(frozen=True)
 class CalibratedRonClaim:
-    """RON probability plus either legacy value or a physically scored hand."""
+    """RON probability plus either legacy value or a physically scored hand.
+
+    A callback may claim for the acting seat as well as its opponents.  That is
+    required when probabilities are marginal over concealed hand state: making
+    only the acting seat prove a physical completion would bias the channel by
+    caller identity.
+    """
 
     seat: int
     probability: float
@@ -201,8 +207,8 @@ def _resolved_ron_terminal(
         claim.seat: claim
         for claim in calibrated_ron(players, discarder, winning_tile)
     }
-    if discarder in estimates or acting_seat in estimates:
-        raise ValueError("calibrated RON claims must exclude discarder and acting seat")
+    if discarder in estimates:
+        raise ValueError("calibrated RON claims must exclude the discarder")
     sampled = {
         seat
         for seat, claim in sorted(estimates.items())
@@ -211,7 +217,13 @@ def _resolved_ron_terminal(
     winners = resolve_ron_claims(
         discarder,
         lambda seat: (
-            physical_actor_claim if seat == acting_seat else seat in sampled
+            (
+                seat in sampled
+                if seat in estimates
+                else physical_actor_claim
+            )
+            if seat == acting_seat
+            else seat in sampled
         ),
         rules,
     )
@@ -221,7 +233,7 @@ def _resolved_ron_terminal(
     deltas = [0, 0, 0, 0]
     values: list[int] = []
     for winner in winners:
-        if winner == acting_seat:
+        if winner == acting_seat and winner not in estimates:
             completed = players[winner].hand.copy()
             completed[winning_tile] += 1
             payment, value = _settlement(

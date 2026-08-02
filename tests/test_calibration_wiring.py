@@ -72,14 +72,23 @@ def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monk
             step=low_state["step"], action="discard", tile=tile, scheme="3-1",
         ),
     )
-    low_stateless = api.ev_rank_endpoint(api.EvRankRequest(
+    # Both stateless runs must be exhaustive. The screener keeps whichever
+    # candidates could still be best *under that calibration*, so a 200x swing
+    # in deal-in probability legitimately returns different top-k sets — low
+    # keeps 19/18/20/9/2/0 and high keeps 11/1/10/9/0. Comparing one discard
+    # across the two runs then depends on the sets happening to overlap, which
+    # is not the property under test. Over the full legal set the comparison is
+    # always well defined.
+    stateless_request = dict(
         hand="123m123p123s11122233z",
         river="9m9p1z",
         turns=1,
         sims=50,
         seed=17,
         scheme="3-1",
-    ))
+        exhaustive=True,
+    )
+    low_stateless = api.ev_rank_endpoint(api.EvRankRequest(**stateless_request))
     stateless_discard = next(
         entry["discard"] for entry in low_stateless["entries"] if not entry["is_fold"]
     )
@@ -93,14 +102,7 @@ def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monk
             step=high_state["step"], action="discard", tile=tile, scheme="3-1",
         ),
     )
-    high_stateless = api.ev_rank_endpoint(api.EvRankRequest(
-        hand="123m123p123s11122233z",
-        river="9m9p1z",
-        turns=1,
-        sims=50,
-        seed=17,
-        scheme="3-1",
-    ))
+    high_stateless = api.ev_rank_endpoint(api.EvRankRequest(**stateless_request))
 
     assert high_quiz["grade"]["chosen"]["risk_ev"] > low_quiz["grade"]["chosen"]["risk_ev"]
     assert high_trainer["feedback"]["chosen"]["risk_ev"] > low_trainer["feedback"]["chosen"]["risk_ev"]

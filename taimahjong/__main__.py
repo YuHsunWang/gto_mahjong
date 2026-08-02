@@ -73,22 +73,49 @@ def _parse_opponent_melds(text: str | None) -> list[tuple[int, int, int]]:
     return melds
 
 
-def _opponent_view(args) -> OpponentView:
-    """Build the modeled opponent from the shared --opp-* flags.
+def _opponent_view(args, number: int = 1) -> OpponentView:
+    """Build one modeled opponent from the shared --opp[-N]-* flags.
 
     Dealer identity is part of that state: settlement always applies the 莊 and
     連莊 premium to one seat, so leaving an opponent unflagged does not remove
     the premium, it just hands it to whichever seat the sampler filled first.
     """
-    if args.opp_streak and not args.opp_dealer:
-        raise ValueError("--opp-streak requires --opp-dealer")
+    prefix = "opp" if number == 1 else f"opp{number}"
+    river = getattr(args, f"{prefix}_river")
+    melds = getattr(args, f"{prefix}_melds")
+    declared = getattr(args, f"{prefix}_declared")
+    dealer = getattr(args, f"{prefix}_dealer")
+    streak = getattr(args, f"{prefix}_streak")
+    flag = "--opp" if number == 1 else f"--opp{number}"
+    if streak and not dealer:
+        raise ValueError(f"{flag}-streak requires {flag}-dealer")
     return OpponentView(
-        parse_river(args.opp_river),
-        _parse_opponent_melds(args.opp_melds),
-        args.opp_declared,
-        is_dealer=args.opp_dealer,
-        dealer_streak=args.opp_streak if args.opp_dealer else 0,
+        parse_river(river),
+        _parse_opponent_melds(melds),
+        declared,
+        is_dealer=dealer,
+        dealer_streak=streak if dealer else 0,
     )
+
+
+def _opponent_views(args, mode: str) -> list[OpponentView]:
+    """Collect up to three opponents while preserving legacy seat-one flags."""
+    opponents = []
+    for number in range(1, 4):
+        prefix = "opp" if number == 1 else f"opp{number}"
+        present = (
+            getattr(args, f"{prefix}_river")
+            or getattr(args, f"{prefix}_melds")
+            or getattr(args, f"{prefix}_declared") is not None
+            or getattr(args, f"{prefix}_dealer")
+        )
+        if not present:
+            continue
+        flag = "--opp" if number == 1 else f"--opp{number}"
+        if not getattr(args, f"{prefix}_river"):
+            raise ValueError(f"{mode} opponent state requires {flag}-river")
+        opponents.append(_opponent_view(args, number))
+    return opponents
 
 
 def _add_visible(*groups: tuple[int, ...] | list[int]) -> tuple[int, ...]:
@@ -141,6 +168,16 @@ def main() -> None:
     parser.add_argument("--opp-declared", type=int, help="migi declaration river index (only 0 or 1)")
     parser.add_argument("--opp-dealer", action="store_true", help="the modeled opponent is the dealer (莊)")
     parser.add_argument("--opp-streak", type=int, default=0, help="the modeled opponent's 連莊 count (needs --opp-dealer)")
+    parser.add_argument("--opp2-river", help="ordered compact notation for a second opponent's discards")
+    parser.add_argument("--opp2-melds", help="second opponent's semicolon-separated declared melds")
+    parser.add_argument("--opp2-declared", type=int, help="second opponent's migi declaration river index")
+    parser.add_argument("--opp2-dealer", action="store_true", help="the second opponent is the dealer (莊)")
+    parser.add_argument("--opp2-streak", type=int, default=0, help="the second opponent's 連莊 count")
+    parser.add_argument("--opp3-river", help="ordered compact notation for a third opponent's discards")
+    parser.add_argument("--opp3-melds", help="third opponent's semicolon-separated declared melds")
+    parser.add_argument("--opp3-declared", type=int, help="third opponent's migi declaration river index")
+    parser.add_argument("--opp3-dealer", action="store_true", help="the third opponent is the dealer (莊)")
+    parser.add_argument("--opp3-streak", type=int, default=0, help="the third opponent's 連莊 count")
     parser.add_argument("--others", help="other players' discard kinds for fold estimation")
     parser.add_argument("--tile", help="show the danger shape breakdown for one discard tile (with --danger)")
     parser.add_argument("--my-melds", help="semicolon-separated declared melds of the scored hand, e.g. 123s;777z")
@@ -254,18 +291,17 @@ def main() -> None:
         if args.tile and not args.danger:
             raise ValueError("--tile requires --danger")
         if args.ev:
-            opponent = None
-            if args.opp_river or args.opp_melds or args.opp_declared is not None or args.opp_dealer:
-                if not args.opp_river:
-                    raise ValueError("--ev opponent state requires --opp-river")
-                opponent = _opponent_view(args)
+            opponents = _opponent_views(args, "--ev")
             other_visible = (0,) * 34 if visible is None else visible
             accounting = TileAccounting(
                 _add_visible(
                     other_visible,
-                    _opponent_discard_counts(opponent) if opponent else (0,) * 34,
+                    *(_opponent_discard_counts(opponent) for opponent in opponents),
                 ),
-                _opponent_holding_counts(opponent) if opponent else (0,) * 34,
+                _add_visible(*(
+                    _opponent_holding_counts(opponent)
+                    for opponent in opponents
+                )),
             )
             ev_visible = accounting.visible
             template = WinContext(
@@ -280,7 +316,7 @@ def main() -> None:
             )
             turns = args.turns if args.turns is not None else remaining_draws(counts, accounting)
             entries = ev_rank(
-                counts, [] if opponent is None else [opponent], ev_visible, args.melds, turns,
+                counts, opponents, ev_visible, args.melds, turns,
                 args.sims or 400, args.seed, template,
                 analysis.calibration.calibration, scheme=config.scheme,
             )
@@ -303,18 +339,17 @@ def main() -> None:
                 )
             print("Note: EV is the mean signed payment over coherent four-seat terminals; E[loss] is its loss side.")
         elif args.declare:
-            opponent = None
-            if args.opp_river or args.opp_melds or args.opp_declared is not None or args.opp_dealer:
-                if not args.opp_river:
-                    raise ValueError("--declare opponent state requires --opp-river")
-                opponent = _opponent_view(args)
+            opponents = _opponent_views(args, "--declare")
             other_visible = (0,) * 34 if visible is None else visible
             accounting = TileAccounting(
                 _add_visible(
                     other_visible,
-                    _opponent_discard_counts(opponent) if opponent else (0,) * 34,
+                    *(_opponent_discard_counts(opponent) for opponent in opponents),
                 ),
-                _opponent_holding_counts(opponent) if opponent else (0,) * 34,
+                _add_visible(*(
+                    _opponent_holding_counts(opponent)
+                    for opponent in opponents
+                )),
             )
             declare_visible = accounting.visible
             template = WinContext(
@@ -329,7 +364,7 @@ def main() -> None:
             turns = args.turns if args.turns is not None else remaining_draws(counts, accounting)
             advice = declaration_ev(
                 counts, declare_visible, turns, template, args.sims or 400, args.seed,
-                [] if opponent is None else [opponent], config.scheme,
+                opponents, config.scheme,
             )
             print(f"Hand: {format_tiles(counts)}")
             print(scheme_line)

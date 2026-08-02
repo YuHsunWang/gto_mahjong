@@ -581,8 +581,7 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
 # Stateless analysis: EV ranking and hand scoring
 
 
-class EvRankRequest(SchemeRequest):
-    hand: str
+class EvOpponentRequest(BaseModel):
     river: str = ""
     melds: str = ""
     declared_at: int | None = None
@@ -592,6 +591,17 @@ class EvRankRequest(SchemeRequest):
     # loss estimate then prices that same opponent as a non-dealer.
     is_dealer: bool = False
     dealer_streak: int = Field(default=0, ge=0, le=32)
+
+
+class EvRankRequest(SchemeRequest):
+    hand: str
+    # Legacy top-level fields remain the exact one-opponent wire format.
+    river: str = ""
+    melds: str = ""
+    declared_at: int | None = None
+    is_dealer: bool = False
+    dealer_streak: int = Field(default=0, ge=0, le=32)
+    opponents: list[EvOpponentRequest] = Field(default_factory=list, max_length=3)
     visible: str = ""
     turns: int = Field(default=0, ge=0, le=24)  # 0 = derive from wall_remaining or the visible pool
     wall_remaining: int | None = Field(default=None, ge=0, le=136)
@@ -619,25 +629,43 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
     def run() -> dict[str, Any]:
         analysis = _analysis_context(request)
         counts = parse_tiles(request.hand)
-        opponent: OpponentView | None = None
-        if request.river or request.melds or request.declared_at is not None or request.is_dealer:
-            if not request.river:
+
+        def build_opponent(source: EvRankRequest | EvOpponentRequest) -> OpponentView:
+            if not source.river:
                 raise ValueError("opponent state requires the opponent's river")
             opponent = OpponentView(
-                parse_river(request.river),
-                _parse_melds(request.melds),
-                request.declared_at,
-                is_dealer=request.is_dealer,
-                dealer_streak=request.dealer_streak if request.is_dealer else 0,
+                parse_river(source.river),
+                _parse_melds(source.melds),
+                source.declared_at,
+                is_dealer=source.is_dealer,
+                dealer_streak=source.dealer_streak if source.is_dealer else 0,
             )
             opponent.validate()
+            return opponent
+
+        legacy_present = bool(
+            request.river
+            or request.melds
+            or request.declared_at is not None
+            or request.is_dealer
+        )
+        if request.opponents and legacy_present:
+            raise ValueError("use either legacy opponent fields or opponents, not both")
+        opponents = (
+            [build_opponent(source) for source in request.opponents]
+            if request.opponents
+            else [build_opponent(request)] if legacy_present else []
+        )
         other_out_of_hands = (0,) * 34 if not request.visible.strip() else parse_tiles(request.visible)
         accounting = TileAccounting(
             _add_counts(
                 other_out_of_hands,
-                _opponent_discard_counts(opponent) if opponent else (0,) * 34,
+                *(_opponent_discard_counts(opponent) for opponent in opponents),
             ),
-            _opponent_holding_counts(opponent) if opponent else (0,) * 34,
+            _add_counts(*(
+                _opponent_holding_counts(opponent)
+                for opponent in opponents
+            )),
         )
         visible = accounting.visible
         if request.wall_remaining is not None and request.wall_remaining < 0:
@@ -649,7 +677,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
         else:
             turns = remaining_draws(counts, accounting)
         entries = ev_rank(
-            counts, [] if opponent is None else [opponent], visible,
+            counts, opponents, visible,
             turns=turns, sims=request.sims, seed=request.seed,
             calibration=analysis.calibration.calibration,
             scheme=analysis.game.scheme,
@@ -667,11 +695,22 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
             "top1_vs_top2": _top_gap_payload(entries),
             **_analysis_payload(analysis),
         }
-        if opponent is not None:
+        if opponents and not request.opponents:
+            opponent = opponents[0]
             payload["opponent"] = {
                 "tenpai_estimate": tenpai_score(opponent, len(opponent.river)).score,
                 "fold_estimate": fold_score(opponent, []),
             }
+        elif opponents:
+            payload["opponents"] = [
+                {
+                    "tenpai_estimate": tenpai_score(
+                        opponent, len(opponent.river),
+                    ).score,
+                    "fold_estimate": fold_score(opponent, []),
+                }
+                for opponent in opponents
+            ]
         return payload
 
     return _engine(run)

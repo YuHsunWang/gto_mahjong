@@ -35,8 +35,10 @@ SHAPE_RIVER_DISCOUNT = 0.3
 # Opponent-state constants.  These are UNCALIBRATED pseudo-probability inputs.
 # Meld count is deliberately the largest tenpai signal: four or five calls
 # leave very little concealed hand to complete.  Turn is the number of
-# opponent discards observed (or the caller's explicitly supplied turn).
-TENPAI_BASE_BY_MELDS = (0.08, 0.24, 0.43, 0.65, 0.84, 0.94)
+# opponent discards observed (or the caller's explicitly supplied turn).  A
+# closed hand with an empty river is the dealt hand, whose true tenpai rate is
+# zero; later closed-hand probability comes from the turn component.
+TENPAI_BASE_BY_MELDS = (0.0, 0.24, 0.43, 0.65, 0.84, 0.94)
 TENPAI_TURN_INCREMENT = 0.018
 TENPAI_TURN_CAP = 18
 TSUMOGIRI_RUN_INCREMENT = 0.08
@@ -384,6 +386,23 @@ def danger_score(
     it from feasibility.
     """
     seen, hand = _validate_inputs(tile, opponent, visible, own_hand)
+    return assess_validated_danger(tile, opponent, seen, hand)
+
+
+def assess_validated_danger(
+    tile: int,
+    opponent: OpponentView,
+    seen: tuple[int, ...],
+    hand: tuple[int, ...],
+) -> DangerAssessment:
+    """:func:`danger_score` without the argument checks, for rollout hot paths.
+
+    Terminal rollouts call this once per live opponent per discard — hundreds of
+    thousands of times for a single quiz question — and build both count vectors
+    themselves from state that is already well formed.  Re-validating there costs
+    more than the assessment it guards.  Callers taking counts from outside the
+    engine must go through :func:`danger_score` instead.
+    """
     if opponent.declared_at is not None and any(
         _river_tile(entry) == tile for entry in opponent.river[opponent.declared_at + 1 :]
     ):

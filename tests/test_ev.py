@@ -205,22 +205,30 @@ def test_determinized_rollout_has_physical_risk_without_calibration():
         def deal_in_probability(self, _danger_score):
             return 1.0
 
-    opponent = OpponentView(parse_river("9m"), [], None)
+    # The opponent has to be credibly close to tenpai for a physical deal-in to
+    # be possible at all. Two melds and a seven-tile river put tenpai_score near
+    # 0.556; a silent opponent on turn one sits near 0.018, because that is the
+    # dealt hand and its true tenpai rate is zero. Demanding physical risk there
+    # would be demanding a physical impossibility, not testing the channel.
+    opponent = OpponentView(
+        parse_river("9m9p1z4z5s6s7s"), [(4, 4, 4), (13, 13, 13)], None,
+    )
+    visible = parse_tiles("9m9p1z4z5s6s7s555m555p")
     uncalibrated = ev_rank(
         POST_DRAW,
         [opponent],
-        parse_tiles("9m"),
+        visible,
         turns=0,
-        sims=2,
+        sims=40,
         seed=17,
         exhaustive=True,
     )
     calibrated = ev_rank(
         POST_DRAW,
         [opponent],
-        parse_tiles("9m"),
+        visible,
         turns=0,
-        sims=2,
+        sims=40,
         seed=17,
         calibration=FixedCalibration(),
         exhaustive=True,
@@ -257,6 +265,28 @@ def test_calibrated_ron_is_one_zero_sum_terminal_payment():
     assert terminal.deltas == (-7, 7, 0, 0)
     assert terminal.value_units == 7
     assert terminal.ron_winners == (1,)
+
+
+def test_calibrated_ron_can_pay_the_actor_by_the_same_marginal_channel():
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand = list(parse_tiles("147m147p147s1234567z"))
+    players[1].hand = list(parse_tiles("147m147p147s1234567z"))
+    terminal = resolve_terminal(
+        players,
+        (_tile("9m"),),
+        0,
+        1,
+        None,
+        _policy_discard,
+        Random(1),
+        calibrated_ron=lambda _players, _discarder, _tile: (
+            CalibratedRonClaim(0, 1.0, 7),
+        ),
+    )
+
+    assert terminal.kind == "self_ron"
+    assert terminal.deltas == (7, -7, 0, 0)
+    assert terminal.ron_winners == (0,)
 
 
 def test_calibrated_push_records_opening_discard_before_continuation():

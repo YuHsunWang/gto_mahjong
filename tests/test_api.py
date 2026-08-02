@@ -254,6 +254,32 @@ def test_ev_rank_endpoint_with_opponent(client):
     assert body["domain"] == "bot" and body["fallback_used"] is False
 
 
+def test_ev_rank_endpoint_accepts_three_opponents(client, monkeypatch):
+    captured = {}
+
+    def capture_rank(_hand, opponents, _visible, **_kwargs):
+        captured["opponents"] = opponents
+        return []
+
+    monkeypatch.setattr(api, "ev_rank", capture_rank)
+    response = client.post("/api/ev/rank", json={
+        "hand": "123m123p123s11122233z",
+        "opponents": [
+            {"river": "9m"},
+            {"river": "9p", "melds": "111p"},
+            {"river": "1z", "is_dealer": True, "dealer_streak": 2},
+        ],
+        "turns": 1,
+        "sims": 1,
+    })
+
+    assert response.status_code == 200
+    assert len(captured["opponents"]) == 3
+    assert captured["opponents"][1].melds
+    assert captured["opponents"][2].is_dealer
+    assert len(response.json()["opponents"]) == 3
+
+
 def test_ev_rank_auto_turns_include_hidden_opponent_hands(client):
     response = client.post("/api/ev/rank", json={
         "hand": "123m123p123s11122233z",

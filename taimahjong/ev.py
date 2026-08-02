@@ -17,7 +17,15 @@ from typing import TYPE_CHECKING, Sequence
 
 from .calibration import Calibration
 from .config import DEFAULT_RULES, RulesConfig
-from .danger import OpponentView, RiverEntry, _flush_suit, danger_score, fold_score, tenpai_score
+from .danger import (
+    OpponentView,
+    RiverEntry,
+    _flush_suit,
+    assess_validated_danger,
+    danger_score,
+    fold_score,
+    tenpai_score,
+)
 from .moments import ClusteredSampleMoments, SampleMoments
 from .scoring import BASE_UNITS, DEFAULT_SCHEME, ScoringScheme, WinContext, score_hand
 from .shanten import shanten
@@ -310,7 +318,15 @@ def estimate_win_value(
     context_template: WinContext | WinValueContext | None = None,
     scheme: ScoringScheme = DEFAULT_SCHEME,
 ) -> WinValueEstimate:
-    """Estimate self-draw P(win), conditional win value, and their product."""
+    """Estimate gross self-draw value, never a decision's signed ``net_ev``.
+
+    This compatibility helper has no production caller.  It models only the
+    acting hand drawing a win, so ``expected_win_ev`` and the legacy ``net_ev``
+    field are always non-negative gross attack values: neither includes ron,
+    opponent tsumo, draws, or four-seat settlement.  They must not be compared
+    with :func:`ev_rank` or :func:`evaluate_pass`, whose ``net_ev`` is mean
+    signed payment from mutually exclusive terminals.
+    """
     if turns == 0:
         return WinValueEstimate(0.0, None, 0.0)
     wins = winning_trials(counts16, turns, melds_declared, visible, sims, seed)
@@ -830,8 +846,10 @@ def _ron_value_hand(
 
     A sampled tenpai hand keeps its exact tiles.  A non-tenpai sample conflicts
     with the calibrated event, so redeterminize that seat from its own tiles
-    plus the still-unassigned pool, conditional on tenpai.  In both cases the
-    returned tile is a real wait with a physically available copy.
+    plus tiles hidden from the public, conditional on tenpai.  In both cases
+    the returned tile is a real wait with a publicly available copy.  Callers
+    pass the same public unknown pool for every seat so valuation cannot depend
+    on the order in which concealed hands happened to be sampled.
     """
     source = [
         available[tile] + hand[tile]
@@ -858,7 +876,7 @@ def _ron_value_hand(
     if not waits:
         tenpai = _construct_tenpai_hand(
             source,
-            sum(hand),
+            16 - 3 * melds_declared,
             melds_declared,
             rng,
         )
@@ -939,17 +957,16 @@ def _sample_production_world(
         player.hand[:] = sampled
     ron_value_hands = (
         tuple(
-            (
-                None
-                if seat == acting_seat
-                else _ron_value_hand(
-                    player.hand,
-                    remaining,
-                    len(player.melds) + len(player.kongs),
-                    value_rng,
-                )
+            _ron_value_hand(
+                player.hand,
+                [
+                    4 - seen[tile] - player.hand[tile]
+                    for tile in range(34)
+                ],
+                len(player.melds) + len(player.kongs),
+                value_rng,
             )
-            for seat, player in enumerate(players)
+            for player in players
         )
         if calibrated_ron_values
         else (None, None, None, None)
@@ -1084,15 +1101,23 @@ def _calibrated_ron(
         tile: int,
     ) -> tuple[CalibratedRonClaim, ...]:
         public = _public_counts(list(players))
-        # The acting hand is real information throughout the rollout; never
-        # let an invented opponent hand leak into the danger features.
-        known_hand = tuple(players[acting_seat].hand)
+        # Calibration rows were recorded from each discarder against every
+        # other seat, with that discarder's post-discard hand as the private
+        # tile blockers.  Reproduce those semantics here for every seat.  Using
+        # the acting hand on opponents' turns would make the same table state
+        # depend on which seat called this estimator.
+        known_hand = tuple(players[discarder].hand)
         estimates = []
         for seat, player in enumerate(players):
-            if seat in (discarder, acting_seat):
+            if seat == discarder:
                 continue
             opponent = _view(player, seat)
-            assessment = danger_score(tile, opponent, public, known_hand)
+            # Both count vectors are built inside the rollout, so the public
+            # entry point's argument checks would only re-prove what this loop
+            # already guarantees, once per seat per discard.
+            assessment = assess_validated_danger(
+                tile, opponent, public, known_hand,
+            )
             probability = (
                 0.0
                 if (

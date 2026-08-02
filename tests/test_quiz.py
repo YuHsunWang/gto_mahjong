@@ -284,7 +284,16 @@ def test_quiz_cli_noninteractive_prints_best_verdict(position):
         text=True,
         capture_output=True,
         check=False,
-        timeout=60,
+        # A hang guard, not a performance budget. One quiz question costs about
+        # 60-70s since the ron channel became seat-symmetric: every discard now
+        # assesses danger for three live seats instead of two, and opponents
+        # reach tenpai less often, so rollouts play more turns before reaching a
+        # terminal. Generation is nearly all of it; grading is ~1.5s. Bringing
+        # this back down is _production_shanten's job -- 2.1M calls at a 41% hit
+        # rate that a 5x larger cache does not improve -- which is an algorithmic
+        # batch of its own, not something to absorb by shrinking the sample size
+        # the drill's verdict rests on.
+        timeout=180,
     )
     assert result.returncode == 0, result.stderr
     assert "Verdict: best" in result.stdout
