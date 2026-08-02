@@ -38,7 +38,7 @@ export function evTableEl(entries, { chosenTile = null, bestTile = null } = {}) 
   const table = document.createElement('table');
   table.className = 'evtable';
   const head = document.createElement('tr');
-  ['切牌', '淨EV', '95% CI', 'P(自摸)', '存活P(和)', 'P(流局)', 'E[和牌值]', 'E[放銃]'].forEach((label) => head.append(cell(label, 'th')));
+  ['切牌', '淨EV', '95% CI', 'P(自摸)', 'P(流局)', 'E[和牌值]', 'E[放銃]'].forEach((label) => head.append(cell(label, 'th')));
   table.append(head);
   entries.filter((entry) => !entry.is_fold).forEach((entry) => {
     const row = document.createElement('tr');
@@ -48,7 +48,6 @@ export function evTableEl(entries, { chosenTile = null, bestTile = null } = {}) 
     row.append(cell(entry.net_ev.toFixed(1)));
     row.append(cell(entry.ci95 ? `[${entry.ci95[0].toFixed(1)}, ${entry.ci95[1].toFixed(1)}]` : '—'));
     row.append(cell(entry.p_win.toFixed(3)));
-    row.append(cell(entry.survival_adjusted_p_win.toFixed(3)));
     row.append(cell(entry.p_draw.toFixed(3)));
     row.append(cell(entry.mean_win_value === null ? '-' : entry.mean_win_value.toFixed(1)));
     row.append(cell(entry.risk_ev.toFixed(1)));

@@ -274,7 +274,7 @@ def resolve_terminal(
     wall: Sequence[int],
     acting_seat: int,
     next_seat: int,
-    discard: int,
+    discard: int | None,
     discard_policy: DiscardPolicy,
     rng: Random,
     *,
@@ -291,10 +291,15 @@ def resolve_terminal(
     counts, then adds the opening discard and every surviving rollout discard
     exactly once.  It never reconstructs visibility from rollout players,
     whose river/meld representation may retain a called tile in both places.
+
+    ``discard`` is ``None`` for the declined-call branch: the acting seat holds
+    a hand that owes no discard this turn, so play resumes at ``next_seat``
+    without an opening discard.  Every later turn is unchanged, which is what
+    puts a pass on the same signed-payment scale as a call.
     """
     if acting_seat not in range(4) or next_seat not in range(4):
         raise ValueError("acting and next seats must be 0-3")
-    if discard not in range(34):
+    if discard is not None and discard not in range(34):
         raise ValueError("discard must be a tile index from 0 through 33")
     if acting_discard_policy is not None and visible is None:
         raise ValueError("acting discard policy requires visible tile counts")
@@ -304,45 +309,46 @@ def resolve_terminal(
         else None
     )
     trial_players = _copy_players(players)
-    if not trial_players[acting_seat].hand[discard]:
-        raise ValueError("discard must be present in the acting hand")
+    if discard is not None:
+        if not trial_players[acting_seat].hand[discard]:
+            raise ValueError("discard must be present in the acting hand")
 
-    trial_players[acting_seat].hand[discard] -= 1
-    if calibrated_ron is not None:
-        immediate_terminal = _resolved_ron_terminal(
-            trial_players,
-            acting_seat,
-            discard,
-            acting_seat,
-            dealer_streak,
-            scheme,
-            rules,
-            calibrated_ron,
-            rng,
-        )
-        if immediate_terminal is not None:
-            return immediate_terminal
-        trial_players[acting_seat].river.append(RiverEntry(discard))
-        trial_players[acting_seat].discards += 1
-    else:
-        immediate = _ron_claims(
-            trial_players, acting_seat, discard, rules,
-        )
-        if immediate:
-            return _ron_terminal(
+        trial_players[acting_seat].hand[discard] -= 1
+        if calibrated_ron is not None:
+            immediate_terminal = _resolved_ron_terminal(
                 trial_players,
-                immediate,
                 acting_seat,
                 discard,
                 acting_seat,
                 dealer_streak,
                 scheme,
+                rules,
+                calibrated_ron,
+                rng,
             )
-        if acting_discard_policy is not None:
+            if immediate_terminal is not None:
+                return immediate_terminal
             trial_players[acting_seat].river.append(RiverEntry(discard))
             trial_players[acting_seat].discards += 1
-    if running_visible is not None:
-        running_visible[discard] += 1
+        else:
+            immediate = _ron_claims(
+                trial_players, acting_seat, discard, rules,
+            )
+            if immediate:
+                return _ron_terminal(
+                    trial_players,
+                    immediate,
+                    acting_seat,
+                    discard,
+                    acting_seat,
+                    dealer_streak,
+                    scheme,
+                )
+            if acting_discard_policy is not None:
+                trial_players[acting_seat].river.append(RiverEntry(discard))
+                trial_players[acting_seat].discards += 1
+        if running_visible is not None:
+            running_visible[discard] += 1
 
     remaining = [0] * 34
     for tile in wall:

@@ -87,17 +87,33 @@ def test_quiz_grade_honors_the_scoring_scheme(client, monkeypatch):
     from taimahjong import quiz
     quiz._display_rank_cached.cache_clear()
 
-    position = client.post("/api/quiz/new", json={"seed": 1, "scheme": "3-1"}).json()["position"]
-    tile = _some_hand_tile(position)
-    body = {"seed": position["seed"], "tile": tile}
-    default = client.post("/api/quiz/grade", json=body).json()["grade"]
-    three_one = client.post("/api/quiz/grade", json={**body, "base_units": 3, "tai_units": 1}).json()["grade"]
-    five_two = client.post("/api/quiz/grade", json={**body, "base_units": 5, "tai_units": 2}).json()["grade"]
-    top = lambda grade: grade["ranked"][0]["net_ev"]
-    # An absent scheme means the house default (底3台1); 底5台2 must move the EV.
+    # Both quiz endpoints select the drill *under the requested scheme* — the web
+    # client re-generates on a scheme switch for exactly that reason
+    # (static/js/quiz.js) — so a tile taken from the 底3台1 drill need not even
+    # exist in the 底5台2 one. Ask each scheme for its own drill.
+    def graded(extra: dict) -> dict:
+        position = client.post("/api/quiz/new", json={"seed": 1, **extra}).json()["position"]
+        body = {"seed": position["seed"], "tile": _some_hand_tile(position), **extra}
+        return client.post("/api/quiz/grade", json=body).json()
+
+    default = graded({})
+    three_one = graded({"base_units": 3, "tai_units": 1})
+    top = lambda response: response["grade"]["ranked"][0]["net_ev"]
+    # An absent scheme means the house default (底3台1), down to the same drill.
+    assert default["scheme"]["id"] == three_one["scheme"]["id"] == "3-1"
     assert top(default) == pytest.approx(top(three_one))
-    assert top(five_two) != pytest.approx(top(three_one))
-    assert client.post("/api/quiz/grade", json={**body, "scheme": "5-2"}).json()["scheme"]["id"] == "5-2"
+    assert graded({"base_units": 5, "tai_units": 2})["scheme"]["id"] == "5-2"
+    assert graded({"scheme": "5-2"})["scheme"]["id"] == "5-2"
+
+    # That the unit system actually moves the numbers is asserted on /api/ev/rank,
+    # whose output is a pure function of its request. Comparing two independently
+    # selected drills could not tell "the scheme was applied" apart from "the
+    # drills differ", so such a check would pass even if the scheme were ignored.
+    fixed = {"hand": "123m123p123s11122233z", "turns": 3, "sims": 24, "seed": 5}
+    low = client.post("/api/ev/rank", json={**fixed, "base_units": 3, "tai_units": 1}).json()
+    high = client.post("/api/ev/rank", json={**fixed, "base_units": 5, "tai_units": 2}).json()
+    assert low["scheme"]["id"] == "3-1" and high["scheme"]["id"] == "5-2"
+    assert high["entries"][0]["net_ev"] != pytest.approx(low["entries"][0]["net_ev"])
 
 
 def test_grade_rejects_a_half_specified_scheme(client):

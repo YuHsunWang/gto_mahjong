@@ -457,11 +457,14 @@ def test_own_river_can_make_an_opponent_folded_for_survival_hazard():
 
 
 def test_production_rank_does_not_call_legacy_attack_composition(monkeypatch):
+    # net_ev must come from coherent terminal payments, never from a separately
+    # estimated attack term. The additive decomposition helpers this once also
+    # guarded are gone; _discounted_win_estimate survives only for the
+    # declaration advisor and must still stay out of the ranking path.
     def fail(*args, **kwargs):
         raise AssertionError("legacy attack estimator entered production rank")
 
     monkeypatch.setattr(ev, "_discounted_win_estimate", fail)
-    monkeypatch.setattr(ev, "_entry_from_policy", fail)
 
     ranked = ev_rank(
         POST_DRAW, [], (0,) * 34, turns=1, sims=2, seed=19, exhaustive=True,

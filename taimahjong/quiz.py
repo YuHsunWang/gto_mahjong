@@ -32,6 +32,12 @@ from .tiles import format_tiles, validate_counts
 # reproduces both the selected position and its teaching verdict.
 SHANTEN_MAX = 2
 MIN_TURN = 5
+# Minimum spread across the displayed candidates for a position to be worth
+# asking about. It is confirmed at REFINE_SIMS, never at EV_SIMS: a 24-trial
+# estimate carries a per-candidate SE around 1.2, so a 0.8 gap measured there
+# is inside its own noise and selecting on it picks lucky draws rather than
+# discriminating positions (winner's curse). EV_SIMS still runs first, purely
+# as a cheap necessary condition that avoids paying REFINE_SIMS on flat spots.
 EV_GAP_MIN = 0.8
 GOOD_DELTA = 0.3
 MAX_ATTEMPTS = 80
@@ -373,8 +379,6 @@ def _rank_cached(position: QuizPosition, analysis: AnalysisContext) -> tuple[EVR
         calibration=analysis.calibration.calibration,
         top_k=EV_TOP_K,
         scheme=analysis.game.scheme,
-        own_river=position.own_river,
-        declaration_eligible=position.migi_eligible,
     ))
 
 
@@ -392,8 +396,6 @@ def _display_rank_cached(position: QuizPosition, analysis: AnalysisContext) -> t
         calibration=analysis.calibration.calibration,
         top_k=EV_TOP_K,
         scheme=analysis.game.scheme,
-        own_river=position.own_river,
-        declaration_eligible=position.migi_eligible,
     ))
 
 
@@ -465,9 +467,16 @@ def generate_position(
 
     Search order is deterministic: game seeds are tried as ``seed``,
     ``seed + 1``, and so on, up to :data:`MAX_ATTEMPTS` games.
+
+    Two stages guard the :data:`EV_GAP_MIN` bar. The cheap EV_SIMS screen is a
+    necessary condition only — it is far too noisy to accept on — so a position
+    it likes is re-measured at REFINE_SIMS and kept only if the spread survives.
+    The confirming ranking is the one the player is then shown, and it is cached,
+    so confirmation is only paid for on positions that get rejected.
     """
     if not isinstance(seed, int) or isinstance(seed, bool):
         raise ValueError("seed must be an integer")
+    context = _analysis_context(analysis=analysis)
     for game_seed in range(seed, seed + MAX_ATTEMPTS):
         snapshots: list[DecisionSnapshot] = []
         play_game(game_seed, snapshot_hook=snapshots.append, config=analysis.game)
@@ -475,11 +484,11 @@ def generate_position(
             position = _position_from(snapshot, game_seed)
             if not _interesting(position):
                 continue
-            ranked = _screen_rank(
-                position,
-                _analysis_context(analysis=analysis),
-            )
-            gap = ranked[0].net_ev - ranked[-1].net_ev
+            screened = _screen_rank(position, context)
+            if screened[0].net_ev - screened[-1].net_ev < EV_GAP_MIN:
+                continue
+            displayed = _rank(position, analysis=context)
+            gap = displayed[0].net_ev - displayed[-1].net_ev
             if gap >= EV_GAP_MIN:
                 return replace(position, candidate_ev_gap=gap)
     raise RuntimeError(f"no interesting quiz position found in {MAX_ATTEMPTS} seeded games")
@@ -508,8 +517,6 @@ def _refine(
         _score_template(position),
         calibration=context.calibration.calibration,
         scheme=context.game.scheme,
-        own_river=position.own_river,
-        declaration_eligible=position.migi_eligible,
     )
 
 

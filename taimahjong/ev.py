@@ -88,7 +88,6 @@ class WinValueEstimate:
     ci95_low: float | None = None
     ci95_high: float | None = None
     trial_values: tuple[float, ...] = field(default=(), repr=False, compare=False)
-    traces: tuple[TrialTrace, ...] = field(default=(), repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -166,7 +165,6 @@ def _with_moments(
     values: tuple[float, ...],
     *,
     win_count: int,
-    traces: tuple[TrialTrace, ...] = (),
 ) -> WinValueEstimate:
     moments = SampleMoments.from_values(values)
     interval = moments.ci95
@@ -181,7 +179,6 @@ def _with_moments(
         ci95_low=low,
         ci95_high=high,
         trial_values=values,
-        traces=traces,
     )
 
 
@@ -397,9 +394,7 @@ def _discounted_win_estimate(
         p_draw=p_draw,
         net_ev=discounted_attack + p_draw * DRAW_VALUE,
     )
-    return _with_moments(
-        estimate, trial_values, win_count=len(wins), traces=traces,
-    )
+    return _with_moments(estimate, trial_values, win_count=len(wins))
 
 
 def opponent_value_estimate(opponent: OpponentView, scheme: ScoringScheme = DEFAULT_SCHEME) -> float:
@@ -430,15 +425,32 @@ def deal_in_ev(
     calibration: Calibration | None,
     scheme: ScoringScheme = DEFAULT_SCHEME,
 ) -> float:
-    """Approximate expected chip-unit loss for one discard against one opponent."""
+    """Approximate expected chip-unit loss for one discard against one opponent.
+
+    The deal-in probability is taken from calibration exactly as
+    ``_calibrated_ron`` takes it, with no opponent-state multiplier on top. The
+    table is fitted against ``danger_score`` alone, which carries no tenpai
+    signal, so its rows are already marginal over the opponent's tenpai state;
+    scaling them again double-counts it. It also matters that this function and
+    the rollout agree: the fold policy picks its discard here but is *scored* by
+    the terminal rollout, so a different risk model in the two places has the
+    defense optimising something it is not graded on.
+
+    The uncalibrated fallback is the exception. ``DEAL_IN_FALLBACK_RATE`` scaled
+    by raw danger contains no opponent-state information at all, so there the
+    tenpai/declaration factor is the only such signal available and is kept.
+    """
     assessment = danger_score(tile, opponent, visible, own_hand)
     if opponent.declared_at is not None and "declared_safe" in assessment.modifiers:
         return 0.0
     probability = calibration.deal_in_probability(assessment.score) if calibration else None
+    calibrated = probability is not None
     if probability is None:
         probability = DEAL_IN_FALLBACK_RATE * assessment.score / 9.0
     probability = min(0.35, max(0.0, probability))
-    if opponent.declared_at is not None:
+    if calibrated:
+        factor = 1.0
+    elif opponent.declared_at is not None:
         factor = DECLARED_FACTOR
     else:
         factor = min(3.0, max(0.25, tenpai_score(opponent, len(opponent.river)).score / BASELINE_TENPAI_RATE))
@@ -536,102 +548,6 @@ def _fold_policy(
 
     return choose
 
-
-# Legacy decomposition helpers remain for private compatibility; production ev_rank never calls them.
-def _future_policy_losses(
-    traces: tuple[TrialTrace, ...],
-    opponents: tuple[OpponentView, ...],
-    calibration: Calibration | None,
-    scheme: ScoringScheme,
-    survival: tuple[float, ...],
-) -> tuple[tuple[float, ...], tuple[float, ...]]:
-    if not traces:
-        return (0.0,) * len(opponents), ()
-    if not opponents:
-        return (), (0.0,) * len(traces)
-    per_opponent = [0.0] * len(opponents)
-    per_trial: list[float] = []
-    cache: dict[
-        tuple[int, tuple[int, ...], tuple[int, ...]],
-        tuple[float, ...],
-    ] = {}
-    for trace in traces:
-        trial_loss = 0.0
-        for step in trace.discards:
-            weight = survival[step.turn - 1]
-            key = (step.tile, step.hand, step.visible)
-            losses = cache.get(key)
-            if losses is None:
-                losses = _discard_losses(
-                    step.tile,
-                    step.hand,
-                    step.visible,
-                    opponents,
-                    calibration,
-                    scheme,
-                )
-                cache[key] = losses
-            for index, loss in enumerate(losses):
-                per_opponent[index] += weight * loss
-                trial_loss += weight * loss
-        per_trial.append(trial_loss)
-    return (
-        tuple(total / len(traces) for total in per_opponent),
-        tuple(per_trial),
-    )
-
-
-def _entry_from_policy(
-    discard: int,
-    attack: WinValueEstimate,
-    immediate_losses: tuple[float, ...],
-    future_losses: tuple[float, ...],
-    future_trial_losses: tuple[float, ...],
-    *,
-    is_fold: bool = False,
-    label: str | None = None,
-    action_plan: FoldActionPlan | None = None,
-) -> EVRankEntry:
-    """Legacy adapter for standalone attack/risk estimators; not used by ev_rank."""
-    opponent_losses = tuple(
-        immediate + future
-        for immediate, future in zip(immediate_losses, future_losses)
-    )
-    risk = sum(opponent_losses)
-    if attack.trial_values:
-        net_values = tuple(
-            value - sum(immediate_losses) - future
-            for value, future in zip(attack.trial_values, future_trial_losses)
-        )
-        moments = SampleMoments.from_values(net_values)
-        interval = moments.ci95
-        low, high = (None, None) if interval is None else interval
-    else:
-        net_values = ()
-        moments = SampleMoments()
-        low = high = None
-    return EVRankEntry(
-        discard,
-        attack.p_win,
-        attack.mean_value_units,
-        attack.discounted_attack_ev,
-        opponent_losses,
-        risk,
-        attack.net_ev - risk,
-        attack.survival_adjusted_p_win,
-        attack.p_draw,
-        is_fold,
-        label,
-        moments.n,
-        attack.win_count,
-        moments.total,
-        moments.sum_squares,
-        moments.standard_error,
-        low,
-        high,
-        action_plan,
-        net_values,
-    )
 
 
 @dataclass(frozen=True)
@@ -1053,11 +969,53 @@ def _sample_production_world(
     )
 
 
+def _per_opponent_losses(
+    terminals: tuple[TerminalResult, ...],
+    payments: tuple[float, ...],
+    acting_seat: int,
+    seat_to_opponent: tuple[int | None, ...],
+    opponent_count: int,
+) -> tuple[float, ...]:
+    """Split the loss side of the coherent payments by which seat won.
+
+    This is a partition of the very same signed payments that produce
+    ``net_ev`` — not a separately estimated risk term — so
+    ``sum(...) == risk_ev`` holds exactly whenever every winning seat maps to
+    a supplied opponent view.  Callers that supply fewer than three opponents
+    leave phantom seats unmapped; their wins stay in ``risk_ev`` and are
+    deliberately not attributed to anyone.
+    """
+    if not opponent_count or not terminals:
+        return ()
+    losses = [0.0] * opponent_count
+    for terminal, payment in zip(terminals, payments):
+        if payment >= 0.0:
+            continue
+        winners = terminal.ron_winners or (
+            () if terminal.winner is None else (terminal.winner,)
+        )
+        mapped = [
+            seat_to_opponent[seat]
+            for seat in winners
+            if seat != acting_seat and seat_to_opponent[seat] is not None
+        ]
+        if not mapped:
+            continue
+        # A losing terminal never has the acting seat among its winners, so the
+        # whole magnitude belongs to the opponents that did win it.
+        share = -payment / len(mapped)
+        for index in mapped:
+            losses[index] += share
+    return tuple(total / len(terminals) for total in losses)
+
+
 def _rollout_entry(
     discard: int,
     terminals: tuple[TerminalResult, ...],
     acting_seat: int,
+    opponent_count: int = 0,
     hidden_strata: tuple[int, ...] = (),
+    seat_to_opponent: tuple[int | None, ...] = (None, None, None, None),
 ) -> EVRankEntry:
     payments = tuple(
         float(terminal.deltas[acting_seat]) for terminal in terminals
@@ -1085,10 +1043,12 @@ def _rollout_entry(
             if not actor_wins
             else sum(result.value_units for result in actor_wins) / len(actor_wins)
         ),
-        # Compatibility diagnostics derived from these same coherent payments;
-        # net_ev itself is never composed from them.
+        # Diagnostics derived from these same coherent payments; net_ev itself
+        # is never composed from them.
         attack_ev=attack_ev,
-        opponent_losses=(),
+        opponent_losses=_per_opponent_losses(
+            terminals, payments, acting_seat, seat_to_opponent, opponent_count,
+        ),
         risk_ev=risk_ev,
         net_ev=moments.mean,
         survival_adjusted_p_win=p_win,
@@ -1169,6 +1129,156 @@ def _calibrated_ron(
     return claims
 
 
+def _production_worlds(
+    hand: tuple[int, ...],
+    seen: tuple[int, ...],
+    views: tuple[OpponentView, ...],
+    turns: int,
+    context_template: WinContext | WinValueContext | None,
+    base_seed: int,
+    sims: int,
+    calibration_active: bool,
+) -> tuple[list[_TrialWorld], int, int, int, tuple[int | None, ...]]:
+    """Build the shared hidden-world layer used by every production estimate.
+
+    Returned worlds carry a bounded set of hidden-hand determinizations reused
+    in balanced fashion, each with a fresh wall stream.  Every caller that
+    passes the same ``base_seed`` therefore shares one CRN base.  The final
+    element maps each table seat back to its index in ``views`` (``None`` for
+    the acting seat and for any seat the caller did not describe).
+    """
+    resolved_acting, seat_views, resolved_streak = _production_seats(
+        views, context_template,
+    )
+    seat_to_opponent = tuple(
+        None
+        if seat_view is None
+        else next(
+            (index for index, view in enumerate(views) if view is seat_view),
+            None,
+        )
+        for seat_view in seat_views
+    )
+    resolved_next = (resolved_acting + 1) % 4
+    rng = random.Random(base_seed)
+    hidden_count = min(sims, PRODUCTION_HIDDEN_WORLD_STRATA)
+    # Stratify each opponent's latent tenpai draw independently so the
+    # bounded hidden-world layer represents their public-state score.
+    opponent_quantiles = []
+    for _ in range(3):
+        quantiles = [
+            (stratum + rng.random()) / hidden_count
+            for stratum in range(hidden_count)
+        ]
+        rng.shuffle(quantiles)
+        opponent_quantiles.append(quantiles)
+    hidden_worlds = [
+        replace(
+            _sample_production_world(
+                hand,
+                seen,
+                views,
+                turns,
+                context_template,
+                rng.randrange(2**64),
+                tuple(
+                    quantiles[stratum]
+                    for quantiles in opponent_quantiles
+                ),
+                calibration_active,
+            ),
+            hidden_stratum=stratum,
+        )
+        for stratum in range(hidden_count)
+    ]
+    # Balanced reuse of a bounded set of hidden-hand determinizations keeps
+    # the opponent-model integration affordable and cache-friendly. Wall
+    # randomness remains fresh per trial, and all candidates share both
+    # layers as CRN.
+    worlds = [
+        replace(
+            hidden_worlds[trial % len(hidden_worlds)],
+            terminal_seed=rng.randrange(2**64),
+        )
+        for trial in range(sims)
+    ]
+    return (
+        worlds,
+        resolved_acting,
+        resolved_next,
+        resolved_streak,
+        seat_to_opponent,
+    )
+
+
+def evaluate_pass(
+    counts16: tuple[int, ...] | list[int],
+    opponents: tuple[OpponentView, ...] | list[OpponentView],
+    visible: tuple[int, ...] | list[int],
+    melds_declared: int = 0,
+    turns: int = 10,
+    sims: int = 400,
+    seed: int | None = None,
+    context_template: WinContext | WinValueContext | None = None,
+    calibration: Calibration | None = None,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    rules: RulesConfig = DEFAULT_RULES,
+) -> EVRankEntry:
+    """Value declining a call: the same terminal path with no opening discard.
+
+    A pon/chi hands the acting seat a discard decision now; passing does not.
+    Both branches must nevertheless be priced as mean signed payment, or the
+    comparison between them is meaningless.  This resolves the identical
+    four-seat terminals from the undisturbed hand, so ``net_ev`` is directly
+    comparable with any :func:`ev_rank` entry drawn under the same seed.
+    """
+    if sims < 1 or turns < 0:
+        raise ValueError("sims must be positive and turns non-negative")
+    from .rollout import resolve_terminal
+
+    hand = validate_counts(counts16)
+    seen = validate_counts(visible)
+    if any(hand[tile] + seen[tile] > 4 for tile in range(34)):
+        raise ValueError("hand and visible tiles exceed four physical copies")
+    views = tuple(opponents)
+    base_seed = random.randrange(2**64) if seed is None else seed
+    calibration_active = calibration is not None
+    worlds, acting, next_seat, streak, seat_to_opponent = _production_worlds(
+        hand, seen, views, turns, context_template,
+        base_seed, sims, calibration_active,
+    )
+    terminals = [
+        resolve_terminal(
+            world.players,
+            world.wall,
+            acting,
+            next_seat,
+            None,
+            _production_discard_policy,
+            random.Random(world.terminal_seed),
+            dealer_streak=streak,
+            scheme=scheme,
+            rules=rules,
+            calibrated_ron=(
+                _calibrated_ron(calibration, acting, world.ron_value_hands)
+                if calibration_active
+                else None
+            ),
+            visible=seen,
+        )
+        for world in worlds
+    ]
+    strata = tuple(
+        world.hidden_stratum
+        for world in worlds
+        if world.hidden_stratum is not None
+    )
+    # A declined call has no discard; -1 marks the entry as action-less.
+    return _rollout_entry(
+        -1, tuple(terminals), acting, len(views), strata, seat_to_opponent,
+    )
+
+
 def ev_rank(
     counts17: tuple[int, ...] | list[int],
     opponents: tuple[OpponentView, ...] | list[OpponentView],
@@ -1181,8 +1291,6 @@ def ev_rank(
     calibration: Calibration | None = None,
     top_k: int = 5,
     scheme: ScoringScheme = DEFAULT_SCHEME,
-    own_river: tuple[RiverEntry | int, ...] | list[RiverEntry | int] = (),
-    declaration_eligible: bool = False,
     exhaustive: bool = False,
     reference_fixed_top_k: bool = False,
     discard_policy: TerminalDiscardPolicy | None = None,
@@ -1253,6 +1361,9 @@ def ev_rank(
             (resolved_acting + 1) % 4 if next_seat is None else next_seat
         )
         resolved_streak = 0 if dealer_streak is None else dealer_streak
+        # Injected states are seat-addressed machinery fixtures with no caller
+        # opponent views, so no seat maps to a per-opponent loss slot.
+        seat_to_opponent = (None, None, None, None)
         wall = tuple(rollout_wall)
         orders = (
             tuple(permutations(wall))
@@ -1278,52 +1389,16 @@ def ev_rank(
                 for _ in range(sims)
             ]
     else:
-        resolved_acting, _, resolved_streak = _production_seats(
-            views, context_template,
+        (
+            worlds,
+            resolved_acting,
+            resolved_next,
+            resolved_streak,
+            seat_to_opponent,
+        ) = _production_worlds(
+            hand, seen, views, turns, context_template,
+            base_seed, sims, calibration_active,
         )
-        resolved_next = (resolved_acting + 1) % 4
-        rng = random.Random(base_seed)
-        hidden_count = min(sims, PRODUCTION_HIDDEN_WORLD_STRATA)
-        # Stratify each opponent's latent tenpai draw independently so the
-        # bounded hidden-world layer represents their public-state score.
-        opponent_quantiles = []
-        for _ in range(3):
-            quantiles = [
-                (stratum + rng.random()) / hidden_count
-                for stratum in range(hidden_count)
-            ]
-            rng.shuffle(quantiles)
-            opponent_quantiles.append(quantiles)
-        hidden_worlds = [
-            replace(
-                _sample_production_world(
-                    hand,
-                    seen,
-                    views,
-                    turns,
-                    context_template,
-                    rng.randrange(2**64),
-                    tuple(
-                        quantiles[stratum]
-                        for quantiles in opponent_quantiles
-                    ),
-                    calibration_active,
-                ),
-                hidden_stratum=stratum,
-            )
-            for stratum in range(hidden_count)
-        ]
-        # Balanced reuse of a bounded set of hidden-hand determinizations keeps
-        # the opponent-model integration affordable and cache-friendly. Wall
-        # randomness remains fresh per trial, and all candidates share both
-        # layers as CRN.
-        worlds = [
-            replace(
-                hidden_worlds[trial % len(hidden_worlds)],
-                terminal_seed=rng.randrange(2**64),
-            )
-            for trial in range(sims)
-        ]
 
     # Push and fold are different continuation policies.  Keep their terminal
     # samples separate even when they share the same opening discard.
@@ -1377,7 +1452,9 @@ def ev_rank(
             analysis.discard,
             tuple(terminals[:budget]),
             resolved_acting,
+            len(views),
             hidden_strata,
+            seat_to_opponent,
         )
 
     if target_analysis is not None:
@@ -1491,8 +1568,6 @@ def evaluate_discard(
     context_template: WinContext | WinValueContext | None = None,
     calibration: Calibration | None = None,
     scheme: ScoringScheme = DEFAULT_SCHEME,
-    own_river: tuple[RiverEntry | int, ...] | list[RiverEntry | int] = (),
-    declaration_eligible: bool = False,
 ) -> EVRankEntry:
     """Return one candidate from the same coherent terminal path as ev_rank."""
     ranked = ev_rank(
@@ -1507,43 +1582,10 @@ def evaluate_discard(
         calibration,
         top_k=34,
         scheme=scheme,
-        own_river=own_river,
-        declaration_eligible=declaration_eligible,
         exhaustive=True,
         _target_discard=discard,
     )
     return ranked[0]
-
-
-def evaluate_fold_policy(
-    counts17: tuple[int, ...] | list[int],
-    opponents: tuple[OpponentView, ...] | list[OpponentView],
-    visible: tuple[int, ...] | list[int],
-    melds_declared: int = 0,
-    turns: int = 10,
-    sims: int = 400,
-    seed: int | None = None,
-    context_template: WinContext | WinValueContext | None = None,
-    calibration: Calibration | None = None,
-    scheme: ScoringScheme = DEFAULT_SCHEME,
-    own_river: tuple[RiverEntry | int, ...] | list[RiverEntry | int] = (),
-) -> EVRankEntry:
-    """Evaluate the defense opening through the coherent terminal path."""
-    return next(entry for entry in ev_rank(
-        counts17,
-        opponents,
-        visible,
-        melds_declared,
-        turns,
-        sims,
-        seed,
-        context_template,
-        calibration,
-        top_k=34,
-        scheme=scheme,
-        own_river=own_river,
-        exhaustive=True,
-    ) if entry.is_fold)
 
 
 def declaration_ev(

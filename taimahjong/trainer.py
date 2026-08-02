@@ -23,7 +23,7 @@ from . import quiz  # budget/adaptive constants read live (quiz.*) so tests can 
 from .analysis import AnalysisContext, DEFAULT_ANALYSIS_CONTEXT
 from .calibration import Calibration
 from .config import DEFAULT_RULES, RulesConfig, resolve_ron_claims
-from .ev import WinValueContext, declaration_ev, estimate_win_value, evaluate_discard, ev_rank
+from .ev import WinValueContext, declaration_ev, evaluate_discard, evaluate_pass, ev_rank
 from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
 from .scoring import DEFAULT_SCHEME, ScoringScheme
 from .selfplay import (
@@ -134,7 +134,10 @@ class CallEvaluation:
     def _action_ev(self, choice: int | None, sims: int) -> float:
         """Re-estimate one action (pass or an option) at ``sims`` under the seed."""
         if choice is None:
-            return _refine_pass(self.decision, self.base_seed, sims, self.scheme)
+            return _refine_pass(
+                self.decision, self.base_seed, sims, self.scheme,
+                self.analysis.calibration.calibration,
+            )
         return _refine_option(
             self.decision, self.decision.options[choice],
             self.option_best_discards[choice], self.base_seed, sims, self.scheme,
@@ -418,20 +421,44 @@ def _post_call(position: QuizPosition, option: CallOption) -> tuple[tuple[int, .
     return tuple(post), position.own_melds + (option.meld,)
 
 
-def _pass_ev(decision: TrainerCallDecision, base_seed: int, sims: int, scheme: ScoringScheme = DEFAULT_SCHEME) -> float:
-    """Self-draw win EV of keeping the concealed hand (the 'pass' pseudo-option)."""
+def _pass_ev(
+    decision: TrainerCallDecision,
+    base_seed: int,
+    sims: int,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    calibration: Calibration | None = None,
+) -> float:
+    """Signed net payment of declining the call and keeping the concealed hand.
+
+    Passing owes no discard this turn, so it cannot be priced as a discard EV.
+    It is still resolved through the same coherent four-seat terminals as every
+    call option — the comparison in :func:`evaluate_call` is only meaningful
+    because both sides are mean signed payment on one scale.
+    """
     position = decision.position
-    return estimate_win_value(
-        position.hand, position.draws_remaining, len(position.own_melds) + len(position.own_kongs),
-        position.public_counts, sims, base_seed,
+    return evaluate_pass(
+        position.hand,
+        [opponent.view() for opponent in position.opponents],
+        position.public_counts,
+        len(position.own_melds) + len(position.own_kongs),
+        position.draws_remaining,
+        sims,
+        base_seed,
         _score_template(position),
+        calibration=calibration,
         scheme=scheme,
-    ).expected_win_ev
+    ).net_ev
 
 
-def _refine_pass(decision: TrainerCallDecision, base_seed: int, sims: int, scheme: ScoringScheme = DEFAULT_SCHEME) -> float:
+def _refine_pass(
+    decision: TrainerCallDecision,
+    base_seed: int,
+    sims: int,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    calibration: Calibration | None = None,
+) -> float:
     """Re-estimate the pass action at ``sims`` under the shared CRN seed."""
-    return _pass_ev(decision, base_seed, sims, scheme)
+    return _pass_ev(decision, base_seed, sims, scheme, calibration)
 
 
 def _option_rank(
@@ -454,7 +481,6 @@ def _option_rank(
         len(melds) + len(position.own_kongs), position.draws_remaining, sims, base_seed,
         _score_template(position, melds), calibration=calibration, top_k=EV_TOP_K,
         scheme=scheme,
-        own_river=position.own_river,
     )
     playable = [entry for entry in ranked if not entry.is_fold]
     if not playable:
@@ -489,7 +515,6 @@ def _refine_option(
         sims, base_seed, _score_template(position, melds),
         calibration=calibration,
         scheme=scheme,
-        own_river=position.own_river,
     )
     return entry.net_ev
 
@@ -511,7 +536,6 @@ def _best_discard_ev(
         len(melds) + len(kongs), position.draws_remaining, sims, base_seed,
         _score_template(position, melds, kongs), calibration=calibration, top_k=EV_TOP_K,
         scheme=scheme,
-        own_river=position.own_river,
     )
     playable = [entry.net_ev for entry in ranked if not entry.is_fold]
     return max(playable, default=0.0)
@@ -646,16 +670,17 @@ def evaluate_call(
     and the migi option) and lets the player act now; its value is the best
     post-call discard EV via ``ev_rank``. 大明槓 additionally averages that EV
     over the observable unseen replacement distribution. Passing keeps the
-    concealed hand; its value is the self-draw win EV of continuing, with no
-    immediate discard risk. Tempo and the pass branch's future deal-in risk are
-    not fully modelled.
+    concealed hand and owes no discard this turn, so it is resolved by
+    ``evaluate_pass`` through the same terminals with no opening discard —
+    every action on this screen is therefore mean signed payment. Tempo is
+    still not modelled.
     """
     context = quiz._analysis_context(scheme, analysis)
     scheme = context.game.scheme
     calibration = context.calibration.calibration
     base_seed = _evaluation_seed(decision.position) if seed is None else seed
 
-    pass_ev = _pass_ev(decision, base_seed, quiz.EV_SIMS, scheme)
+    pass_ev = _pass_ev(decision, base_seed, quiz.EV_SIMS, scheme, calibration)
     ranked = [
         _option_rank(decision, option, base_seed, quiz.EV_SIMS, scheme, calibration)
         for option in decision.options

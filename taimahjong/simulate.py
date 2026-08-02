@@ -35,22 +35,11 @@ class WinningTrial:
 
 
 @dataclass(frozen=True)
-class DiscardStep:
-    """One policy discard with the public state needed to price its risk."""
-
-    turn: int
-    tile: int
-    hand: tuple[int, ...]
-    visible: tuple[int, ...]
-
-
-@dataclass(frozen=True)
 class TrialTrace:
     """One complete draw stream under a deterministic discard policy."""
 
     trial: int
     win: WinningTrial | None
-    discards: tuple[DiscardStep, ...]
 
 
 DiscardPolicy = Callable[
@@ -164,7 +153,6 @@ def _rollout(
         remaining_counts = list(initial_remaining)
         _assert_physical_state(current, dynamic_visible, remaining_counts)
         first_tenpai = 1 if initial_shanten <= 0 else 0
-        steps: list[DiscardStep] = []
         winning: WinningTrial | None = None
 
         for turn, tile in enumerate(draws[:turns], start=1):
@@ -199,13 +187,12 @@ def _rollout(
             reduced = list(current)
             reduced[discard] -= 1
             current = tuple(reduced)
-            steps.append(DiscardStep(turn, discard, current, tuple(dynamic_visible)))
             dynamic_visible[discard] += 1
             _assert_physical_state(current, dynamic_visible, remaining_counts)
             if not first_tenpai and after_shanten <= 0:
                 first_tenpai = turn
         tenpai_turns.append(first_tenpai)
-        traces.append(TrialTrace(trial, winning, tuple(steps)))
+        traces.append(TrialTrace(trial, winning))
     return _RolloutResult(tuple(tenpai_turns), tuple(wins), tuple(traces))
 
 

@@ -73,6 +73,24 @@ def _parse_opponent_melds(text: str | None) -> list[tuple[int, int, int]]:
     return melds
 
 
+def _opponent_view(args) -> OpponentView:
+    """Build the modeled opponent from the shared --opp-* flags.
+
+    Dealer identity is part of that state: settlement always applies the 莊 and
+    連莊 premium to one seat, so leaving an opponent unflagged does not remove
+    the premium, it just hands it to whichever seat the sampler filled first.
+    """
+    if args.opp_streak and not args.opp_dealer:
+        raise ValueError("--opp-streak requires --opp-dealer")
+    return OpponentView(
+        parse_river(args.opp_river),
+        _parse_opponent_melds(args.opp_melds),
+        args.opp_declared,
+        is_dealer=args.opp_dealer,
+        dealer_streak=args.opp_streak if args.opp_dealer else 0,
+    )
+
+
 def _add_visible(*groups: tuple[int, ...] | list[int]) -> tuple[int, ...]:
     total = [0] * 34
     for group in groups:
@@ -121,6 +139,8 @@ def main() -> None:
     parser.add_argument("--opp-river", help="ordered compact notation for the modeled opponent's discards")
     parser.add_argument("--opp-melds", help="semicolon-separated three-tile declared melds, e.g. 123s;777s")
     parser.add_argument("--opp-declared", type=int, help="migi declaration river index (only 0 or 1)")
+    parser.add_argument("--opp-dealer", action="store_true", help="the modeled opponent is the dealer (莊)")
+    parser.add_argument("--opp-streak", type=int, default=0, help="the modeled opponent's 連莊 count (needs --opp-dealer)")
     parser.add_argument("--others", help="other players' discard kinds for fold estimation")
     parser.add_argument("--tile", help="show the danger shape breakdown for one discard tile (with --danger)")
     parser.add_argument("--my-melds", help="semicolon-separated declared melds of the scored hand, e.g. 123s;777z")
@@ -235,10 +255,10 @@ def main() -> None:
             raise ValueError("--tile requires --danger")
         if args.ev:
             opponent = None
-            if args.opp_river or args.opp_melds or args.opp_declared is not None:
+            if args.opp_river or args.opp_melds or args.opp_declared is not None or args.opp_dealer:
                 if not args.opp_river:
                     raise ValueError("--ev opponent state requires --opp-river")
-                opponent = OpponentView(parse_river(args.opp_river), _parse_opponent_melds(args.opp_melds), args.opp_declared)
+                opponent = _opponent_view(args)
             other_visible = (0,) * 34 if visible is None else visible
             accounting = TileAccounting(
                 _add_visible(
@@ -273,21 +293,21 @@ def main() -> None:
             )
             if args.turns is None:
                 print(f"Remaining draws (auto): {turns}")
-            print("Discard  Net EV  P(win)  Surv P(win)  P(draw)  E[win value]  E[loss]")
+            print("Discard  Net EV  P(win)  P(draw)  E[win value]  E[loss]")
             for entry in entries:
                 value = "-" if entry.mean_win_value is None else f"{entry.mean_win_value:.2f}"
                 discard = entry.label if entry.is_fold else _tile_name(entry.discard)
                 print(
                     f"{discard:<7}  {entry.net_ev:>6.2f}  {entry.p_win:>6.3f}  "
-                    f"{entry.survival_adjusted_p_win:>11.3f}  {entry.p_draw:>6.3f}  {value:>12}  {entry.risk_ev:>7.2f}"
+                    f"{entry.p_draw:>6.3f}  {value:>12}  {entry.risk_ev:>7.2f}"
                 )
-            print("Note: EV uses survival-discounted self-draw attack and a configurable draw (流局) value.")
+            print("Note: EV is the mean signed payment over coherent four-seat terminals; E[loss] is its loss side.")
         elif args.declare:
             opponent = None
-            if args.opp_river or args.opp_melds or args.opp_declared is not None:
+            if args.opp_river or args.opp_melds or args.opp_declared is not None or args.opp_dealer:
                 if not args.opp_river:
                     raise ValueError("--declare opponent state requires --opp-river")
-                opponent = OpponentView(parse_river(args.opp_river), _parse_opponent_melds(args.opp_melds), args.opp_declared)
+                opponent = _opponent_view(args)
             other_visible = (0,) * 34 if visible is None else visible
             accounting = TileAccounting(
                 _add_visible(
@@ -326,7 +346,7 @@ def main() -> None:
         elif args.danger:
             if not args.opp_river:
                 raise ValueError("--danger requires --opp-river")
-            opponent = OpponentView(parse_river(args.opp_river), _parse_opponent_melds(args.opp_melds), args.opp_declared)
+            opponent = _opponent_view(args)
             other_visible = (0,) * 34 if visible is None else visible
             danger_visible = _add_visible(
                 other_visible,

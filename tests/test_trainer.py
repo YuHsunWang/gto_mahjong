@@ -223,13 +223,16 @@ def test_evaluate_call_is_deterministic_and_refines_best_and_chosen():
 
 
 def test_call_ev_credits_dealer_tai_for_dealer_seat():
-    # Seat 0 is the dealer, so a win there is worth an extra 莊 tai. The call-EV
-    # path (pass/option value) must credit it just like the discard grader does;
-    # a regression that drops the dealer flag understates the human's win EV and
-    # biases the pass-vs-call ev_delta that decides borderline call verdicts.
-    from taimahjong.ev import WinValueContext, estimate_win_value
-    from taimahjong.quiz import _evaluation_seed
-    from taimahjong.scoring import WinContext
+    # Seat 0 is the dealer, so every payment leg between the dealer and anyone
+    # else carries the 莊 premium. The call-EV path (pass/option value) must
+    # price it just like the discard grader does; a regression that drops the
+    # dealer flag biases the pass-vs-call ev_delta that decides borderline call
+    # verdicts. Asserting the flag *reaches* the valuation is the point — not
+    # which way it moves, which depends on how often this hand wins.
+    from dataclasses import replace
+
+    from taimahjong.ev import WinValueContext, evaluate_pass
+    from taimahjong.quiz import _evaluation_seed, _score_template
     from taimahjong.trainer import _pass_ev
 
     decision = _first_call()
@@ -237,39 +240,57 @@ def test_call_ev_credits_dealer_tai_for_dealer_seat():
     position = decision.position
     assert position.is_dealer, "human_seat 0 is the dealer in the trainer model"
     base = _evaluation_seed(position)
+    template = _score_template(position)
+    assert template.context.dealer is True
 
-    def win_ev(dealer: bool) -> float:
-        return estimate_win_value(
-            position.hand, position.draws_remaining, len(position.own_melds),
-            position.public_counts, 200, base,
-            WinValueContext(WinContext(winning_tile=0, dealer=dealer), position.own_melds),
-        ).expected_win_ev
+    def pass_ev(context: WinValueContext) -> float:
+        return evaluate_pass(
+            position.hand,
+            [opponent.view() for opponent in position.opponents],
+            position.public_counts,
+            len(position.own_melds) + len(position.own_kongs),
+            position.draws_remaining,
+            200,
+            base,
+            context,
+        ).net_ev
 
-    dealer_ev, non_dealer_ev = win_ev(True), win_ev(False)
-    assert dealer_ev > non_dealer_ev, "this position has win chance, so the 莊 tai must move the EV"
-    assert _pass_ev(decision, base, 200) == dealer_ev
+    stripped = WinValueContext(
+        replace(template.context, dealer=False, dealer_streak=0),
+        position.own_melds,
+        position.own_kongs,
+    )
+    assert _pass_ev(decision, base, 200) == pass_ev(template)
+    assert pass_ev(template) != pass_ev(stripped), (
+        "dropping the dealer flag must change the pass valuation"
+    )
 
 
-def test_call_ev_credits_dealer_streak_for_dealer_seat():
+def test_dealer_streak_is_priced_on_every_payment_leg():
+    # 連莊拉莊 is bilateral: the dealer collects the premium on a win and pays it
+    # on every leg they lose. Settlement adds it per leg and nothing about play
+    # depends on the streak, so under one seed the pass EV must be exactly
+    # linear in the streak. A premium applied to only some legs — or dropped on
+    # the paying side — breaks that linearity even when the sign looks right.
     from dataclasses import replace
 
-    from taimahjong.ev import estimate_win_value
-    from taimahjong.quiz import _evaluation_seed, _score_template
+    from taimahjong.quiz import _evaluation_seed
     from taimahjong.trainer import _pass_ev
 
     decision = _first_call()
     assert decision is not None
-    position = replace(decision.position, dealer_streak=2)
-    streak_decision = replace(decision, position=position)
-    base = _evaluation_seed(position)
-    expected = estimate_win_value(
-        position.hand, position.draws_remaining,
-        len(position.own_melds) + len(position.own_kongs), position.public_counts,
-        200, base, _score_template(position),
-    ).expected_win_ev
+    base = _evaluation_seed(decision.position)
+    evs = []
+    for streak in (0, 2, 4):
+        position = replace(decision.position, dealer_streak=streak)
+        assert position.is_dealer
+        evs.append(_pass_ev(replace(decision, position=position), base, 200))
 
-    assert _pass_ev(streak_decision, base, 200) == expected
-    assert _score_template(position).context.dealer_streak == 2
+    assert len(set(evs)) == 3, "each 連莊 increment must move the valuation"
+    first, second = evs[1] - evs[0], evs[2] - evs[1]
+    assert first == pytest.approx(second), (
+        f"streak must price linearly per leg; got steps {first} and {second}"
+    )
 
 
 def test_taking_a_call_opens_hand_and_game_terminates():

@@ -586,6 +586,12 @@ class EvRankRequest(SchemeRequest):
     river: str = ""
     melds: str = ""
     declared_at: int | None = None
+    # Whether the modeled opponent is the dealer. Settlement always treats one
+    # seat as the dealer, so leaving this unset does not remove the premium —
+    # it lands on whichever seat the sampler filled first, and the defensive
+    # loss estimate then prices that same opponent as a non-dealer.
+    is_dealer: bool = False
+    dealer_streak: int = Field(default=0, ge=0, le=32)
     visible: str = ""
     turns: int = Field(default=0, ge=0, le=24)  # 0 = derive from wall_remaining or the visible pool
     wall_remaining: int | None = Field(default=None, ge=0, le=136)
@@ -614,10 +620,16 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
         analysis = _analysis_context(request)
         counts = parse_tiles(request.hand)
         opponent: OpponentView | None = None
-        if request.river or request.melds or request.declared_at is not None:
+        if request.river or request.melds or request.declared_at is not None or request.is_dealer:
             if not request.river:
                 raise ValueError("opponent state requires the opponent's river")
-            opponent = OpponentView(parse_river(request.river), _parse_melds(request.melds), request.declared_at)
+            opponent = OpponentView(
+                parse_river(request.river),
+                _parse_melds(request.melds),
+                request.declared_at,
+                is_dealer=request.is_dealer,
+                dealer_streak=request.dealer_streak if request.is_dealer else 0,
+            )
             opponent.validate()
         other_out_of_hands = (0,) * 34 if not request.visible.strip() else parse_tiles(request.visible)
         accounting = TileAccounting(
