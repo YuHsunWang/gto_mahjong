@@ -1,15 +1,15 @@
 /* 台灣麻將教室 SPA — local-only landscape table and review surface. */
 
 :root {
-  --felt-0: #291630;
-  --felt-1: #3a2140;
-  --felt-2: #4a2b52;
-  --wood: #45203a;
-  --bg: #17101c;
-  --panel: rgba(15, 8, 20, .82);
-  --ink: #f2eaf7;
-  --ink-dim: #d9c2e6;
-  --ink-faint: #9d86ac;
+  --felt-0: #0d3832;
+  --felt-1: #135247;
+  --felt-2: #21695b;
+  --wood: #443a27;
+  --bg: #102622;
+  --panel: rgba(5, 34, 30, .88);
+  --ink: #f5fffb;
+  --ink-dim: #d0e5dd;
+  --ink-faint: #a7c5ba;
   --bone: #fbfaf2;
   --bone-edge: #cfcabc;
   --bone-shadow: #b5b0a0;
@@ -19,9 +19,10 @@
   --cinnabar: #c2352f;
   --tile-blue: #28599c;
   --tile-green: #1f7a52;
-  --tile-back: #2f7f63;
-  --tile-back-edge: #1d5442;
-  --tile-back-highlight: #43a07f;
+  /* Backs are amber, not green: on green felt a green back reads as table. */
+  --tile-back: #b5762e;
+  --tile-back-edge: #7a4d17;
+  --tile-back-highlight: #d99a4e;
   --wall-top: #efe9d8;
   --wall-side: #a99d84;
   --gold: #e0a300;
@@ -234,8 +235,11 @@ button {
   overflow: hidden;
   grid-template-columns: 13% 7% minmax(0, 1fr) 7% 13%;
   grid-template-rows: 15% 7% minmax(0, 1fr) 7% 17%;
+  /* Side seats run the full height so the upper corners are theirs, the way a
+     real table seats them. The bottom band keeps all five columns because the
+     live 17-tile hand is the widest thing on the felt. */
   grid-template-areas:
-    "ht ht ht ht ht"
+    "hl ht ht ht hr"
     "hl wt wt wt hr"
     "hl wl co wr hr"
     "hl wb wb wb hr"
@@ -257,10 +261,10 @@ button {
 
 .seat-band, .wall-band, .table-core { position: relative; z-index: 1; min-width: 0; min-height: 0; }
 .seat-band { display: flex; align-items: center; justify-content: center; gap: 12px; overflow: hidden; }
-.seat--top { grid-area: ht; padding-top: 15px; }
-.seat--right { grid-area: hr; flex-direction: column; padding-top: 18px; }
+.seat--top { grid-area: ht; padding-top: 22px; }
+.seat--right { grid-area: hr; flex-direction: column; gap: 18px; padding: 24px 4px 12px; }
 .seat--bottom { grid-area: hb; padding-top: 15px; }
-.seat--left { grid-area: hl; flex-direction: column; padding-top: 18px; }
+.seat--left { grid-area: hl; flex-direction: column; gap: 18px; padding: 24px 4px 12px; }
 
 .seat-identity {
   position: absolute;
@@ -283,6 +287,9 @@ button {
 }
 
 .seat--right .seat-identity { left: auto; right: 6px; }
+/* The side seats own the top corners, so centre the facing seat's chip
+   instead of letting three labels pile into the top-left. */
+.seat--top .seat-identity { left: 50%; transform: translateX(-50%); }
 .seat-identity b { color: var(--gold); font-family: var(--serif); font-size: 12px; }
 .seat-identity .dealer-chip {
   padding: 0 5px;
