@@ -269,6 +269,8 @@ def _grade_payload(result: QuizGrade) -> dict[str, Any]:
     return {
         "verdict": result.verdict,
         "marginal": result.marginal,
+        "ranking_uncertain": result.ranking_uncertain,
+        "ranking_state": result.ranking_state,
         "ev_delta": result.ev_delta,
         "ev_loss": result.ev_loss,
         "refined_sims": result.refined_sims,

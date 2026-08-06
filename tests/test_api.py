@@ -59,6 +59,8 @@ def test_quiz_new_then_grade_roundtrip(client):
     assert sum(position["hand"]) in (17, 14, 11, 8, 5, 2)  # 17 minus 3 per declared meld
     assert position["wall_remaining"] > 0
     assert len(position["opponents"]) == 3
+    assert all(isinstance(opponent["hand_count"], int) for opponent in position["opponents"])
+    assert all(opponent["hand_count"] >= 0 for opponent in position["opponents"])
     assert created.json()["scheme"]["id"] == "3-1"
     assert created.json()["domain"] == "bot"
     assert created.json()["calibration_id"]
@@ -68,6 +70,8 @@ def test_quiz_new_then_grade_roundtrip(client):
     assert graded.status_code == 200
     grade = graded.json()["grade"]
     assert grade["verdict"] in {"best", "good", "inaccuracy", "mistake"}
+    assert grade["ranking_state"] in {"clear", "marginal", "uncertain"}
+    assert grade["ranking_uncertain"] is (grade["ranking_state"] != "clear")
     assert grade["ranked"] and not any(entry["is_fold"] for entry in grade["ranked"])
     assert isinstance(grade["explain"], str) and grade["explain"]
     assert graded.json()["scheme"]["id"] == "3-1"

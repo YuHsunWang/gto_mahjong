@@ -255,6 +255,21 @@ class QuizGrade:
         """Non-negative loss suitable for accumulating player scores."""
         return max(0.0, self.ev_delta)
 
+    @property
+    def ranking_state(self) -> str:
+        """Paired top-two ordering state, computed by the engine for clients."""
+        if self.top_gap.n <= 0:
+            return "clear"
+        if self.top_gap.crosses_zero:
+            return "uncertain"
+        if abs(self.top_gap.mean) < EV_EFFECT_SIZE_MIN:
+            return "marginal"
+        return "clear"
+
+    @property
+    def ranking_uncertain(self) -> bool:
+        return self.ranking_state != "clear"
+
 
 def _tile_name(tile: int) -> str:
     counts = [0] * 34

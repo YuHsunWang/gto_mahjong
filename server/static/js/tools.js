@@ -3,7 +3,7 @@
 import { post, showError } from './api.js';
 import { tileEl, parseCompact } from './tiles.js';
 import { computingEl } from './table.js';
-import { evDetailsEl, modelScopeEl } from './feedback.js';
+import { evDetailsEl, modelScopeEl, rankingBannerEl } from './feedback.js';
 import { schemeParams, schemeToggle } from './scheme.js';
 
 function field(labelText, input, id) {
@@ -122,11 +122,17 @@ export function analyzeScreen(root) {
         : `方案 ${body.scheme.id} · 剩餘摸牌回合 ${body.turns} · 未提供對手狀態`;
       const scope = body.exhaustive ? '全部合法切牌 reference' : 'production 信賴界篩選候選集';
       caption.textContent += ` · ${scope}`;
-      output.append(
-        caption,
-        modelScopeEl(body),
-        evDetailsEl(body.entries, { open: true, topGap: body.top1_vs_top2 }),
-      );
+      output.append(caption, modelScopeEl(body));
+      const rankingBanner = rankingBannerEl({
+        ranking_state: body.top1_vs_top2?.wording || 'clear',
+        top1_vs_top2: body.top1_vs_top2,
+      });
+      if (rankingBanner) output.append(rankingBanner);
+      output.append(evDetailsEl(body.entries, {
+        open: true,
+        topGap: body.top1_vs_top2,
+        rankingState: body.top1_vs_top2?.wording,
+      }));
     } catch (error) {
       output.replaceChildren();
       showError(error);

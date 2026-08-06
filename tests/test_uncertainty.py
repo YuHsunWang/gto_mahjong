@@ -1,8 +1,11 @@
 """MJ-011 mergeable moments and paired EV uncertainty."""
 
+import pytest
+
 from server import api
 from taimahjong.ev import EVRankEntry, paired_delta_moments, ev_rank
 from taimahjong.moments import ClusteredSampleMoments, SampleMoments
+from taimahjong.quiz import QuizGrade
 from taimahjong.selfplay import head_to_head
 from taimahjong.tiles import parse_tiles
 
@@ -84,6 +87,22 @@ def test_boundary_top_gap_whose_paired_ci_crosses_zero_is_uncertain():
     assert "ci95" not in payload
     assert len(payload["descriptive_interval95"]) == 2
     assert "not a selection-adjusted" in payload["interval_note"]
+
+
+@pytest.mark.parametrize(("values", "state"), [
+    ((-0.1, 0.1, -0.1, 0.1), "uncertain"),
+    ((0.05, 0.05, 0.05, 0.05), "marginal"),
+    ((0.2, 0.2, 0.2, 0.2), "clear"),
+])
+def test_quiz_grade_owns_the_ranking_state_consumed_by_clients(values, state):
+    grade = QuizGrade(
+        position=None, best=None, chosen=None, ranked=(), ev_delta=0.0,
+        rank_position=1, verdict="best",
+        top_gap=SampleMoments.from_values(values, post_selection=True),
+    )
+
+    assert grade.ranking_state == state
+    assert grade.ranking_uncertain is (state != "clear")
 
 
 def test_single_sample_never_emits_a_zero_width_95_percent_ci():
