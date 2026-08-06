@@ -10,10 +10,12 @@ from taimahjong.calibration import (
     BETA_PRIOR_BETA,
     Calibration,
     DANGER_BUCKETS,
+    DANGER_EDGES,
     DANGER_MODIFIERS,
     DANGER_REFERENCE,
     MIN_CELL_COUNT,
     counts_from_games,
+    danger_bucket,
     empty_counts,
     load_table,
     merge_counts,
@@ -182,7 +184,7 @@ def test_cautious_avoids_feeding_the_dealer(monkeypatch):
     assert without_weight == one_m
 
 
-def test_ev_aware_is_deterministic_and_chooses_the_safe_known_case():
+def test_ev_aware_is_deterministic_and_chooses_the_safe_known_case(monkeypatch):
     # This 17-tile state is the first seat-zero decision from fixed seed 1.
     # Attack's M2 choice is 2s (19); the calibrated policy instead takes the
     # lower-danger 2z (28), so the test catches a risk term that is ignored.
@@ -194,6 +196,14 @@ def test_ev_aware_is_deterministic_and_chooses_the_safe_known_case():
     first = _choose_discard(0, 8, players)
     second = _choose_discard(0, 8, players)
     assert first == second == (28, False)
+    # The calibration audit needs a policy instrument that changes only the
+    # calibrated risk term.  If this branch ever touches the committed table,
+    # the independent evaluation would reproduce the feedback loop it audits.
+    def forbidden_load():
+        pytest.fail("independent policy loaded the calibration table")
+
+    monkeypatch.setattr(selfplay, "_default_calibration", forbidden_load)
+    assert _choose_discard(0, 8, players, consume_calibration=False) == (19, False)
 
 
 def test_head_to_head_smoke_batch_records_point_deltas():
@@ -244,6 +254,27 @@ def test_calibration_lookup_interpolates_and_falls_back_for_small_cells():
     ) / 2
     assert calibration.deal_in_probability(1.0) == pytest.approx(expected)
     assert Calibration(table_document(counts), min_cell_count=31).deal_in_probability(1.0) is None
+    # The shipped v2 document has a single 13+ cell.  A regenerated document
+    # may split that heterogeneous tail without changing how the shipped file
+    # is interpreted, while retaining Jeffreys smoothing and monotonic PAV.
+    edges = DANGER_EDGES + (16.0,)
+    buckets = DANGER_BUCKETS[:-1] + ("13-16", "16+")
+    counts = empty_counts(buckets)
+    counts["deal_in"]["9-13"] = {"observations": 1000, "deal_ins": 10}
+    counts["deal_in"]["13-16"] = {"observations": 1000, "deal_ins": 5}
+    counts["deal_in"]["16+"] = {"observations": 1000, "deal_ins": 20}
+    document = table_document(
+        counts,
+        {"danger_binning": {"edges": list(edges), "buckets": list(buckets)}},
+        danger_buckets=buckets,
+    )
+
+    calibration = Calibration(document)
+    pooled = (10 + 0.5 + 5 + 0.5) / (1000 + 1 + 1000 + 1)
+    assert danger_bucket(13.0, edges, buckets) == "13-16"
+    assert calibration.deal_in_probability(11.0) == pytest.approx(pooled)
+    assert calibration.deal_in_probability(14.5) == pytest.approx(pooled)
+    assert calibration.deal_in_probability(20.0) == pytest.approx((20 + 0.5) / (1000 + 1))
 
 
 def test_jeffreys_smoothing_keeps_observed_zero_deal_in_bucket_positive():

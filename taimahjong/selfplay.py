@@ -348,6 +348,7 @@ def _ev_aware_discard(
     analyses: tuple[DiscardAnalysis, ...],
     players: list[Player],
     scheme: ScoringScheme = DEFAULT_SCHEME,
+    consume_calibration: bool = True,
 ) -> int:
     """Choose from M2's top candidates plus the raw minimum-danger discard."""
     player = players[player_index]
@@ -366,7 +367,7 @@ def _ev_aware_discard(
     if safest.discard not in {analysis.discard for analysis in candidates}:
         candidates.append(safest)
     best_ukeire = max((analysis.total for analysis in analyses), default=0)
-    calibration = _default_calibration()
+    calibration = _default_calibration() if consume_calibration else None
     ranked: list[tuple[float, int, int]] = []
     for order, analysis in enumerate(candidates):
         post = list(player.hand)
@@ -391,6 +392,7 @@ def _choose_discard(
     drawn_tile: int | None,
     players: list[Player],
     scheme: ScoringScheme = DEFAULT_SCHEME,
+    consume_calibration: bool = True,
 ) -> tuple[int, bool]:
     player = players[player_index]
     if player.declared:
@@ -400,7 +402,13 @@ def _choose_discard(
     analyses = _cached_analysis(tuple(player.hand), _declared(player), visible)
     assert analyses
     if player.policy == "ev_aware":
-        return _ev_aware_discard(player_index, analyses, players, scheme), False
+        return _ev_aware_discard(
+            player_index,
+            analyses,
+            players,
+            scheme,
+            consume_calibration=consume_calibration,
+        ), False
     fold_active = (
         player.policy == "cautious"
         and _cached_shanten(tuple(player.hand), _declared(player)) >= 2
@@ -621,6 +629,7 @@ def play_game(
     kong_policy: str | tuple[str, str, str, str] = "none",
     config: GameConfig = DEFAULT_GAME_CONFIG,
     rules: RulesConfig = DEFAULT_RULES,
+    consume_calibration: bool = True,
 ) -> GameResult:
     """Play one deterministic-seeded game and retain every discard event in memory.
 
@@ -632,6 +641,8 @@ def play_game(
     """
     if len(policies) != 4 or any(policy not in POLICIES for policy in policies):
         raise ValueError("policies must name four entries from POLICIES")
+    if not isinstance(consume_calibration, bool):
+        raise ValueError("consume_calibration must be a boolean")
     if not isinstance(dealer_streak, int) or isinstance(dealer_streak, bool) or dealer_streak < 0:
         raise ValueError("dealer_streak must be a non-negative integer")
     seat_kong = tuple(_seat_kong_policy(kong_policy, seat) for seat in range(4))
@@ -724,7 +735,13 @@ def play_game(
             if snapshot_hook is not None and not player.declared:
                 snapshot_hook(_decision_snapshot(current, drawn_tile, players, len(wall)))
 
-        tile, fold_active = _choose_discard(current, drawn_tile, players, config.scheme)
+        tile, fold_active = _choose_discard(
+            current,
+            drawn_tile,
+            players,
+            config.scheme,
+            consume_calibration=consume_calibration,
+        )
         assert player.hand[tile] > 0
         origin = "tsumogiri" if drawn_tile == tile else "tedashi"
         player.hand[tile] -= 1
@@ -861,6 +878,7 @@ def play_games(
     dealer_streak: int = 0,
     config: GameConfig = DEFAULT_GAME_CONFIG,
     rules: RulesConfig = DEFAULT_RULES,
+    consume_calibration: bool = True,
 ) -> list[GameResult]:
     if not isinstance(games, int) or isinstance(games, bool) or games < 0:
         raise ValueError("games must be a non-negative integer")
@@ -872,6 +890,7 @@ def play_games(
             dealer_streak=dealer_streak,
             config=config,
             rules=rules,
+            consume_calibration=consume_calibration,
         )
         for _ in range(games)
     ]
