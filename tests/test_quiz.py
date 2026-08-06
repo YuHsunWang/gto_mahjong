@@ -7,6 +7,7 @@ import sys
 import pytest
 
 import taimahjong.quiz as quiz
+from taimahjong.danger import meld_tiles
 from taimahjong.ev import EVRankEntry, evaluate_discard
 from taimahjong.moments import SampleMoments
 from taimahjong.quiz import (
@@ -43,13 +44,13 @@ def _observed_counts(position):
     for entry in position.own_river:
         counts[entry.tile] += 1
     for meld in position.own_melds:
-        for tile in meld:
+        for tile in meld_tiles(meld):
             counts[tile] += 1
     for opponent in position.opponents:
         for entry in opponent.river:
             counts[entry.tile] += 1
         for meld in opponent.melds:
-            for tile in meld:
+            for tile in meld_tiles(meld):
                 counts[tile] += 1
     return tuple(counts)
 

@@ -35,7 +35,17 @@ from pydantic import BaseModel, ConfigDict, Field
 from taimahjong.analysis import AnalysisContext, CalibrationProvider
 from taimahjong.calibration import Calibration
 from taimahjong.config import DEFAULT_GAME_CONFIG, GameConfig
-from taimahjong.danger import OpponentView, RiverEntry, fold_score, parse_river, tenpai_score
+from taimahjong.danger import (
+    DeclaredKong,
+    DeclaredMeld,
+    OpponentView,
+    RiverEntry,
+    fold_score,
+    kong_tiles,
+    meld_tiles,
+    parse_river,
+    tenpai_score,
+)
 from taimahjong.endgame import EndgamePosition, generate_endgame_position
 from taimahjong.ev import (
     EVRankEntry,
@@ -108,7 +118,7 @@ def _opponent_discard_counts(opponent: OpponentView) -> tuple[int, ...]:
 def _opponent_holding_counts(opponent: OpponentView) -> tuple[int, ...]:
     counts = [0] * 34
     for meld in opponent.melds:
-        for tile in meld:
+        for tile in meld_tiles(meld):
             counts[tile] += 1
     return tuple(counts)
 
@@ -136,6 +146,31 @@ def _river_payload(river) -> list[dict[str, Any]]:
     return [{"tile": entry.tile, "origin": entry.origin} for entry in river]
 
 
+def _meld_detail_payload(meld) -> dict[str, Any]:
+    detail = meld if isinstance(meld, DeclaredMeld) else None
+    return {
+        "tiles": list(meld_tiles(meld)),
+        "called_tile": None if detail is None else detail.called_tile,
+        "called_from_seat": None if detail is None else detail.called_from_seat,
+        "called_from_discard_number": (
+            None if detail is None else detail.called_from_discard_number
+        ),
+    }
+
+
+def _kong_detail_payload(kong) -> dict[str, Any]:
+    tile, concealed = kong_tiles(kong)
+    detail = kong if isinstance(kong, DeclaredKong) else None
+    return {
+        "tile": tile,
+        "concealed": concealed,
+        "called_from_seat": None if detail is None else detail.called_from_seat,
+        "called_from_discard_number": (
+            None if detail is None else detail.called_from_discard_number
+        ),
+    }
+
+
 def _position_payload(position: QuizPosition) -> dict[str, Any]:
     return {
         "seed": position.seed,
@@ -144,12 +179,21 @@ def _position_payload(position: QuizPosition) -> dict[str, Any]:
         "drawn_tile": position.drawn_tile,
         "hand": list(position.hand),
         "own_river": _river_payload(position.own_river),
-        "own_melds": [list(meld) for meld in position.own_melds],
+        "own_melds": [list(meld_tiles(meld)) for meld in position.own_melds],
+        "own_meld_details": [
+            _meld_detail_payload(meld) for meld in position.own_melds
+        ],
+        "own_kong_details": [
+            _kong_detail_payload(kong) for kong in position.own_kongs
+        ],
         "opponents": [
             {
                 "seat": opponent.seat,
                 "river": _river_payload(opponent.river),
-                "melds": [list(meld) for meld in opponent.melds],
+                "melds": [list(meld_tiles(meld)) for meld in opponent.melds],
+                "meld_details": [
+                    _meld_detail_payload(meld) for meld in opponent.melds
+                ],
                 "declared": opponent.declared,
                 "declared_at": opponent.declared_at,
                 "tenpai_estimate": opponent.tenpai_estimate,

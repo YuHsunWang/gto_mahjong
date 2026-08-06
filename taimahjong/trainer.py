@@ -23,6 +23,7 @@ from . import quiz  # budget/adaptive constants read live (quiz.*) so tests can 
 from .analysis import AnalysisContext, DEFAULT_ANALYSIS_CONTEXT
 from .calibration import Calibration
 from .config import DEFAULT_RULES, RulesConfig, resolve_ron_claims
+from .danger import DeclaredKong, DeclaredMeld, KongLike, MeldLike, kong_tiles, meld_tiles
 from .ev import WinValueContext, declaration_ev, evaluate_discard, evaluate_pass, ev_rank
 from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
 from .scoring import DEFAULT_SCHEME, ScoringScheme
@@ -347,7 +348,9 @@ def _trainer_position(
     """Build a trainer quiz view, preserving own kong visibility and type."""
     player = players[player_index]
     snapshot = _decision_snapshot(player_index, drawn_tile, players, wall_remaining)
-    validation_melds = snapshot.melds + tuple((tile, tile, tile) for tile, _ in player.kongs)
+    validation_melds = snapshot.melds + tuple(
+        (tile, tile, tile) for tile, _ in map(kong_tiles, player.kongs)
+    )
     position = _position_from(replace(snapshot, melds=validation_melds), seed)
     return replace(
         position,
@@ -361,8 +364,8 @@ def _trainer_position(
 
 def _score_template(
     position: QuizPosition,
-    melds: tuple[tuple[int, int, int], ...] | None = None,
-    kongs: tuple[tuple[int, bool], ...] | None = None,
+    melds: tuple[MeldLike, ...] | None = None,
+    kongs: tuple[KongLike, ...] | None = None,
 ) -> WinValueContext:
     """Trainer scoring state shared by discard, call, and kong EV branches."""
     template = quiz._score_template(position)
@@ -395,7 +398,8 @@ def _human_kong_options(player: Player) -> tuple[KongOption, ...]:
             post = list(player.hand)
             post[tile] -= 4
             options.append(KongOption("concealed", tile, _cached_shanten(tuple(post), _declared(player) + 1)))
-    for tile, second, third in player.melds:
+    for meld in player.melds:
+        tile, second, third = meld_tiles(meld)
         if tile == second == third and player.hand[tile] >= 1:
             post = list(player.hand)
             post[tile] -= 1
@@ -403,16 +407,23 @@ def _human_kong_options(player: Player) -> tuple[KongOption, ...]:
     return tuple(options)
 
 
-def _apply_call(player: Player, discarder: Player, option: CallOption) -> None:
+def _apply_call(
+    player: Player,
+    discarder: Player,
+    option: CallOption,
+    declared_meld: DeclaredMeld | None = None,
+) -> None:
     """Apply a selected pon/chi; 大明槓 uses ``_apply_big_kong`` instead."""
     assert option.kind in ("pon", "chi")
     discarder.river.pop()
     for consumed in option.consumed:
         player.hand[consumed] -= 1
-    player.melds.append(option.meld)
+    player.melds.append(
+        DeclaredMeld(option.meld) if declared_meld is None else declared_meld
+    )
 
 
-def _post_call(position: QuizPosition, option: CallOption) -> tuple[tuple[int, ...], tuple[tuple[int, int, int], ...]]:
+def _post_call(position: QuizPosition, option: CallOption) -> tuple[tuple[int, ...], tuple[MeldLike, ...]]:
     """The concealed hand and meld set after declaring a pon/chi."""
     assert option.kind in ("pon", "chi")
     post = list(position.hand)
@@ -522,8 +533,8 @@ def _refine_option(
 def _best_discard_ev(
     position: QuizPosition,
     hand: tuple[int, ...],
-    melds: tuple[tuple[int, int, int], ...],
-    kongs: tuple[tuple[int, bool], ...],
+    melds: tuple[MeldLike, ...],
+    kongs: tuple[KongLike, ...],
     public_counts: tuple[int, ...],
     base_seed: int,
     sims: int,
@@ -580,8 +591,8 @@ def _post_kong_state(
     position: QuizPosition, option: KongOption,
 ) -> tuple[
     tuple[int, ...],
-    tuple[tuple[int, int, int], ...],
-    tuple[tuple[int, bool], ...],
+    tuple[MeldLike, ...],
+    tuple[KongLike, ...],
     tuple[int, ...],
 ]:
     """Return concealed tiles, melds, typed kongs, and public counts after a kong."""
@@ -596,7 +607,13 @@ def _post_kong_state(
         hand[option.tile] -= 1
         public[option.tile] += 1
         melds_list = list(melds)
-        melds_list.remove((option.tile, option.tile, option.tile))
+        pon = (option.tile, option.tile, option.tile)
+        for index, meld in enumerate(melds_list):
+            if meld_tiles(meld) == pon:
+                del melds_list[index]
+                break
+        else:
+            raise ValueError(f"{pon!r} is not in position melds")
         melds = tuple(melds_list)
         kongs = position.own_kongs + ((option.tile, False),)
     return tuple(hand), melds, kongs, tuple(public)
@@ -994,8 +1011,16 @@ def play_trainer(
 
         if human_option is not None:
             if human_option.kind == "kong":
+                declared_kong = DeclaredKong(
+                    tile,
+                    False,
+                    called_from_seat=current,
+                    called_from_discard_number=players[current].discards,
+                )
                 players[current].river.pop()
-                replacement = _apply_big_kong(players[human_seat], tile, dead)
+                replacement = _apply_big_kong(
+                    players[human_seat], tile, dead, declared_kong,
+                )
                 if _cached_shanten(
                     tuple(players[human_seat].hand), _declared(players[human_seat]),
                 ) == -1:
@@ -1011,16 +1036,31 @@ def play_trainer(
                     return
                 pending_drawn_tile = replacement
             else:
-                _apply_call(players[human_seat], players[current], human_option)
+                declared_meld = DeclaredMeld(
+                    tiles=human_option.meld,
+                    called_tile=tile,
+                    called_from_seat=current,
+                    called_from_discard_number=players[current].discards,
+                )
+                _apply_call(
+                    players[human_seat], players[current], human_option,
+                    declared_meld,
+                )
             any_call = True
             current = human_seat
             needs_draw = False
         elif caller is not None and selected is not None:
             removed, meld = selected
+            declared_meld = DeclaredMeld(
+                tiles=meld,
+                called_tile=tile,
+                called_from_seat=current,
+                called_from_discard_number=players[current].discards,
+            )
             players[current].river.pop()
             players[caller].hand[removed[0]] -= 1
             players[caller].hand[removed[1]] -= 1
-            players[caller].melds.append(meld)
+            players[caller].melds.append(declared_meld)
             any_call = True
             current = caller
             needs_draw = False

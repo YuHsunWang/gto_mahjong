@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from time import perf_counter
 
-from .danger import OpponentView, parse_river
+from .danger import OpponentView, meld_tiles, parse_river
 from .ev import EVRankEntry, ev_rank
 from .scoring import SCHEME_3_1, SCHEME_5_2, ScoringScheme
 from .tiles import parse_tiles
@@ -62,7 +62,7 @@ def _visible(*opponents: OpponentView) -> tuple[int, ...]:
         for entry in opponent.river:
             counts[entry.tile if hasattr(entry, "tile") else entry] += 1
         for meld in opponent.melds:
-            for tile in meld:
+            for tile in meld_tiles(meld):
                 counts[tile] += 1
     return tuple(counts)
 

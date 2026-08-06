@@ -3,6 +3,7 @@
 import pytest
 
 from taimahjong.config import DEFAULT_RULES, RulesConfig
+from taimahjong.danger import DeclaredKong, DeclaredMeld
 from taimahjong.quiz import grade
 from taimahjong.trainer import (
     CallOption,
@@ -167,6 +168,7 @@ def test_taking_open_kong_draws_replacement_and_records_kong():
         index for index, option in enumerate(item.options) if option.kind == "kong"
     )
     kong_tile = item.offered_tile
+    discarder = item.discarder
     item = gen.send(option_index)
     if isinstance(item, TrainerKongDecision):
         item = gen.send(None)
@@ -174,6 +176,10 @@ def test_taking_open_kong_draws_replacement_and_records_kong():
     assert isinstance(item, TrainerDecision)
     assert item.position.drawn_tile is not None
     assert item.position.own_kongs == ((kong_tile, False),)
+    kong = item.position.own_kongs[0]
+    assert isinstance(kong, DeclaredKong)
+    assert kong.called_from_seat == discarder
+    assert kong.called_from_discard_number == 3
 
 
 def _first_call(seed_range=range(1, 20)):
@@ -298,13 +304,19 @@ def test_taking_a_call_opens_hand_and_game_terminates():
         gen = play_trainer(seed, human_seat=0)
         item = next(gen)
         took = saw_open = False
+        called_from = None
         while not isinstance(item, TrainerOutcome):
             if isinstance(item, TrainerCallDecision) and not took:
                 took = True
+                called_from = (item.discarder, item.offered_tile)
                 item = gen.send(0)  # take the first offered call
             elif isinstance(item, TrainerDecision):
                 if took and item.position.own_melds:
                     saw_open = True
+                    meld = item.position.own_melds[-1]
+                    assert isinstance(meld, DeclaredMeld)
+                    assert (meld.called_from_seat, meld.called_tile) == called_from
+                    assert meld.called_from_discard_number > 0
                 item = gen.send(_discard_drawn(item.position))
             else:
                 item = gen.send(None)

@@ -186,7 +186,36 @@ button {
   justify-content: center;
 }
 
-.opp-melds { display: flex; gap: 1px; margin-bottom: 1px; }
+.opp-melds { display: flex; gap: 5px; margin-bottom: 1px; }
+
+.opp-meld,
+.hand-meld {
+  position: relative;
+  display: flex;
+  gap: 1px;
+  padding-top: 14px;
+}
+
+.meld-provenance {
+  position: absolute;
+  top: -2px;
+  left: 0;
+  z-index: 1;
+  padding: 0 4px;
+  border: 1px solid rgba(217, 194, 230, .55);
+  border-radius: 4px;
+  background: #765bbe;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 13px;
+  white-space: nowrap;
+}
+
+/* Opponent tile racks rotate toward their owner; provenance stays upright. */
+.zone.top .meld-provenance { transform: rotate(180deg); }
+.zone.left .meld-provenance { transform: rotate(-90deg); }
+.zone.right .meld-provenance { transform: rotate(90deg); }
 
 /* Seat lamps sit upright in the felt corners, outside the rotated zones. */
 .seat-lamp {
@@ -282,8 +311,6 @@ button {
   border-left: 1px solid rgba(217, 194, 230, .25);
   flex: 0 0 auto;
 }
-
-.hand-meld { display: flex; gap: 1px; }
 
 .hand-hint {
   text-align: center;

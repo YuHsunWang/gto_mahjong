@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from .danger import DECLARED_TAI
+from .danger import DECLARED_TAI, KongLike, MeldLike, kong_tiles, meld_tiles
 
 if TYPE_CHECKING:
     from .config import RulesConfig
@@ -348,9 +348,9 @@ def _score_decomposition(
 
 def score_hand(
     concealed: tuple[int, ...] | list[int],
-    melds: list[tuple[int, int, int]] | tuple[tuple[int, int, int], ...] = (),
+    melds: list[MeldLike] | tuple[MeldLike, ...] = (),
     context: WinContext | None = None,
-    kongs: tuple[tuple[int, bool], ...] = (),
+    kongs: list[KongLike] | tuple[KongLike, ...] = (),
 ) -> ScoreResult:
     """Score a complete winning hand: concealed tiles include the winning tile.
 
@@ -362,26 +362,23 @@ def score_hand(
     if context is None:
         raise ValueError("a WinContext with the winning tile is required")
     checked = validate_counts(concealed)
-    meld_sets = [_classify_meld(tuple(meld)) for meld in melds]
-    for tile, concealed_flag in kongs:
-        if not isinstance(tile, int) or isinstance(tile, bool) or not 0 <= tile < 34:
-            raise ValueError("kong tiles must be tile indexes 0-33")
-        if not isinstance(concealed_flag, bool):
-            raise ValueError("kong concealed flags must be booleans")
+    normalized_melds = [meld_tiles(meld) for meld in melds]
+    normalized_kongs = [kong_tiles(kong) for kong in kongs]
+    meld_sets = [_classify_meld(meld) for meld in normalized_melds]
     physical_counts = list(checked)
-    for meld in melds:
+    for meld in normalized_melds:
         for tile in meld:
             physical_counts[tile] += 1
-    for tile, _ in kongs:
+    for tile, _ in normalized_kongs:
         physical_counts[tile] += 4
     if any(count > 4 for count in physical_counts):
         raise ValueError("concealed hand, melds, and kongs cannot contain more than four copies of a tile kind")
-    declared_sets = len(meld_sets) + len(kongs)
+    declared_sets = len(meld_sets) + len(normalized_kongs)
     if declared_sets > 5:
         raise ValueError("at most five sets can be declared")
-    kong_sets = [("tri", tile) for tile, _ in kongs]
-    concealed_kong_count = sum(1 for _, concealed_flag in kongs if concealed_flag)
-    open_kong_count = len(kongs) - concealed_kong_count
+    kong_sets = [("tri", tile) for tile, _ in normalized_kongs]
+    concealed_kong_count = sum(1 for _, concealed_flag in normalized_kongs if concealed_flag)
+    open_kong_count = len(normalized_kongs) - concealed_kong_count
     actual_exposed_melds = len(meld_sets) + open_kong_count
     if context.exposed_melds != actual_exposed_melds:
         context = replace(context, exposed_melds=actual_exposed_melds)
@@ -400,8 +397,8 @@ def score_hand(
     pre_win[context.winning_tile] -= 1
     single_wait = len(_winning_kinds(pre_win, declared_sets)) == 1
 
-    meld_tiles = [tile for kind, start in meld_sets for tile in ((start, start, start) if kind == "tri" else (start, start + 1, start + 2))]
-    every_tile = [tile for tile in range(34) if checked[tile]] + meld_tiles + [tile for tile, _ in kongs]
+    declared_tiles = [tile for kind, start in meld_sets for tile in ((start, start, start) if kind == "tri" else (start, start + 1, start + 2))]
+    every_tile = [tile for tile in range(34) if checked[tile]] + declared_tiles + [tile for tile, _ in normalized_kongs]
     suits_present = {tile // 9 for tile in every_tile if tile < 27}
     honors_present = any(tile >= 27 for tile in every_tile)
 

@@ -120,13 +120,27 @@ export function drillScreen(root, { apiBase, mode, title }) {
       const hint = document.createElement('div');
       hint.className = 'hand-hint';
       hint.textContent = '點一張牌切出（再點一次確認；金框為剛摸入）';
-      root.append(hint, handEl(position.hand, { drawnTile: position.drawn_tile, onDiscard: gradeTile, melds: position.own_melds }));
+      root.append(hint, handEl(position.hand, {
+        drawnTile: position.drawn_tile,
+        onDiscard: gradeTile,
+        melds: position.own_melds,
+        meldDetails: position.own_meld_details,
+        kongDetails: position.own_kong_details,
+        ownerSeat: position.seat,
+      }));
       root.append(controls());
       return;
     }
 
     if (phase === 'grading') {
-      root.append(handEl(position.hand, { drawnTile: position.drawn_tile, marks: { cut: chosenTile }, melds: position.own_melds }));
+      root.append(handEl(position.hand, {
+        drawnTile: position.drawn_tile,
+        marks: { cut: chosenTile },
+        melds: position.own_melds,
+        meldDetails: position.own_meld_details,
+        kongDetails: position.own_kong_details,
+        ownerSeat: position.seat,
+      }));
       root.append(computingEl(`你切 ${faceText(chosenTile)}，計算 EV 中…`));
       return;
     }
@@ -138,6 +152,9 @@ export function drillScreen(root, { apiBase, mode, title }) {
         drawnTile: position.drawn_tile,
         marks: { cut: chosenTile, best: showBest ? bestTile : null },
         melds: position.own_melds,
+        meldDetails: position.own_meld_details,
+        kongDetails: position.own_kong_details,
+        ownerSeat: position.seat,
       }));
       root.append(verdictEl(gradeResult.verdict, gradeResult.marginal, gradeResult.ev_delta, `你切 ${faceText(chosenTile)}`));
       if (showBest) {

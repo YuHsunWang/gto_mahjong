@@ -16,10 +16,54 @@ function riverEl(river, { highlightLast = false } = {}) {
   return el;
 }
 
-function meldsEl(melds) {
+function seatPoint(seat, viewerSeat) {
+  const points = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+  return points[(seat - viewerSeat + 4) % 4];
+}
+
+function provenanceArrow(ownerSeat, sourceSeat, viewerSeat) {
+  const [ownerX, ownerY] = seatPoint(ownerSeat, viewerSeat);
+  const [sourceX, sourceY] = seatPoint(sourceSeat, viewerSeat);
+  const direction = `${Math.sign(sourceX - ownerX)},${Math.sign(sourceY - ownerY)}`;
+  return {
+    '-1,-1': '↖', '0,-1': '↑', '1,-1': '↗',
+    '-1,0': '←', '1,0': '→',
+    '-1,1': '↙', '0,1': '↓', '1,1': '↘',
+  }[direction] || '•';
+}
+
+function provenanceEl(detail, ownerSeat, viewerSeat) {
+  if (!detail || detail.called_from_seat === null || detail.called_from_discard_number === null) return null;
+  const sourceSeat = detail.called_from_seat;
+  const number = detail.called_from_discard_number;
+  const accessible = `${WINDS[sourceSeat]}家第${number}張棄牌所鳴`;
+  const label = document.createElement('span');
+  label.className = 'meld-provenance';
+  label.setAttribute('aria-label', accessible);
+  label.title = accessible;
+  const arrow = document.createElement('span');
+  arrow.setAttribute('aria-hidden', 'true');
+  arrow.textContent = provenanceArrow(ownerSeat, sourceSeat, viewerSeat);
+  label.append(arrow, document.createTextNode(` ${number}`));
+  return label;
+}
+
+function meldGroupEl(tiles, detail, ownerSeat, viewerSeat, className) {
+  const group = document.createElement('div');
+  group.className = className;
+  const provenance = provenanceEl(detail, ownerSeat, viewerSeat);
+  if (provenance) group.append(provenance);
+  tiles.forEach((tile) => group.append(tileEl(tile, { size: 'sm' })));
+  return group;
+}
+
+function meldsEl(melds, details = [], ownerSeat, viewerSeat) {
   const el = document.createElement('div');
   el.className = 'opp-melds';
-  melds.forEach((meld) => meld.forEach((tile) => el.append(tileEl(tile, { size: 'sm' }))));
+  melds.forEach((meld, index) => {
+    const detail = details[index] || null;
+    el.append(meldGroupEl(detail?.tiles || meld, detail, ownerSeat, viewerSeat, 'opp-meld'));
+  });
   return el;
 }
 
@@ -55,13 +99,15 @@ function seatLamp(seat, { declared = false, isDealer = false, streak = 0, tenpai
   return el;
 }
 
-function opponentZone(cssClass, opponent) {
+function opponentZone(cssClass, opponent, viewerSeat) {
   // No hidden-hand rack: the centre box already reports the wall count, and
   // concealed hands carry no information worth pixels (user call, 2026-07-20).
   const zone = document.createElement('div');
   zone.className = `zone ${cssClass}`;
   if (!opponent) return zone;
-  if (opponent.melds.length) zone.append(meldsEl(opponent.melds));
+  if (opponent.melds.length) {
+    zone.append(meldsEl(opponent.melds, opponent.meld_details, opponent.seat, viewerSeat));
+  }
   zone.append(riverEl(opponent.river));
   return zone;
 }
@@ -103,10 +149,10 @@ export function feltEl(position, { offeredTile = null, ownRiverHighlight = false
   const felt = document.createElement('div');
   felt.className = 'felt';
   const [right, top, left] = position.opponents; // engine order: 下家, 對家, 上家
-  felt.append(opponentZone('top', top));
-  felt.append(opponentZone('left', left));
+  felt.append(opponentZone('top', top, position.seat));
+  felt.append(opponentZone('left', left, position.seat));
   felt.append(centerBox(position, { offeredTile }));
-  felt.append(opponentZone('right', right));
+  felt.append(opponentZone('right', right, position.seat));
 
   // Own melds live beside the hand tray, not on the felt (user call, 2026-07-20).
   const bottom = document.createElement('div');
@@ -140,7 +186,16 @@ export function feltEl(position, { offeredTile = null, ownRiverHighlight = false
 //   onDiscard: enable tap-to-discard (confirm-tap unless the one-tap setting is on)
 //   drawnTile: separated with a gap + gold frame
 //   marks: {cut: tile, best: tile} for the feedback state
-export function handEl(handCounts, { drawnTile = null, onDiscard = null, marks = {}, melds = [] } = {}) {
+export function handEl(handCounts, {
+  drawnTile = null,
+  onDiscard = null,
+  marks = {},
+  melds = [],
+  meldDetails = [],
+  kongDetails = [],
+  ownerSeat = null,
+  viewerSeat = ownerSeat,
+} = {}) {
   const row = document.createElement('div');
   row.className = 'handrow';
   const counts = [...handCounts];
@@ -188,14 +243,19 @@ export function handEl(handCounts, { drawnTile = null, onDiscard = null, marks =
   });
 
   // Declared melds (吃/碰/槓) sit apart at the right edge of the tray.
-  if (melds.length) {
+  if (melds.length || kongDetails.length) {
     const rack = document.createElement('div');
     rack.className = 'hand-melds';
-    melds.forEach((meld) => {
-      const group = document.createElement('div');
-      group.className = 'hand-meld';
-      meld.forEach((tile) => group.append(tileEl(tile, { size: 'sm' })));
-      rack.append(group);
+    melds.forEach((meld, index) => {
+      const detail = meldDetails[index] || null;
+      rack.append(meldGroupEl(
+        detail?.tiles || meld, detail, ownerSeat, viewerSeat, 'hand-meld',
+      ));
+    });
+    kongDetails.forEach((detail) => {
+      rack.append(meldGroupEl(
+        Array(4).fill(detail.tile), detail, ownerSeat, viewerSeat, 'hand-meld hand-kong',
+      ));
     });
     row.append(rack);
   }

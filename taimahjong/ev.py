@@ -18,12 +18,15 @@ from typing import TYPE_CHECKING, Sequence
 from .calibration import Calibration
 from .config import DEFAULT_RULES, RulesConfig
 from .danger import (
+    KongLike,
+    MeldLike,
     OpponentView,
     RiverEntry,
     _flush_suit,
     assess_validated_danger,
     danger_score,
     fold_score,
+    meld_tiles,
     tenpai_score,
 )
 from .moments import ClusteredSampleMoments, SampleMoments
@@ -74,8 +77,8 @@ class WinValueContext:
     """A score template plus optional known declared melds for EV scoring."""
 
     context: WinContext
-    melds: tuple[tuple[int, int, int], ...] = ()
-    kongs: tuple[tuple[int, bool], ...] = ()
+    melds: tuple[MeldLike, ...] = ()
+    kongs: tuple[KongLike, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -280,7 +283,7 @@ def survival_by_turn(
 
 def _template(
     template: WinContext | WinValueContext | None,
-) -> tuple[WinContext, tuple[tuple[int, int, int], ...], tuple[tuple[int, bool], ...]]:
+) -> tuple[WinContext, tuple[MeldLike, ...], tuple[KongLike, ...]]:
     if template is None:
         return WinContext(winning_tile=0), (), ()
     if isinstance(template, WinValueContext):
@@ -419,13 +422,14 @@ def opponent_value_estimate(opponent: OpponentView, scheme: ScoringScheme = DEFA
     a deal-in loss consistently with a win's value.
     """
     opponent.validate()
+    normalized_melds = tuple(meld_tiles(meld) for meld in opponent.melds)
     tai = OPPONENT_DECLARED_TAI if opponent.declared_at is not None else 0
     tai += OPPONENT_DRAGON_TRIPLET_TAI * sum(
-        meld[0] == meld[1] == meld[2] and meld[0] in (31, 32, 33) for meld in opponent.melds
+        meld[0] == meld[1] == meld[2] and meld[0] in (31, 32, 33) for meld in normalized_melds
     )
     if _flush_suit(opponent) is not None:
         tai += OPPONENT_FLUSH_READ_TAI
-    if len(opponent.melds) >= 3 and all(meld[0] == meld[1] == meld[2] for meld in opponent.melds):
+    if len(normalized_melds) >= 3 and all(meld[0] == meld[1] == meld[2] for meld in normalized_melds):
         tai += OPPONENT_ALL_TRIPLETS_TAI
     if opponent.is_dealer:
         tai += OPPONENT_DEALER_TAI + OPPONENT_STREAK_TAI_PER_WIN * opponent.dealer_streak

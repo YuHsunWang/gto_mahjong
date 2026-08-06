@@ -21,7 +21,19 @@ from .config import (
     RulesConfig,
     resolve_ron_claims,
 )
-from .danger import OpponentView, RiverEntry, danger_score, fold_score, tenpai_score
+from .danger import (
+    DeclaredKong,
+    DeclaredMeld,
+    KongLike,
+    MeldLike,
+    OpponentView,
+    RiverEntry,
+    danger_score,
+    fold_score,
+    kong_tiles,
+    meld_tiles,
+    tenpai_score,
+)
 from .ev import BASELINE_TENPAI_RATE, DECLARED_FACTOR, opponent_value_estimate
 from .scoring import BASE_UNITS, DEFAULT_SCHEME, DEALER_TAI, STREAK_TAI_PER_WIN, ScoringScheme, WinContext, score_hand
 from .shanten import shanten
@@ -86,7 +98,7 @@ class Player:
     policy: str
     hand: list[int] = field(default_factory=lambda: [0] * 34)
     river: list[RiverEntry] = field(default_factory=list)
-    melds: list[tuple[int, int, int]] = field(default_factory=list)
+    melds: list[MeldLike] = field(default_factory=list)
     declared_at: int | None = None
     discards: int = 0
     # Set on the DEALER_SEAT player only: dealership is table state, carried
@@ -95,7 +107,7 @@ class Player:
     dealer_streak: int = 0
     # Declared kongs as (tile, concealed) pairs; their four tiles live here,
     # outside ``hand``. Each occupies one declared set (see ``_declared``).
-    kongs: list[tuple[int, bool]] = field(default_factory=list)
+    kongs: list[KongLike] = field(default_factory=list)
 
     @property
     def declared(self) -> bool:
@@ -115,7 +127,7 @@ class GameResult:
     value_units: int = 0
     dealer_streak: int = 0
     dealer_premium: int = 0  # units added to the dealer's leg for a non-dealer winner
-    kongs: tuple[tuple[int, bool], ...] = ()  # the winner's declared kongs
+    kongs: tuple[KongLike, ...] = ()  # the winner's declared kongs
     kong_bloom: bool = False  # win on a kong's self-drawn replacement (槓上開花)
     robbed_kong: bool = False  # win by robbing an added kong (搶槓)
     kong_log: tuple[tuple[int, int, bool], ...] = ()  # every declared kong: (seat, tile, concealed)
@@ -154,7 +166,7 @@ class DecisionSnapshot:
     seat: int
     hand: tuple[int, ...]
     river: tuple[RiverEntry, ...]
-    melds: tuple[tuple[int, int, int], ...]
+    melds: tuple[MeldLike, ...]
     opponents: tuple[tuple[int, OpponentView], ...]
     public_counts: tuple[int, ...]
     turn: int
@@ -169,9 +181,10 @@ def _public_counts(players: list[Player]) -> tuple[int, ...]:
         for entry in player.river:
             counts[entry.tile] += 1
         for meld in player.melds:
-            for tile in meld:
+            for tile in meld_tiles(meld):
                 counts[tile] += 1
-        for tile, _ in player.kongs:
+        for kong in player.kongs:
+            tile, _ = kong_tiles(kong)
             counts[tile] += 4
     return tuple(counts)
 
@@ -180,7 +193,7 @@ def _view(player: Player, seat: int) -> OpponentView:
     # A kong is public but OpponentView.melds is strictly three tiles, so we
     # expose the kong to the shape/danger layer as its triplet; the fourth copy
     # is already in the visible counts (_public_counts adds all four).
-    kong_triplets = [(tile, tile, tile) for tile, _ in player.kongs]
+    kong_triplets = [(tile, tile, tile) for tile, _ in map(kong_tiles, player.kongs)]
     return OpponentView(
         list(player.river), list(player.melds) + kong_triplets, player.declared_at,
         is_dealer=seat == DEALER_SEAT,
@@ -232,7 +245,8 @@ def _self_draw_kong_choice(player: Player, kong_policy: str) -> tuple[int, bool]
     for tile in range(34):
         if player.hand[tile] == 4 and not _kong_worsens_shanten(player, tile, True):
             return tile, True
-    for tile, second, third in player.melds:
+    for meld in player.melds:
+        tile, second, third = meld_tiles(meld)
         if tile == second == third and player.hand[tile] >= 1 and not _kong_worsens_shanten(player, tile, False):
             return tile, False
     return None
@@ -245,8 +259,14 @@ def _declare_kong(player: Player, tile: int, concealed: bool, dead: list[int]) -
         player.hand[tile] -= 4
     else:
         player.hand[tile] -= 1
-        player.melds.remove((tile, tile, tile))  # the pon becomes a kong
-    player.kongs.append((tile, concealed))
+        pon = (tile, tile, tile)
+        for index, meld in enumerate(player.melds):
+            if meld_tiles(meld) == pon:
+                del player.melds[index]  # the pon becomes a kong
+                break
+        else:
+            raise ValueError(f"{pon!r} is not in player melds")
+    player.kongs.append(DeclaredKong(tile, concealed))
     replacement = dead.pop(0)
     player.hand[replacement] += 1
     return replacement
@@ -268,11 +288,19 @@ def _big_kong_caller(players: list[Player], discarder: int, tile: int, seat_kong
     return None
 
 
-def _apply_big_kong(player: Player, tile: int, dead: list[int]) -> int:
+def _apply_big_kong(
+    player: Player,
+    tile: int,
+    dead: list[int],
+    declared_kong: DeclaredKong | None = None,
+) -> int:
     """Declare a 大明槓 on a discard (three from hand + the discard) and draw the
     dead-wall replacement. Open, no bloom eligibility. Returns the replacement."""
     player.hand[tile] -= 3
-    player.kongs.append((tile, False))
+    kong = DeclaredKong(tile, False) if declared_kong is None else declared_kong
+    if kong_tiles(kong) != (tile, False):
+        raise ValueError("big open kong metadata must match the declared tile")
+    player.kongs.append(kong)
     replacement = dead.pop(0)
     player.hand[replacement] += 1
     return replacement
@@ -306,7 +334,7 @@ def _trailing_tsumogiri_run(river: list[RiverEntry]) -> int:
 def _assert_conservation(players: list[Player], wall: list[int], dead: list[int]) -> None:
     total = len(wall) + len(dead)
     for player in players:
-        total += sum(player.hand) + len(player.river) + sum(len(meld) for meld in player.melds) + 4 * len(player.kongs)
+        total += sum(player.hand) + len(player.river) + sum(len(meld_tiles(meld)) for meld in player.melds) + 4 * len(player.kongs)
     assert total == 136, f"tile conservation failed: {total} != 136"
     all_counts = [0] * 34
     for tile in wall + dead:
@@ -317,9 +345,10 @@ def _assert_conservation(players: list[Player], wall: list[int], dead: list[int]
         for entry in player.river:
             all_counts[entry.tile] += 1
         for meld in player.melds:
-            for tile in meld:
+            for tile in meld_tiles(meld):
                 all_counts[tile] += 1
-        for tile, _ in player.kongs:
+        for kong in player.kongs:
+            tile, _ = kong_tiles(kong)
             all_counts[tile] += 4
     assert all(count == 4 for count in all_counts), "individual tile copies were not conserved"
 
@@ -802,9 +831,15 @@ def play_game(
         if dead and not player.declared:
             big_caller = _big_kong_caller(players, current, tile, seat_kong)
             if big_caller is not None:
+                declared_kong = DeclaredKong(
+                    tile,
+                    False,
+                    called_from_seat=current,
+                    called_from_discard_number=players[current].discards,
+                )
                 player.river.pop()  # the konged tile leaves the discarder's river
                 kong_log.append((big_caller, tile, False))
-                replacement = _apply_big_kong(players[big_caller], tile, dead)
+                replacement = _apply_big_kong(players[big_caller], tile, dead, declared_kong)
                 any_call = True
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(players[big_caller].hand), _declared(players[big_caller])) == -1:
@@ -841,10 +876,16 @@ def play_game(
                         caller = index
         if caller is not None and selected is not None:
             removed, meld = selected
+            declared_meld = DeclaredMeld(
+                tiles=meld,
+                called_tile=tile,
+                called_from_seat=current,
+                called_from_discard_number=players[current].discards,
+            )
             players[current].river.pop()
             players[caller].hand[removed[0]] -= 1
             players[caller].hand[removed[1]] -= 1
-            players[caller].melds.append(meld)
+            players[caller].melds.append(declared_meld)
             any_call = True
             _assert_conservation(players, wall, dead)
             current = caller

@@ -13,7 +13,17 @@ from typing import Callable, TypeVar
 
 from .analysis import AnalysisContext, DEFAULT_ANALYSIS_CONTEXT
 from .config import GameConfig
-from .danger import OpponentView, RiverEntry, danger_score, fold_score, format_river, tenpai_score
+from .danger import (
+    KongLike,
+    MeldLike,
+    OpponentView,
+    RiverEntry,
+    danger_score,
+    fold_score,
+    format_river,
+    meld_tiles,
+    tenpai_score,
+)
 from .ev import (
     EVRankEntry,
     WinValueContext,
@@ -151,7 +161,7 @@ class QuizOpponent:
 
     seat: int
     river: tuple[RiverEntry, ...]
-    melds: tuple[tuple[int, int, int], ...]
+    melds: tuple[MeldLike, ...]
     declared_at: int | None
     tenpai_estimate: float
     fold_estimate: float
@@ -184,7 +194,7 @@ class QuizPosition:
     drawn_tile: int
     hand: tuple[int, ...]
     own_river: tuple[RiverEntry, ...]
-    own_melds: tuple[tuple[int, int, int], ...]
+    own_melds: tuple[MeldLike, ...]
     opponents: tuple[QuizOpponent, ...]
     public_counts: tuple[int, ...]
     visible_counts: tuple[int, ...]
@@ -193,7 +203,7 @@ class QuizPosition:
     wall_remaining: int
     candidate_ev_gap: float
     dealer_streak: int = 0  # the table's 連莊 count (dealer is always seat 0)
-    own_kongs: tuple[tuple[int, bool], ...] = ()
+    own_kongs: tuple[KongLike, ...] = ()
     migi_declared: bool = False
     migi_eligible: bool = False
 
@@ -252,11 +262,11 @@ def _tile_name(tile: int) -> str:
     return format_tiles(counts)
 
 
-def _melds_text(melds: tuple[tuple[int, int, int], ...]) -> str:
+def _melds_text(melds: tuple[MeldLike, ...]) -> str:
     pieces: list[str] = []
     for meld in melds:
         counts = [0] * 34
-        for tile in meld:
+        for tile in meld_tiles(meld):
             counts[tile] += 1
         pieces.append(format_tiles(counts))
     return ";".join(pieces) or "-"

@@ -9,7 +9,7 @@ from pathlib import Path
 from .analysis import AnalysisContext, CalibrationProvider
 from .calibration import counts_from_games, format_report, load_table, write_merged_table
 from .config import GameConfig
-from .danger import OpponentView, fold_score, parse_river, rank_discards
+from .danger import OpponentView, fold_score, meld_tiles, parse_river, rank_discards
 from .ev import TileAccounting, declaration_ev, ev_rank, remaining_draws
 from .quiz import best_discard, explain, generate_position, grade
 from .scoring import WinContext, score_hand
@@ -137,7 +137,7 @@ def _opponent_discard_counts(opponent: OpponentView) -> tuple[int, ...]:
 def _opponent_holding_counts(opponent: OpponentView) -> tuple[int, ...]:
     counts = [0] * 34
     for meld in opponent.melds:
-        for tile in meld:
+        for tile in meld_tiles(meld):
             counts[tile] += 1
     return tuple(counts)
 
