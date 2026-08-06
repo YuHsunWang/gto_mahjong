@@ -1,0 +1,1098 @@
+{
+  "audit": {
+    "candidate_table": {
+      "path": "data/calibration-independent.json",
+      "same_holdout_as_shipped": {
+        "base_rate": 0.005177136038410403,
+        "brier_base": 0.0051503333008501954,
+        "brier_score": 0.005137173484501445,
+        "brier_skill_score": 0.0025551387803538494,
+        "deal_ins": 1102,
+        "evaluated_observations": 212859,
+        "held_out_base_rate": 0.005177136038410403,
+        "held_out_deal_ins": 1102,
+        "log_loss": 0.030840423822223986,
+        "log_loss_base": 0.03241358391874907,
+        "log_loss_skill_score": 0.04853397576980434,
+        "reliability_curve": [
+          {
+            "bucket": "0-1",
+            "deal_ins": 1,
+            "observations": 21258,
+            "observed_frequency": 4.7041113933577944e-05,
+            "predicted_probability": 5.8578045370259464e-05
+          },
+          {
+            "bucket": "1-2",
+            "deal_ins": 7,
+            "observations": 12615,
+            "observed_frequency": 0.0005548949663099485,
+            "predicted_probability": 0.0003891891418002785
+          },
+          {
+            "bucket": "2-4",
+            "deal_ins": 57,
+            "observations": 43731,
+            "observed_frequency": 0.0013034232009329766,
+            "predicted_probability": 0.0016759793799775932
+          },
+          {
+            "bucket": "4-6",
+            "deal_ins": 156,
+            "observations": 24897,
+            "observed_frequency": 0.006265815158452826,
+            "predicted_probability": 0.004583634908543273
+          },
+          {
+            "bucket": "6-9",
+            "deal_ins": 303,
+            "observations": 44571,
+            "observed_frequency": 0.00679814228982971,
+            "predicted_probability": 0.006414223680198392
+          },
+          {
+            "bucket": "9-13",
+            "deal_ins": 343,
+            "observations": 39607,
+            "observed_frequency": 0.008660085338450274,
+            "predicted_probability": 0.0075243242991003155
+          },
+          {
+            "bucket": "13-16",
+            "deal_ins": 138,
+            "observations": 20498,
+            "observed_frequency": 0.006732364133086155,
+            "predicted_probability": 0.007956053475497243
+          },
+          {
+            "bucket": "16+",
+            "deal_ins": 97,
+            "observations": 5682,
+            "observed_frequency": 0.01707145371348117,
+            "predicted_probability": 0.012920889766883941
+          }
+        ],
+        "smoothing": {
+          "counterexample_after_probability": 1.7351872845475788e-05,
+          "counterexample_before_probability": 1.1568049048527965e-05,
+          "counterexample_danger_score": 0.3,
+          "largest_well_populated_absolute_change": 2.075676623601065e-05,
+          "largest_well_populated_change_bucket": "16+",
+          "prior": "Jeffreys Beta(0.5, 0.5)",
+          "well_populated_minimum_observations": 30
+        },
+        "total_holdout_observations": 212859,
+        "total_observations": 212859
+      }
+    },
+    "shipped_table": {
+      "all_independent_games": {
+        "base_rate": 0.0050123221905127475,
+        "brier_base": 0.004987198816771241,
+        "brier_score": 0.004976728962273111,
+        "brier_skill_score": 0.0020993457214742994,
+        "deal_ins": 5406,
+        "evaluated_observations": 1078542,
+        "log_loss": 0.0301632718668049,
+        "log_loss_base": 0.03154427581017882,
+        "log_loss_skill_score": 0.04377985887786007,
+        "reliability_curve": [
+          {
+            "bucket": "0-1",
+            "deal_ins": 2,
+            "observations": 107703,
+            "observed_frequency": 1.8569584876930075e-05,
+            "predicted_probability": 7.011509621740659e-05
+          },
+          {
+            "bucket": "1-2",
+            "deal_ins": 34,
+            "observations": 63918,
+            "observed_frequency": 0.0005319315372821427,
+            "predicted_probability": 0.00047537168350905853
+          },
+          {
+            "bucket": "2-4",
+            "deal_ins": 353,
+            "observations": 220484,
+            "observed_frequency": 0.0016010232034977595,
+            "predicted_probability": 0.0012790651651811832
+          },
+          {
+            "bucket": "4-6",
+            "deal_ins": 695,
+            "observations": 128227,
+            "observed_frequency": 0.0054200753351478234,
+            "predicted_probability": 0.00405730299437989
+          },
+          {
+            "bucket": "6-9",
+            "deal_ins": 1505,
+            "observations": 225758,
+            "observed_frequency": 0.0066664304254998715,
+            "predicted_probability": 0.006143262674102019
+          },
+          {
+            "bucket": "9-13",
+            "deal_ins": 1729,
+            "observations": 199589,
+            "observed_frequency": 0.008662802058229661,
+            "predicted_probability": 0.0076717019480233425
+          },
+          {
+            "bucket": "13+",
+            "deal_ins": 1088,
+            "observations": 132863,
+            "observed_frequency": 0.008188886296410588,
+            "predicted_probability": 0.008266740148797386
+          }
+        ],
+        "total_observations": 1078542
+      },
+      "calibration_id": "sha256:7ab0f1aa7e432afe7e2cc0287c4780a52f2d2fdef2531cb2839358cde88b9ddd",
+      "path": "data/calibration.json",
+      "same_holdout_as_candidate": {
+        "base_rate": 0.005177136038410403,
+        "brier_base": 0.0051503333008501954,
+        "brier_score": 0.005138877132915408,
+        "brier_skill_score": 0.002224354670967932,
+        "deal_ins": 1102,
+        "evaluated_observations": 212859,
+        "log_loss": 0.03092806867909757,
+        "log_loss_base": 0.03241358391874907,
+        "log_loss_skill_score": 0.045830021245883645,
+        "reliability_curve": [
+          {
+            "bucket": "0-1",
+            "deal_ins": 1,
+            "observations": 21258,
+            "observed_frequency": 4.7041113933577944e-05,
+            "predicted_probability": 7.138473145370574e-05
+          },
+          {
+            "bucket": "1-2",
+            "deal_ins": 7,
+            "observations": 12615,
+            "observed_frequency": 0.0005548949663099485,
+            "predicted_probability": 0.00047371793749520063
+          },
+          {
+            "bucket": "2-4",
+            "deal_ins": 57,
+            "observations": 43731,
+            "observed_frequency": 0.0013034232009329766,
+            "predicted_probability": 0.0012788275594680263
+          },
+          {
+            "bucket": "4-6",
+            "deal_ins": 156,
+            "observations": 24897,
+            "observed_frequency": 0.006265815158452826,
+            "predicted_probability": 0.004058522911538104
+          },
+          {
+            "bucket": "6-9",
+            "deal_ins": 303,
+            "observations": 44571,
+            "observed_frequency": 0.00679814228982971,
+            "predicted_probability": 0.006141601228528958
+          },
+          {
+            "bucket": "9-13",
+            "deal_ins": 343,
+            "observations": 39607,
+            "observed_frequency": 0.008660085338450274,
+            "predicted_probability": 0.007666621076834968
+          },
+          {
+            "bucket": "13+",
+            "deal_ins": 235,
+            "observations": 26180,
+            "observed_frequency": 0.008976317799847212,
+            "predicted_probability": 0.008266740148798654
+          }
+        ],
+        "total_observations": 212859
+      }
+    },
+    "tail": {
+      "all_games": {
+        "13+": {
+          "deal_ins": 1088,
+          "observations": 132863,
+          "rate": 0.008188886296410588
+        },
+        "9-13": {
+          "deal_ins": 1729,
+          "observations": 199589,
+          "rate": 0.008662802058229661
+        },
+        "upper_minus_lower": -0.0004739157618190732
+      },
+      "fine_tail": [
+        {
+          "band": "9-11",
+          "deal_ins": 1137,
+          "observations": 132079,
+          "rate": 0.008608484316204696
+        },
+        {
+          "band": "11-13",
+          "deal_ins": 592,
+          "observations": 67510,
+          "rate": 0.008769071248703896
+        },
+        {
+          "band": "13-16",
+          "deal_ins": 684,
+          "observations": 103724,
+          "rate": 0.006594423662797424
+        },
+        {
+          "band": "16-20",
+          "deal_ins": 204,
+          "observations": 12857,
+          "rate": 0.015866842964921832
+        },
+        {
+          "band": "20+",
+          "deal_ins": 200,
+          "observations": 16282,
+          "rate": 0.012283503255128362
+        }
+      ],
+      "game_cluster_bootstrap": {
+        "replicates": 2000,
+        "seed": 20260806,
+        "upper_minus_lower_95pct_interval": [
+          -0.0011189980658051575,
+          0.00015523222389693153
+        ]
+      },
+      "prefix_scaling": [
+        {
+          "13+": {
+            "deal_ins": 68,
+            "observations": 8063,
+            "rate": 0.008433585514076646
+          },
+          "9-13": {
+            "deal_ins": 105,
+            "observations": 12332,
+            "rate": 0.008514433992864093
+          },
+          "games": 500,
+          "upper_minus_lower": -8.084847878744687e-05
+        },
+        {
+          "13+": {
+            "deal_ins": 139,
+            "observations": 16242,
+            "rate": 0.008558059352296515
+          },
+          "9-13": {
+            "deal_ins": 211,
+            "observations": 24721,
+            "rate": 0.008535253428259375
+          },
+          "games": 1000,
+          "upper_minus_lower": 2.2805924037139214e-05
+        },
+        {
+          "13+": {
+            "deal_ins": 271,
+            "observations": 32958,
+            "rate": 0.008222586321985557
+          },
+          "9-13": {
+            "deal_ins": 447,
+            "observations": 49814,
+            "rate": 0.008973380977235315
+          },
+          "games": 2000,
+          "upper_minus_lower": -0.000750794655249758
+        },
+        {
+          "13+": {
+            "deal_ins": 566,
+            "observations": 66439,
+            "rate": 0.008519092701575881
+          },
+          "9-13": {
+            "deal_ins": 877,
+            "observations": 100037,
+            "rate": 0.008766756300168937
+          },
+          "games": 4000,
+          "upper_minus_lower": -0.00024766359859305573
+        },
+        {
+          "13+": {
+            "deal_ins": 1088,
+            "observations": 132863,
+            "rate": 0.008188886296410588
+          },
+          "9-13": {
+            "deal_ins": 1729,
+            "observations": 199589,
+            "rate": 0.008662802058229661
+          },
+          "games": 8000,
+          "upper_minus_lower": -0.0004739157618190732
+        }
+      ]
+    }
+  },
+  "counts": {
+    "deal_in": {
+      "0-1": {
+        "deal_ins": 1,
+        "observations": 86445
+      },
+      "1-2": {
+        "deal_ins": 27,
+        "observations": 51303
+      },
+      "13-16": {
+        "deal_ins": 546,
+        "observations": 83226
+      },
+      "16+": {
+        "deal_ins": 307,
+        "observations": 23457
+      },
+      "2-4": {
+        "deal_ins": 296,
+        "observations": 176753
+      },
+      "4-6": {
+        "deal_ins": 539,
+        "observations": 103330
+      },
+      "6-9": {
+        "deal_ins": 1202,
+        "observations": 181187
+      },
+      "9-13": {
+        "deal_ins": 1386,
+        "observations": 159982
+      }
+    },
+    "fold": {
+      "attack": {
+        "score_sum": 31698.266666666754,
+        "windows": 59126
+      },
+      "cautious": {
+        "score_sum": 30954.358333333388,
+        "windows": 56375
+      }
+    },
+    "games": 6400,
+    "tenpai": {
+      "0|1-6|0": {
+        "observations": 67169,
+        "tenpai": 319
+      },
+      "0|1-6|1-2": {
+        "observations": 16034,
+        "tenpai": 217
+      },
+      "0|1-6|3+": {
+        "observations": 592,
+        "tenpai": 29
+      },
+      "0|13+|0": {
+        "observations": 422,
+        "tenpai": 168
+      },
+      "0|13+|1-2": {
+        "observations": 503,
+        "tenpai": 245
+      },
+      "0|13+|3+": {
+        "observations": 543,
+        "tenpai": 298
+      },
+      "0|7-12|0": {
+        "observations": 7415,
+        "tenpai": 759
+      },
+      "0|7-12|1-2": {
+        "observations": 6142,
+        "tenpai": 867
+      },
+      "0|7-12|3+": {
+        "observations": 2116,
+        "tenpai": 460
+      },
+      "1|1-6|0": {
+        "observations": 40360,
+        "tenpai": 706
+      },
+      "1|1-6|1-2": {
+        "observations": 10634,
+        "tenpai": 393
+      },
+      "1|1-6|3+": {
+        "observations": 390,
+        "tenpai": 13
+      },
+      "1|13+|0": {
+        "observations": 1623,
+        "tenpai": 650
+      },
+      "1|13+|1-2": {
+        "observations": 2056,
+        "tenpai": 993
+      },
+      "1|13+|3+": {
+        "observations": 2118,
+        "tenpai": 1262
+      },
+      "1|7-12|0": {
+        "observations": 19397,
+        "tenpai": 2608
+      },
+      "1|7-12|1-2": {
+        "observations": 15022,
+        "tenpai": 2879
+      },
+      "1|7-12|3+": {
+        "observations": 4558,
+        "tenpai": 1367
+      },
+      "2|1-6|0": {
+        "observations": 11365,
+        "tenpai": 578
+      },
+      "2|1-6|1-2": {
+        "observations": 3308,
+        "tenpai": 242
+      },
+      "2|1-6|3+": {
+        "observations": 87,
+        "tenpai": 5
+      },
+      "2|13+|0": {
+        "observations": 2834,
+        "tenpai": 844
+      },
+      "2|13+|1-2": {
+        "observations": 3427,
+        "tenpai": 1375
+      },
+      "2|13+|3+": {
+        "observations": 3093,
+        "tenpai": 1718
+      },
+      "2|7-12|0": {
+        "observations": 18527,
+        "tenpai": 3082
+      },
+      "2|7-12|1-2": {
+        "observations": 14208,
+        "tenpai": 3415
+      },
+      "2|7-12|3+": {
+        "observations": 3881,
+        "tenpai": 1389
+      },
+      "3|1-6|0": {
+        "observations": 1545,
+        "tenpai": 187
+      },
+      "3|1-6|1-2": {
+        "observations": 408,
+        "tenpai": 65
+      },
+      "3|1-6|3+": {
+        "observations": 2,
+        "tenpai": 1
+      },
+      "3|13+|0": {
+        "observations": 2517,
+        "tenpai": 554
+      },
+      "3|13+|1-2": {
+        "observations": 2738,
+        "tenpai": 787
+      },
+      "3|13+|3+": {
+        "observations": 2110,
+        "tenpai": 1051
+      },
+      "3|7-12|0": {
+        "observations": 8051,
+        "tenpai": 1509
+      },
+      "3|7-12|1-2": {
+        "observations": 5945,
+        "tenpai": 1634
+      },
+      "3|7-12|3+": {
+        "observations": 1502,
+        "tenpai": 610
+      },
+      "4|1-6|0": {
+        "observations": 88,
+        "tenpai": 28
+      },
+      "4|1-6|1-2": {
+        "observations": 29,
+        "tenpai": 8
+      },
+      "4|13+|0": {
+        "observations": 1095,
+        "tenpai": 125
+      },
+      "4|13+|1-2": {
+        "observations": 1016,
+        "tenpai": 195
+      },
+      "4|13+|3+": {
+        "observations": 623,
+        "tenpai": 255
+      },
+      "4|7-12|0": {
+        "observations": 1527,
+        "tenpai": 292
+      },
+      "4|7-12|1-2": {
+        "observations": 956,
+        "tenpai": 304
+      },
+      "4|7-12|3+": {
+        "observations": 225,
+        "tenpai": 100
+      },
+      "5|1-6|0": {
+        "observations": 2,
+        "tenpai": 2
+      },
+      "5|13+|0": {
+        "observations": 126,
+        "tenpai": 126
+      },
+      "5|13+|1-2": {
+        "observations": 79,
+        "tenpai": 79
+      },
+      "5|13+|3+": {
+        "observations": 43,
+        "tenpai": 43
+      },
+      "5|7-12|0": {
+        "observations": 67,
+        "tenpai": 67
+      },
+      "5|7-12|1-2": {
+        "observations": 35,
+        "tenpai": 35
+      },
+      "5|7-12|3+": {
+        "observations": 8,
+        "tenpai": 8
+      }
+    }
+  },
+  "metadata": {
+    "calibration_feedback": {
+      "calibration_id": null,
+      "consumed_previous_calibration": false,
+      "path": null
+    },
+    "danger_binning": {
+      "buckets": [
+        "0-1",
+        "1-2",
+        "2-4",
+        "4-6",
+        "6-9",
+        "9-13",
+        "13-16",
+        "16+"
+      ],
+      "edges": [
+        0.0,
+        1.0,
+        2.0,
+        4.0,
+        6.0,
+        9.0,
+        13.0,
+        16.0
+      ]
+    },
+    "danger_modifiers": {
+      "MELD_FLUSH": 2.0,
+      "MELD_FLUSH_HONOR": 1.5,
+      "SUIT_SCARCE": 1.5,
+      "SUIT_VOID": 2.0
+    },
+    "danger_reference": "per_opponent",
+    "ev_model": {
+      "git_commit": "2743669f345b8a0928c7782f8571639ed574bbf6",
+      "identifier": "coherent-terminal-rollout-v1",
+      "selfplay_calls_production_ev_rank": false,
+      "selfplay_entrypoint": "taimahjong.selfplay._ev_aware_discard",
+      "source_date": "2026-07-29"
+    },
+    "fit_games": 6400,
+    "games": 8000,
+    "generation": {
+      "determinism_check_games": 12,
+      "generated_at": "2026-08-06T08:00:27.550245+00:00",
+      "max_workers": 4,
+      "timing_suppressed_for_contended_host": true,
+      "wall_clock_seconds": null,
+      "worker_count_determinism_verified": true,
+      "workers": 4
+    },
+    "held_out_games": 1600,
+    "independent_policy": {
+      "enabled": true,
+      "instrument": "same ev_aware top-5-plus-safest candidates and attack term; calibration-derived deal-in risk term disabled",
+      "probe": {
+        "calibration_off_discard": 19,
+        "calibration_off_loads": 0,
+        "calibration_on_discard": 28,
+        "calibration_on_loads": 1,
+        "passed": true,
+        "top_k": 5
+      }
+    },
+    "policy_mix": [
+      "attack",
+      "cautious",
+      "ev_aware",
+      "ev_aware"
+    ],
+    "seed_range": {
+      "end": 58000,
+      "inclusive": true,
+      "start": 50001
+    },
+    "split": {
+      "rule": "zero_based_seed_offset_mod_5_equals_4_is_holdout",
+      "unit": "game_seed"
+    }
+  },
+  "quality": {
+    "base_rate": 0.005177136038410403,
+    "brier_base": 0.0051503333008501954,
+    "brier_score": 0.005137173484501445,
+    "brier_skill_score": 0.0025551387803538494,
+    "deal_ins": 1102,
+    "evaluated_observations": 212859,
+    "held_out_base_rate": 0.005177136038410403,
+    "held_out_deal_ins": 1102,
+    "log_loss": 0.030840423822223986,
+    "log_loss_base": 0.03241358391874907,
+    "log_loss_skill_score": 0.04853397576980434,
+    "reliability_curve": [
+      {
+        "bucket": "0-1",
+        "deal_ins": 1,
+        "observations": 21258,
+        "observed_frequency": 4.7041113933577944e-05,
+        "predicted_probability": 5.8578045370259464e-05
+      },
+      {
+        "bucket": "1-2",
+        "deal_ins": 7,
+        "observations": 12615,
+        "observed_frequency": 0.0005548949663099485,
+        "predicted_probability": 0.0003891891418002785
+      },
+      {
+        "bucket": "2-4",
+        "deal_ins": 57,
+        "observations": 43731,
+        "observed_frequency": 0.0013034232009329766,
+        "predicted_probability": 0.0016759793799775932
+      },
+      {
+        "bucket": "4-6",
+        "deal_ins": 156,
+        "observations": 24897,
+        "observed_frequency": 0.006265815158452826,
+        "predicted_probability": 0.004583634908543273
+      },
+      {
+        "bucket": "6-9",
+        "deal_ins": 303,
+        "observations": 44571,
+        "observed_frequency": 0.00679814228982971,
+        "predicted_probability": 0.006414223680198392
+      },
+      {
+        "bucket": "9-13",
+        "deal_ins": 343,
+        "observations": 39607,
+        "observed_frequency": 0.008660085338450274,
+        "predicted_probability": 0.0075243242991003155
+      },
+      {
+        "bucket": "13-16",
+        "deal_ins": 138,
+        "observations": 20498,
+        "observed_frequency": 0.006732364133086155,
+        "predicted_probability": 0.007956053475497243
+      },
+      {
+        "bucket": "16+",
+        "deal_ins": 97,
+        "observations": 5682,
+        "observed_frequency": 0.01707145371348117,
+        "predicted_probability": 0.012920889766883941
+      }
+    ],
+    "smoothing": {
+      "counterexample_after_probability": 1.7351872845475788e-05,
+      "counterexample_before_probability": 1.1568049048527965e-05,
+      "counterexample_danger_score": 0.3,
+      "largest_well_populated_absolute_change": 2.075676623601065e-05,
+      "largest_well_populated_change_bucket": "16+",
+      "prior": "Jeffreys Beta(0.5, 0.5)",
+      "well_populated_minimum_observations": 30
+    },
+    "total_holdout_observations": 212859,
+    "total_observations": 212859
+  },
+  "tables": {
+    "deal_in": {
+      "0-1": {
+        "deal_ins": 1,
+        "empirical_probability": 1.1568049048527965e-05,
+        "observations": 86445,
+        "probability": 1.7351872845475788e-05
+      },
+      "1-2": {
+        "deal_ins": 27,
+        "empirical_probability": 0.0005262850125723642,
+        "observations": 51303,
+        "probability": 0.0005360205831903945
+      },
+      "13-16": {
+        "deal_ins": 546,
+        "empirical_probability": 0.006560449859418931,
+        "observations": 83226,
+        "probability": 0.007947863985855844
+      },
+      "16+": {
+        "deal_ins": 307,
+        "empirical_probability": 0.013087777635673786,
+        "observations": 23457,
+        "probability": 0.013108534401909797
+      },
+      "2-4": {
+        "deal_ins": 296,
+        "empirical_probability": 0.0016746533297878961,
+        "observations": 176753,
+        "probability": 0.0016774726455978366
+      },
+      "4-6": {
+        "deal_ins": 539,
+        "empirical_probability": 0.0052162972999129,
+        "observations": 103330,
+        "probability": 0.005221085637417619
+      },
+      "6-9": {
+        "deal_ins": 1202,
+        "empirical_probability": 0.006634030035267431,
+        "observations": 181187,
+        "probability": 0.006636752985848952
+      },
+      "9-13": {
+        "deal_ins": 1386,
+        "empirical_probability": 0.0086634746408971,
+        "observations": 159982,
+        "probability": 0.007947863985855844
+      }
+    },
+    "fold": {
+      "attack": {
+        "mean_fold_score": 0.536113835988681,
+        "windows": 59126
+      },
+      "cautious": {
+        "mean_fold_score": 0.549079526977089,
+        "windows": 56375
+      }
+    },
+    "tenpai": {
+      "0|1-6|0": {
+        "observations": 67169,
+        "probability": 0.004749214667480534,
+        "tenpai": 319
+      },
+      "0|1-6|1-2": {
+        "observations": 16034,
+        "probability": 0.013533740800798303,
+        "tenpai": 217
+      },
+      "0|1-6|3+": {
+        "observations": 592,
+        "probability": 0.048986486486486486,
+        "tenpai": 29
+      },
+      "0|13+|0": {
+        "observations": 422,
+        "probability": 0.3981042654028436,
+        "tenpai": 168
+      },
+      "0|13+|1-2": {
+        "observations": 503,
+        "probability": 0.4870775347912525,
+        "tenpai": 245
+      },
+      "0|13+|3+": {
+        "observations": 543,
+        "probability": 0.5488029465930019,
+        "tenpai": 298
+      },
+      "0|7-12|0": {
+        "observations": 7415,
+        "probability": 0.10236008091706002,
+        "tenpai": 759
+      },
+      "0|7-12|1-2": {
+        "observations": 6142,
+        "probability": 0.1411592315206773,
+        "tenpai": 867
+      },
+      "0|7-12|3+": {
+        "observations": 2116,
+        "probability": 0.21739130434782608,
+        "tenpai": 460
+      },
+      "1|1-6|0": {
+        "observations": 40360,
+        "probability": 0.01749256689791873,
+        "tenpai": 706
+      },
+      "1|1-6|1-2": {
+        "observations": 10634,
+        "probability": 0.036956930599962384,
+        "tenpai": 393
+      },
+      "1|1-6|3+": {
+        "observations": 390,
+        "probability": 0.03333333333333333,
+        "tenpai": 13
+      },
+      "1|13+|0": {
+        "observations": 1623,
+        "probability": 0.4004929143561306,
+        "tenpai": 650
+      },
+      "1|13+|1-2": {
+        "observations": 2056,
+        "probability": 0.48297665369649806,
+        "tenpai": 993
+      },
+      "1|13+|3+": {
+        "observations": 2118,
+        "probability": 0.5958451369216242,
+        "tenpai": 1262
+      },
+      "1|7-12|0": {
+        "observations": 19397,
+        "probability": 0.13445378151260504,
+        "tenpai": 2608
+      },
+      "1|7-12|1-2": {
+        "observations": 15022,
+        "probability": 0.19165224337638131,
+        "tenpai": 2879
+      },
+      "1|7-12|3+": {
+        "observations": 4558,
+        "probability": 0.29991224221149626,
+        "tenpai": 1367
+      },
+      "2|1-6|0": {
+        "observations": 11365,
+        "probability": 0.05085789705235372,
+        "tenpai": 578
+      },
+      "2|1-6|1-2": {
+        "observations": 3308,
+        "probability": 0.07315598548972188,
+        "tenpai": 242
+      },
+      "2|1-6|3+": {
+        "observations": 87,
+        "probability": 0.05747126436781609,
+        "tenpai": 5
+      },
+      "2|13+|0": {
+        "observations": 2834,
+        "probability": 0.2978122794636556,
+        "tenpai": 844
+      },
+      "2|13+|1-2": {
+        "observations": 3427,
+        "probability": 0.4012255617157864,
+        "tenpai": 1375
+      },
+      "2|13+|3+": {
+        "observations": 3093,
+        "probability": 0.5554477853216941,
+        "tenpai": 1718
+      },
+      "2|7-12|0": {
+        "observations": 18527,
+        "probability": 0.16635181087062126,
+        "tenpai": 3082
+      },
+      "2|7-12|1-2": {
+        "observations": 14208,
+        "probability": 0.24035754504504506,
+        "tenpai": 3415
+      },
+      "2|7-12|3+": {
+        "observations": 3881,
+        "probability": 0.35789744911105387,
+        "tenpai": 1389
+      },
+      "3|1-6|0": {
+        "observations": 1545,
+        "probability": 0.12103559870550162,
+        "tenpai": 187
+      },
+      "3|1-6|1-2": {
+        "observations": 408,
+        "probability": 0.15931372549019607,
+        "tenpai": 65
+      },
+      "3|1-6|3+": {
+        "observations": 2,
+        "probability": 0.5,
+        "tenpai": 1
+      },
+      "3|13+|0": {
+        "observations": 2517,
+        "probability": 0.22010329757647992,
+        "tenpai": 554
+      },
+      "3|13+|1-2": {
+        "observations": 2738,
+        "probability": 0.28743608473338206,
+        "tenpai": 787
+      },
+      "3|13+|3+": {
+        "observations": 2110,
+        "probability": 0.4981042654028436,
+        "tenpai": 1051
+      },
+      "3|7-12|0": {
+        "observations": 8051,
+        "probability": 0.187430132902745,
+        "tenpai": 1509
+      },
+      "3|7-12|1-2": {
+        "observations": 5945,
+        "probability": 0.27485281749369217,
+        "tenpai": 1634
+      },
+      "3|7-12|3+": {
+        "observations": 1502,
+        "probability": 0.40612516644474034,
+        "tenpai": 610
+      },
+      "4|1-6|0": {
+        "observations": 88,
+        "probability": 0.3181818181818182,
+        "tenpai": 28
+      },
+      "4|1-6|1-2": {
+        "observations": 29,
+        "probability": 0.27586206896551724,
+        "tenpai": 8
+      },
+      "4|1-6|3+": {
+        "observations": 0,
+        "probability": null,
+        "tenpai": 0
+      },
+      "4|13+|0": {
+        "observations": 1095,
+        "probability": 0.1141552511415525,
+        "tenpai": 125
+      },
+      "4|13+|1-2": {
+        "observations": 1016,
+        "probability": 0.1919291338582677,
+        "tenpai": 195
+      },
+      "4|13+|3+": {
+        "observations": 623,
+        "probability": 0.40930979133226325,
+        "tenpai": 255
+      },
+      "4|7-12|0": {
+        "observations": 1527,
+        "probability": 0.19122462344466273,
+        "tenpai": 292
+      },
+      "4|7-12|1-2": {
+        "observations": 956,
+        "probability": 0.3179916317991632,
+        "tenpai": 304
+      },
+      "4|7-12|3+": {
+        "observations": 225,
+        "probability": 0.4444444444444444,
+        "tenpai": 100
+      },
+      "5|1-6|0": {
+        "observations": 2,
+        "probability": 1.0,
+        "tenpai": 2
+      },
+      "5|1-6|1-2": {
+        "observations": 0,
+        "probability": null,
+        "tenpai": 0
+      },
+      "5|1-6|3+": {
+        "observations": 0,
+        "probability": null,
+        "tenpai": 0
+      },
+      "5|13+|0": {
+        "observations": 126,
+        "probability": 1.0,
+        "tenpai": 126
+      },
+      "5|13+|1-2": {
+        "observations": 79,
+        "probability": 1.0,
+        "tenpai": 79
+      },
+      "5|13+|3+": {
+        "observations": 43,
+        "probability": 1.0,
+        "tenpai": 43
+      },
+      "5|7-12|0": {
+        "observations": 67,
+        "probability": 1.0,
+        "tenpai": 67
+      },
+      "5|7-12|1-2": {
+        "observations": 35,
+        "probability": 1.0,
+        "tenpai": 35
+      },
+      "5|7-12|3+": {
+        "observations": 8,
+        "probability": 1.0,
+        "tenpai": 8
+      }
+    }
+  },
+  "version": 2
+}
