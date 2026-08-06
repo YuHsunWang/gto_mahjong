@@ -28,14 +28,13 @@ from .danger import (
 )
 from .moments import ClusteredSampleMoments, SampleMoments
 from .scoring import BASE_UNITS, DEFAULT_SCHEME, ScoringScheme, WinContext, score_hand
-from .shanten import shanten
+from .shanten import _shanten_unchecked, shanten
 from .simulate import (
     DiscardPolicy,
     TrialTrace,
     policy_trials,
     winning_trials,
 )
-from .shanten import _honor_options, _numeric_options
 from .tiles import validate_counts
 from .ukeire import discard_analysis
 
@@ -606,59 +605,13 @@ class _OrderedWallRandom:
         return next(self._choices)
 
 
-@lru_cache(maxsize=None)
-def _production_group_profile(
-    options: tuple[tuple[int, int, int], ...],
-) -> tuple[tuple[int, int, int], ...]:
-    """Drop group states dominated at the same meld/head counts."""
-    best: dict[tuple[int, int], int] = {}
-    for melds, taatsu, heads in options:
-        key = (melds, min(1, heads))
-        best[key] = max(best.get(key, -1), taatsu)
-    return tuple(
-        (melds, taatsu, has_head)
-        for (melds, has_head), taatsu in best.items()
-    )
-
-
 @lru_cache(maxsize=200_000)
 def _production_shanten(
     hand: tuple[int, ...],
     melds_declared: int,
 ) -> int:
     """Fast exact shanten for validated internal rollout hands."""
-    states = {(melds_declared, 0): 0}
-    groups = (
-        _production_group_profile(_numeric_options(hand[0:9])),
-        _production_group_profile(_numeric_options(hand[9:18])),
-        _production_group_profile(_numeric_options(hand[18:27])),
-        _production_group_profile(_production_honor_options(hand[27:34])),
-    )
-    for group in groups:
-        combined: dict[tuple[int, int], int] = {}
-        for (melds, has_head), taatsu in states.items():
-            for add_melds, add_taatsu, add_heads in group:
-                total_melds = melds + add_melds
-                if total_melds > 5:
-                    continue
-                key = (total_melds, min(1, has_head + add_heads))
-                combined[key] = max(
-                    combined.get(key, -1),
-                    taatsu + add_taatsu,
-                )
-        states = combined
-    best = max(
-        2 * melds + min(taatsu, 5 - melds) + has_head
-        for (melds, has_head), taatsu in states.items()
-    )
-    return 10 - best
-
-
-@lru_cache(maxsize=None)
-def _production_honor_options(
-    honors: tuple[int, ...],
-) -> tuple[tuple[int, int, int], ...]:
-    return _honor_options(honors)
+    return _shanten_unchecked(hand, melds_declared)
 
 
 @lru_cache(maxsize=100_000)
