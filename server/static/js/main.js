@@ -22,14 +22,14 @@ const MODES = [
     hash: '#/quiz',
     name: '單手',
     en: 'Spot drill',
-    desc: '種子產生的關鍵一手：切哪張？和本模型的 heuristic EV 建議比對。',
+    desc: '種子產生的關鍵一手：以 terminal-rollout net EV 與排名不確定性比對。',
     statsKey: 'quiz',
   },
   {
     hash: '#/endgame',
     name: '殘局',
     en: 'Endgame drill',
-    desc: '牌牆將盡的高壓局面：推還是守？進攻／防守題自動標記。',
+    desc: '牌牆將盡的高壓局面：比較 terminal-rollout net EV，並保留推／守題型標記。',
     statsKey: 'endgame',
   },
 ];
@@ -56,11 +56,10 @@ function modeCard(mode) {
   const row = document.createElement('div');
   row.className = 'card-stats';
   if (stats.decisions) {
-    const accuracy = Math.round((100 * stats.best) / stats.decisions);
-    const average = (stats.loss / stats.decisions).toFixed(2);
+    const quality = stats.qualityScore === null ? '—' : `${stats.qualityScore}%`;
     row.innerHTML = `<span>已答 <b>${stats.decisions}</b></span>`
-      + `<span>模型最佳率 <b>${accuracy}%</b></span>`
-      + `<span>均損 <b>${average}</b> 籌碼單位</span>`;
+      + `<span>品質分數 <b>${quality}</b></span>`
+      + `<span>累計 net EV loss <b>${stats.loss.toFixed(2)}</b></span>`;
     const spark = document.createElement('span');
     spark.className = 'spark';
     spark.append(sparklineEl(accuracySeries(mode.statsKey)));
@@ -123,7 +122,7 @@ function homeScreen(root) {
 
   const footnote = document.createElement('div');
   footnote.className = 'footnote';
-  footnote.textContent = '進攻只估自摸的 Monte Carlo EV；放銃與對手價值是 heuristic，'
+  footnote.textContent = '選項只以 terminal-rollout net EV 排序；P(自摸)、P(流局)與和牌值只作解讀。'
     + '校準資料域只涵蓋內建 bot，缺表時會明示 heuristic fallback，不代表真人牌局。'
     + 'EV 為蒙地卡羅估計：貼著判定門檻的手會自動加碼精算，仍標「（邊緣）」者受殘餘取樣誤差影響。'
     + '本桌無花牌（花牌建模為獨立的未來里程碑）。'
@@ -144,6 +143,7 @@ const ROUTES = {
 
 function route() {
   const screen = ROUTES[window.location.hash] || homeScreen;
+  app.classList.toggle('app--table', ['#/quiz', '#/endgame', '#/trainer'].includes(window.location.hash));
   app.replaceChildren();
   screen(app);
   window.scrollTo(0, 0);

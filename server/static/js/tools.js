@@ -3,7 +3,7 @@
 import { post, showError } from './api.js';
 import { tileEl, parseCompact } from './tiles.js';
 import { computingEl } from './table.js';
-import { evTableEl, modelScopeEl } from './feedback.js';
+import { evDetailsEl, modelScopeEl, rankingBannerEl } from './feedback.js';
 import { schemeParams, schemeToggle } from './scheme.js';
 
 function field(labelText, input, id) {
@@ -70,6 +70,8 @@ export function analyzeScreen(root) {
   const sims = numberInput(400, 1);
   const seed = numberInput(7, 0);
   const turns = numberInput(0, 0);
+  const exhaustive = document.createElement('input');
+  exhaustive.type = 'checkbox';
 
   const form = document.createElement('div');
   form.append(field('手牌（17 張，例 123m45p…）', hand, 'an-hand'), previewStrip(hand));
@@ -81,6 +83,10 @@ export function analyzeScreen(root) {
   advanced.className = 'field-row';
   advanced.append(field('摸牌回合（0=自動）', turns, 'an-turns'), field('模擬次數', sims, 'an-sims'), field('種子', seed, 'an-seed'));
   form.append(advanced);
+  const exhaustiveLabel = document.createElement('label');
+  exhaustiveLabel.className = 'check';
+  exhaustiveLabel.append(exhaustive, document.createTextNode(' exhaustive reference：評估全部合法切牌（較慢）'));
+  form.append(exhaustiveLabel);
   form.append(schemeToggle(() => {}));
 
   const controls = document.createElement('div');
@@ -105,6 +111,7 @@ export function analyzeScreen(root) {
         turns: Number(turns.value) || 0,
         sims: Number(sims.value) || 400,
         seed: Number(seed.value) || 0,
+        exhaustive: exhaustive.checked,
         ...schemeParams(),
       });
       output.replaceChildren();
@@ -113,7 +120,19 @@ export function analyzeScreen(root) {
       caption.textContent = body.opponent
         ? `方案 ${body.scheme.id} · 剩餘摸牌回合 ${body.turns} · 對手聽牌估計 ${body.opponent.tenpai_estimate.toFixed(2)} · 棄和估計 ${body.opponent.fold_estimate.toFixed(2)}`
         : `方案 ${body.scheme.id} · 剩餘摸牌回合 ${body.turns} · 未提供對手狀態`;
-      output.append(caption, modelScopeEl(body), evTableEl(body.entries));
+      const scope = body.exhaustive ? '全部合法切牌 reference' : 'production 信賴界篩選候選集';
+      caption.textContent += ` · ${scope}`;
+      output.append(caption, modelScopeEl(body));
+      const rankingBanner = rankingBannerEl({
+        ranking_state: body.top1_vs_top2?.wording || 'clear',
+        top1_vs_top2: body.top1_vs_top2,
+      });
+      if (rankingBanner) output.append(rankingBanner);
+      output.append(evDetailsEl(body.entries, {
+        open: true,
+        topGap: body.top1_vs_top2,
+        rankingState: body.top1_vs_top2?.wording,
+      }));
     } catch (error) {
       output.replaceChildren();
       showError(error);

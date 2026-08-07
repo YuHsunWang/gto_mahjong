@@ -1,6 +1,8 @@
 """Known-answer tests for M5b tai-unit EV approximations."""
 
+from dataclasses import replace
 from math import comb
+from random import Random
 
 import pytest
 
@@ -16,7 +18,15 @@ from taimahjong.ev import (
     remaining_draws,
     TileAccounting,
 )
+from taimahjong.reference_ev import (
+    _policy_discard,
+    evaluate_candidate,
+    representative_reference_cases,
+    standard_small_wall_state,
+)
+from taimahjong.rollout import CalibratedRonClaim, resolve_terminal
 from taimahjong.scoring import EARTHLY_TAI, HEAVENLY_TAI, WinContext, score_hand
+from taimahjong.selfplay import Player
 from taimahjong.tiles import parse_tiles
 
 
@@ -57,24 +67,289 @@ def test_part0_confirmed_scoring_totals():
     assert score_hand(parse_tiles("22z"), melds, WinContext(_tile("2z"))).total_tai == 4
 
 
-def test_ev_rank_is_seed_deterministic_and_attack_only_orders_by_attack_ev():
+def test_ev_rank_is_seed_deterministic_and_net_ev_is_signed_payment_mean():
     first = ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19)
     assert first == ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19)
-    assert [entry.attack_ev for entry in first] == sorted((entry.attack_ev for entry in first), reverse=True)
-    assert all(entry.risk_ev == 0 for entry in first)
+    real = [entry for entry in first if not entry.is_fold]
+    assert [entry.net_ev for entry in real] == sorted(
+        (entry.net_ev for entry in real), reverse=True,
+    )
+    assert all(
+        entry.net_ev == sum(entry.trial_values) / entry.sample_count
+        for entry in first
+    )
+    assert all(
+        entry.net_ev == pytest.approx(entry.attack_ev - entry.risk_ev)
+        for entry in first
+    )
 
 
-def test_declared_safe_discard_dominates_equal_efficiency_risky_discard():
-    # 3m and 2p both leave shanten 0 with four ukeire; only 3m is discarded
-    # after the opponent's declaration and therefore hard-excluded by M4a+.
-    opponent = OpponentView(parse_river("1m3m"), [], declared_at=0)
-    visible = _visible_with_opponent(opponent)
-    entries = ev_rank(POST_DRAW, [opponent], visible, turns=1, sims=400, seed=11, top_k=10)
-    by_tile = {entry.discard: entry for entry in entries}
-    safe, risky = by_tile[_tile("3m")], by_tile[_tile("2p")]
-    assert safe.risk_ev == 0
-    assert risky.risk_ev > 0
-    assert safe.net_ev > risky.net_ev
+def test_determinized_opponents_track_public_tenpai_state_and_conserve_tiles():
+    hand = parse_tiles("123m456m789m11223p345s")
+    river_tiles = (6, 7, 8, 14, 15, 16, 18, 19, 20, 21, 22, 23, 24, 25)
+
+    def sampled_rate(opponent, samples=200):
+        visible = _visible_with_opponent(opponent)
+        acting_seat, seats, _ = ev._production_seats((opponent,), None)
+        opponent_seat = next(
+            seat for seat, view in enumerate(seats)
+            if seat != acting_seat and view is opponent
+        )
+        tenpai = 0
+        for index in range(samples):
+            world = ev._sample_production_world(
+                hand, visible, (opponent,), 8, None, 100_000 + index,
+            )
+            repeat = ev._sample_production_world(
+                hand, visible, (opponent,), 8, None, 100_000 + index,
+            )
+            assert world == repeat
+            concealed = world.players[opponent_seat].hand
+            tenpai += ev._production_shanten(tuple(concealed), 0) == 0
+            for tile in range(34):
+                accounted = (
+                    hand[tile]
+                    + visible[tile]
+                    + sum(
+                        player.hand[tile]
+                        for seat, player in enumerate(world.players)
+                        if seat != acting_seat
+                    )
+                    + world.wall.count(tile)
+                )
+                assert accounted <= 4
+        return tenpai / samples
+
+    silent = OpponentView(list(river_tiles), [])
+    threatening = OpponentView(
+        [ev.RiverEntry(tile, "tsumogiri") for tile in river_tiles], [],
+    )
+    silent_rate = sampled_rate(silent)
+    threatening_rate = sampled_rate(threatening)
+    assert abs(silent_rate - ev.tenpai_score(silent, 14).score) < 0.08
+    assert abs(threatening_rate - ev.tenpai_score(threatening, 14).score) < 0.08
+    assert threatening_rate > silent_rate + 0.25
+
+    declared = OpponentView(
+        [ev.RiverEntry(6), ev.RiverEntry(7)], [], declared_at=1,
+    )
+    assert sampled_rate(declared, samples=32) == 1.0
+
+
+def test_calibrated_ron_value_redeterminizes_non_tenpai_to_a_physical_win():
+    hand = list(parse_tiles("147m147p147s1234567z"))
+    available = [4 - count for count in hand]
+
+    first = ev._ron_value_hand(hand, available, 0, Random(41))
+    repeat = ev._ron_value_hand(hand, available, 0, Random(41))
+    completed, winning_tile = first
+
+    assert ev._production_shanten(tuple(hand), 0) > 0
+    assert first == repeat
+    assert ev._production_shanten(completed, 0) == -1
+    assert completed[winning_tile] > 0
+    assert score_hand(completed, (), WinContext(winning_tile)).value_units >= 4
+
+
+def test_immediate_actor_deal_in_is_a_negative_terminal_payment():
+    class CalibrationMustNotRun:
+        def deal_in_probability(self, _danger_score):
+            raise AssertionError("known rollout hands must remain physical")
+
+    state = standard_small_wall_state(wall=())
+    references = list(state.players)
+    references[2] = replace(
+        references[2],
+        hand=parse_tiles("123456m123p123s333z6z"),
+    )
+    state = replace(state, players=tuple(references))
+    players = tuple(
+        Player(
+            "attack",
+            list(reference.hand),
+            declared_at=reference.declared_at,
+        )
+        for reference in state.players
+    )
+
+    entries = ev_rank(
+        state.players[state.acting_seat].hand,
+        (),
+        (0,) * 34,
+        turns=0,
+        sims=2,
+        seed=11,
+        calibration=CalibrationMustNotRun(),
+        scheme=state.scheme,
+        exhaustive=True,
+        discard_policy=_policy_discard,
+        rollout_players=players,
+        rollout_wall=state.wall,
+        acting_seat=state.acting_seat,
+        next_seat=state.next_seat,
+        dealer_streak=state.dealer_streak,
+    )
+    deal_in = next(
+        entry for entry in entries
+        if not entry.is_fold and entry.discard == _tile("6z")
+    )
+
+    assert deal_in.net_ev < 0
+    assert deal_in.attack_ev == 0
+    assert deal_in.risk_ev == -deal_in.net_ev
+    assert len(set(deal_in.trial_values)) == 1
+
+
+def test_determinized_rollout_has_physical_risk_without_calibration():
+    class FixedCalibration:
+        def deal_in_probability(self, _danger_score):
+            return 1.0
+
+    # The opponent has to be credibly close to tenpai for a physical deal-in to
+    # be possible at all. Two melds and a seven-tile river put tenpai_score near
+    # 0.556; a silent opponent on turn one sits near 0.018, because that is the
+    # dealt hand and its true tenpai rate is zero. Demanding physical risk there
+    # would be demanding a physical impossibility, not testing the channel.
+    opponent = OpponentView(
+        parse_river("9m9p1z4z5s6s7s"), [(4, 4, 4), (13, 13, 13)], None,
+    )
+    visible = parse_tiles("9m9p1z4z5s6s7s555m555p")
+    uncalibrated = ev_rank(
+        POST_DRAW,
+        [opponent],
+        visible,
+        turns=0,
+        sims=40,
+        seed=17,
+        exhaustive=True,
+    )
+    calibrated = ev_rank(
+        POST_DRAW,
+        [opponent],
+        visible,
+        turns=0,
+        sims=40,
+        seed=17,
+        calibration=FixedCalibration(),
+        exhaustive=True,
+    )
+
+    assert any(entry.risk_ev > 0.0 for entry in uncalibrated)
+    assert all(entry.risk_ev > 0.0 for entry in calibrated)
+    assert sum(entry.risk_ev for entry in calibrated) > sum(
+        entry.risk_ev for entry in uncalibrated
+    )
+    assert all(
+        entry.net_ev == entry.attack_ev - entry.risk_ev
+        for entry in calibrated
+    )
+
+
+def test_calibrated_ron_is_one_zero_sum_terminal_payment():
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand = list(POST_DRAW)
+    terminal = resolve_terminal(
+        players,
+        (),
+        0,
+        1,
+        _tile("1m"),
+        _policy_discard,
+        Random(1),
+        calibrated_ron=lambda _players, _discarder, _tile: (
+            CalibratedRonClaim(1, 1.0, 7),
+        ),
+    )
+
+    assert terminal.kind == "opponent_ron"
+    assert terminal.deltas == (-7, 7, 0, 0)
+    assert terminal.value_units == 7
+    assert terminal.ron_winners == (1,)
+
+
+def test_calibrated_ron_can_pay_the_actor_by_the_same_marginal_channel():
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand = list(parse_tiles("147m147p147s1234567z"))
+    players[1].hand = list(parse_tiles("147m147p147s1234567z"))
+    terminal = resolve_terminal(
+        players,
+        (_tile("9m"),),
+        0,
+        1,
+        None,
+        _policy_discard,
+        Random(1),
+        calibrated_ron=lambda _players, _discarder, _tile: (
+            CalibratedRonClaim(0, 1.0, 7),
+        ),
+    )
+
+    assert terminal.kind == "self_ron"
+    assert terminal.deltas == (7, -7, 0, 0)
+    assert terminal.ron_winners == (0,)
+
+
+def test_calibrated_push_records_opening_discard_before_continuation():
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand = list(POST_DRAW)
+    for player in players[1:]:
+        player.hand = list(TENPAI)
+    snapshots = []
+
+    def no_claims(current, _discarder, _tile):
+        snapshots.append(tuple(len(player.river) for player in current))
+        return ()
+
+    resolve_terminal(
+        players,
+        (_tile("9m"),),
+        0,
+        1,
+        _tile("1m"),
+        lambda hand, _remaining, _melds: next(
+            tile for tile, count in enumerate(hand) if count
+        ),
+        Random(1),
+        calibrated_ron=no_claims,
+    )
+
+    assert snapshots[0][0] == 0
+    assert snapshots[1][0] == 1
+
+
+def test_calibrated_ron_hand_uses_physical_settlement_and_stays_zero_sum():
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand = list(POST_DRAW)
+    completed = parse_tiles("123456m123p123s333z66z")
+    winning_tile = _tile("6z")
+    hand_value = score_hand(
+        completed, (), WinContext(winning_tile),
+    ).value_units
+    terminal = resolve_terminal(
+        players,
+        (),
+        0,
+        1,
+        _tile("1m"),
+        _policy_discard,
+        Random(1),
+        calibrated_ron=lambda _players, _discarder, _tile: (
+            CalibratedRonClaim(
+                1,
+                1.0,
+                winning_hand=completed,
+                scoring_tile=winning_tile,
+            ),
+        ),
+    )
+
+    # Seat 0 is the dealer, so the physical ron settlement adds its bilateral
+    # one-tai dealer leg to the non-dealer winner's hand value.
+    assert terminal.deltas == (-(hand_value + 1), hand_value + 1, 0, 0)
+    assert sum(terminal.deltas) == 0
+    assert terminal.value_units == hand_value
+    assert terminal.kind == "opponent_ron"
+    assert terminal.ron_winners == (1,)
 
 
 def test_declaration_dead_wait_is_zero_and_not_recommended():
@@ -144,17 +419,56 @@ def test_explicit_wall_and_derived_accounting_return_the_same_turns():
     )
 
 
-def test_opponent_hazard_survival_strictly_reduces_attack_ev_and_net_ev():
-    opponent = OpponentView(parse_river("123456789m123456789p"), [], None)
-    visible = _visible_with_opponent(opponent)
-    safe = {entry.discard: entry for entry in ev_rank(POST_DRAW, [], visible, turns=3, sims=80, seed=19, top_k=10) if not entry.is_fold}
-    threatened = {
-        entry.discard: entry
-        for entry in ev_rank(POST_DRAW, [opponent], visible, turns=3, sims=80, seed=19, top_k=10)
-        if not entry.is_fold
+def test_opponent_tsumo_payment_is_included_in_actor_ev():
+    case = next(
+        case
+        for case in representative_reference_cases()
+        if case.strata.branch_character == "opponent-tsumo"
+    )
+    exact = {
+        discard: evaluate_candidate(case.state, discard)
+        for discard in case.state.legal_discards
     }
-    assert all(threatened[tile].attack_ev < entry.attack_ev for tile, entry in safe.items() if entry.attack_ev > 0)
-    assert all(threatened[tile].net_ev < entry.net_ev for tile, entry in safe.items() if entry.attack_ev > 0)
+    target = next(
+        discard
+        for discard, evaluation in exact.items()
+        if any(
+            outcome.outcome.kind == "opponent_tsumo"
+            and outcome.outcome.payment.deltas[case.state.acting_seat] < 0
+            for outcome in evaluation.outcomes
+        )
+    )
+    players = tuple(
+        Player(
+            "attack",
+            list(reference.hand),
+            declared_at=reference.declared_at,
+        )
+        for reference in case.state.players
+    )
+    entry = next(
+        entry
+        for entry in ev_rank(
+            case.state.players[case.state.acting_seat].hand,
+            (),
+            (0,) * 34,
+            turns=1,
+            sims=24,
+            seed=case.seed,
+            scheme=case.state.scheme,
+            exhaustive=True,
+            discard_policy=_policy_discard,
+            rollout_players=players,
+            rollout_wall=case.state.wall,
+            acting_seat=case.state.acting_seat,
+            next_seat=case.state.next_seat,
+            dealer_streak=case.state.dealer_streak,
+        )
+        if not entry.is_fold and entry.discard == target
+    )
+
+    assert entry.net_ev == float(exact[target].actor_ev)
+    assert any(payment < 0 for payment in entry.trial_values)
 
 
 def test_folded_opponent_contributes_zero_hazard():
@@ -172,51 +486,126 @@ def test_own_river_can_make_an_opponent_folded_for_survival_hazard():
     assert opponent_hazards([target], own_river)[0] == 0.0
 
 
-def test_zero_hazard_attack_ev_is_exactly_the_pre_m7_value():
-    entries = [entry for entry in ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19) if not entry.is_fold]
-    sample = entries[0]
-    post = list(POST_DRAW)
-    post[sample.discard] -= 1
-    attack_visible = [0] * 34
-    attack_visible[sample.discard] = 1
-    previous = estimate_win_value(tuple(post), 3, visible=attack_visible, sims=80, seed=19)
-    assert sample.attack_ev == previous.expected_win_ev
-    assert sample.survival_adjusted_p_win == previous.p_win
+def test_production_rank_does_not_call_legacy_attack_composition(monkeypatch):
+    # net_ev must come from coherent terminal payments, never from a separately
+    # estimated attack term. The additive decomposition helpers this once also
+    # guarded are gone; _discounted_win_estimate survives only for the
+    # declaration advisor and must still stay out of the ranking path.
+    def fail(*args, **kwargs):
+        raise AssertionError("legacy attack estimator entered production rank")
+
+    monkeypatch.setattr(ev, "_discounted_win_estimate", fail)
+
+    ranked = ev_rank(
+        POST_DRAW, [], (0,) * 34, turns=1, sims=2, seed=19, exhaustive=True,
+    )
+    assert ranked
 
 
-def test_ev_attack_pool_marks_each_candidate_discard_visible(monkeypatch):
-    hand = parse_tiles("123m123p123s11122z333z")
-    captured = {}
+def test_crn_reuses_the_same_wall_order_for_every_candidate(monkeypatch):
+    import taimahjong.rollout as rollout
 
-    def fake_estimate(counts16, turns, melds_declared, visible, sims, seed, context_template, survival, scheme):
-        discard = next(tile for tile in range(34) if counts16[tile] < hand[tile])
-        captured[discard] = visible
-        return ev.WinValueEstimate(0.0, None, 0.0)
+    state = standard_small_wall_state()
+    players = tuple(
+        Player(
+            "attack",
+            list(reference.hand),
+            declared_at=reference.declared_at,
+        )
+        for reference in state.players
+    )
+    choices = {}
 
-    monkeypatch.setattr(ev, "_discounted_win_estimate", fake_estimate)
-    ev_rank(hand, [], (0,) * 34, turns=1, sims=1, seed=1, top_k=34)
+    def fake_terminal(
+        players, wall, acting_seat, next_seat, discard, discard_policy, rng,
+        **kwargs,
+    ):
+        choices.setdefault(discard, []).append(
+            None if not wall else rng.randrange(len(wall))
+        )
+        return rollout.TerminalResult(
+            "draw", None, None, None, (0, 0, 0, 0), 0,
+        )
 
-    assert captured[29][29] == 1
-    assert sum(captured[29]) == 1
+    monkeypatch.setattr(rollout, "resolve_terminal", fake_terminal)
+    ev_rank(
+        state.players[state.acting_seat].hand,
+        (),
+        (0,) * 34,
+        turns=1,
+        sims=12,
+        seed=47,
+        exhaustive=True,
+        discard_policy=_policy_discard,
+        rollout_players=players,
+        rollout_wall=state.wall,
+        acting_seat=state.acting_seat,
+        next_seat=state.next_seat,
+    )
+
+    schedules = [schedule[:12] for schedule in choices.values()]
+    assert schedules
+    assert all(schedule == schedules[0] for schedule in schedules[1:])
 
 
-def test_draw_value_shifts_net_ev_by_exact_draw_term(monkeypatch):
+def test_fold_and_push_with_same_discard_have_separate_terminal_cache(monkeypatch):
+    import taimahjong.rollout as rollout
+
+    calls = []
+
+    def fake_terminal(
+        players, wall, acting_seat, next_seat, discard, discard_policy, rng,
+        **kwargs,
+    ):
+        defensive = kwargs["acting_discard_policy"] is not None
+        calls.append((discard, defensive))
+        payment = -1 if defensive else 1
+        deltas = [0, 0, 0, 0]
+        deltas[acting_seat] = payment
+        deltas[(acting_seat + 1) % 4] = -payment
+        return rollout.TerminalResult(
+            "draw", None, None, None, tuple(deltas), 0,
+        )
+
+    monkeypatch.setattr(rollout, "resolve_terminal", fake_terminal)
+    ranked = ev_rank(
+        POST_DRAW, [], (0,) * 34,
+        turns=1, sims=2, seed=19, exhaustive=True,
+    )
+    fold = next(entry for entry in ranked if entry.is_fold)
+    push = next(
+        entry
+        for entry in ranked
+        if not entry.is_fold and entry.discard == fold.discard
+    )
+
+    assert calls.count((fold.discard, False)) == 2
+    assert calls.count((fold.discard, True)) == 2
+    assert push.trial_values == (1.0, 1.0)
+    assert fold.trial_values == (-1.0, -1.0)
+
+
+def test_legacy_draw_value_cannot_change_zero_payment_draw_terminals(monkeypatch):
     baseline = {entry.discard: entry for entry in ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19) if not entry.is_fold}
     assert DRAW_VALUE == 0.0
     monkeypatch.setattr(ev, "DRAW_VALUE", 2.5)
     shifted = {entry.discard: entry for entry in ev_rank(POST_DRAW, [], (0,) * 34, turns=3, sims=80, seed=19) if not entry.is_fold}
     for tile, before in baseline.items():
         after = shifted[tile]
-        assert after.net_ev - before.net_ev == after.p_draw * 2.5
+        assert after.trial_values == before.trial_values
+        assert after.net_ev == before.net_ev
 
 
-def test_fold_row_is_last_labeled_and_no_riskier_than_real_discards():
+def test_defense_policy_is_last_labeled_and_has_an_executable_first_discard():
     opponent = OpponentView(parse_river("123456789m"), [], None)
     entries = ev_rank(POST_DRAW, [opponent], _visible_with_opponent(opponent), turns=3, sims=80, seed=19, top_k=10)
     fold = entries[-1]
     real = entries[:-1]
-    assert fold.is_fold and fold.label == "fold" and fold.discard == -1
-    assert fold.risk_ev <= min(entry.risk_ev for entry in real)
+    assert fold.is_fold and fold.label == "defense_policy"
+    assert fold.action_plan is not None
+    assert fold.discard == fold.action_plan.first_discard
+    assert POST_DRAW[fold.discard] > 0
+    assert fold.action_plan.principles
 
 
 def test_opponent_value_estimate_scales_with_dealer_streak():

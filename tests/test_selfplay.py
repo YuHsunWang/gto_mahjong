@@ -1,25 +1,35 @@
+from dataclasses import replace
 from math import sqrt
 from pathlib import Path
 
+import pytest
 import taimahjong.selfplay as selfplay
 
 from taimahjong.calibration import (
+    BETA_PRIOR_ALPHA,
+    BETA_PRIOR_BETA,
     Calibration,
     DANGER_BUCKETS,
+    DANGER_EDGES,
     DANGER_MODIFIERS,
     DANGER_REFERENCE,
     MIN_CELL_COUNT,
     counts_from_games,
+    danger_bucket,
+    empty_counts,
     load_table,
     merge_counts,
     table_document,
     write_merged_table,
 )
+from taimahjong.config import DEFAULT_RULES, resolve_ron_claims
+from taimahjong.danger import OpponentView, danger_score
 from taimahjong.selfplay import (
     Player,
     _choose_discard,
     _declared,
-    _robbing_winner,
+    _robbing_winners,
+    _settle_ron_winners,
     _settlement,
     head_to_head,
     play_game,
@@ -71,6 +81,46 @@ def test_point_accounting_conserves_and_charges_the_actual_loser():
                 assert delta == -expected
         else:
             assert game.point_deltas == (0, 0, 0, 0)
+
+
+def test_multi_ron_policy_changes_winners_and_conserves_every_payment():
+    players = [Player("attack") for _ in range(4)]
+    players[1].hand = list(parse_tiles("123456m123p123s111z5z"))
+    players[2].hand = list(parse_tiles("123456p123m789s222z5z"))
+    tile = next(index for index, count in enumerate(parse_tiles("5z")) if count)
+
+    def can_ron(seat):
+        if seat not in (1, 2):
+            return False
+        completed = list(players[seat].hand)
+        completed[tile] += 1
+        return shanten(tuple(completed), _declared(players[seat])) == -1
+
+    nearest = resolve_ron_claims(0, can_ron, DEFAULT_RULES)
+    all_rules = replace(
+        DEFAULT_RULES, rules_id="taiwanese-multi-ron-v1", multi_ron="all",
+    )
+    all_winners = resolve_ron_claims(0, can_ron, all_rules)
+
+    assert nearest == (1,)
+    assert all_winners == (1, 2)
+
+    winning_hands = {}
+    for winner in all_winners:
+        completed = list(players[winner].hand)
+        completed[tile] += 1
+        winning_hands[winner] = tuple(completed)
+    nearest_deltas, _ = _settle_ron_winners(
+        nearest, 0, players, winning_hands, tile,
+    )
+    all_deltas, _ = _settle_ron_winners(
+        all_winners, 0, players, winning_hands, tile,
+    )
+
+    assert sum(nearest_deltas) == sum(all_deltas) == 0
+    assert nearest_deltas[1] > 0 and nearest_deltas[2] == 0
+    assert all_deltas[1] > 0 and all_deltas[2] > 0
+    assert all_deltas[0] < nearest_deltas[0] < 0
 
 
 def _ron_settlement(winner, discarder, dealer_streak=0):
@@ -134,7 +184,7 @@ def test_cautious_avoids_feeding_the_dealer(monkeypatch):
     assert without_weight == one_m
 
 
-def test_ev_aware_is_deterministic_and_chooses_the_safe_known_case():
+def test_ev_aware_is_deterministic_and_chooses_the_safe_known_case(monkeypatch):
     # This 17-tile state is the first seat-zero decision from fixed seed 1.
     # Attack's M2 choice is 2s (19); the calibrated policy instead takes the
     # lower-danger 2z (28), so the test catches a risk term that is ignored.
@@ -146,6 +196,14 @@ def test_ev_aware_is_deterministic_and_chooses_the_safe_known_case():
     first = _choose_discard(0, 8, players)
     second = _choose_discard(0, 8, players)
     assert first == second == (28, False)
+    # The calibration audit needs a policy instrument that changes only the
+    # calibrated risk term.  If this branch ever touches the committed table,
+    # the independent evaluation would reproduce the feedback loop it audits.
+    def forbidden_load():
+        pytest.fail("independent policy loaded the calibration table")
+
+    monkeypatch.setattr(selfplay, "_default_calibration", forbidden_load)
+    assert _choose_discard(0, 8, players, consume_calibration=False) == (19, False)
 
 
 def test_head_to_head_smoke_batch_records_point_deltas():
@@ -190,14 +248,69 @@ def test_calibration_lookup_interpolates_and_falls_back_for_small_cells():
     calibration = Calibration(table_document(counts))
     assert calibration.tenpai_probability(0, 1, 0) == 0.2
     assert calibration.tenpai_probability(1, 1, 0) is None
-    assert calibration.deal_in_probability(1.0) == 0.2
+    expected = (
+        (3 + BETA_PRIOR_ALPHA) / (30 + BETA_PRIOR_ALPHA + BETA_PRIOR_BETA)
+        + (9 + BETA_PRIOR_ALPHA) / (30 + BETA_PRIOR_ALPHA + BETA_PRIOR_BETA)
+    ) / 2
+    assert calibration.deal_in_probability(1.0) == pytest.approx(expected)
     assert Calibration(table_document(counts), min_cell_count=31).deal_in_probability(1.0) is None
+    # The shipped v2 document has a single 13+ cell.  A regenerated document
+    # may split that heterogeneous tail without changing how the shipped file
+    # is interpreted, while retaining Jeffreys smoothing and monotonic PAV.
+    edges = DANGER_EDGES + (16.0,)
+    buckets = DANGER_BUCKETS[:-1] + ("13-16", "16+")
+    counts = empty_counts(buckets)
+    counts["deal_in"]["9-13"] = {"observations": 1000, "deal_ins": 10}
+    counts["deal_in"]["13-16"] = {"observations": 1000, "deal_ins": 5}
+    counts["deal_in"]["16+"] = {"observations": 1000, "deal_ins": 20}
+    document = table_document(
+        counts,
+        {"danger_binning": {"edges": list(edges), "buckets": list(buckets)}},
+        danger_buckets=buckets,
+    )
+
+    calibration = Calibration(document)
+    pooled = (10 + 0.5 + 5 + 0.5) / (1000 + 1 + 1000 + 1)
+    assert danger_bucket(13.0, edges, buckets) == "13-16"
+    assert calibration.deal_in_probability(11.0) == pytest.approx(pooled)
+    assert calibration.deal_in_probability(14.5) == pytest.approx(pooled)
+    assert calibration.deal_in_probability(20.0) == pytest.approx((20 + 0.5) / (1000 + 1))
+
+
+def test_jeffreys_smoothing_keeps_observed_zero_deal_in_bucket_positive():
+    five_z = next(index for index, count in enumerate(parse_tiles("5z")) if count)
+    opponent = OpponentView([five_z], [])
+    visible = list(parse_tiles("5z"))
+    post_discard_hand = list(parse_tiles("5z"))
+    assessment = danger_score(
+        five_z, opponent, tuple(visible), tuple(post_discard_hand),
+    )
+    assert [shape.name for shape in assessment.feasible_shapes] == ["tanki"]
+    assert assessment.score == 0.3
+
+    counts = empty_counts()
+    counts["deal_in"]["0-1"] = {"observations": MIN_CELL_COUNT, "deal_ins": 0}
+
+    calibration = Calibration(table_document(counts))
+
+    assert calibration.deal_in_probability(assessment.score) == (
+        BETA_PRIOR_ALPHA
+        / (MIN_CELL_COUNT + BETA_PRIOR_ALPHA + BETA_PRIOR_BETA)
+    )
+    assert calibration.deal_in_probability(assessment.score) > 0.0
 
 
 def test_committed_calibration_has_signal_and_monotonic_tenpai():
     document_path = Path(__file__).parents[1] / "data" / "calibration.json"
     calibration = Calibration.from_path(document_path)
-    assert calibration.document["counts"]["games"] >= 2000
+    assert calibration.document["counts"]["games"] == calibration.document["metadata"]["fit_games"]
+    assert calibration.document["metadata"]["games"] >= 2000
+    assert calibration.document["metadata"]["held_out_games"] > 0
+    assert calibration.document["metadata"]["seed_range"]["start"] > 30040
+    assert calibration.document["metadata"]["ev_model"]["source_date"] == "2026-07-29"
+    assert calibration.document["quality"]["brier_score"] >= 0
+    assert calibration.document["quality"]["log_loss"] >= 0
+    assert len(calibration.document["quality"]["reliability_curve"]) == len(DANGER_BUCKETS)
     assert calibration.document["metadata"]["danger_reference"] == DANGER_REFERENCE
     assert calibration.document["metadata"]["danger_modifiers"] == DANGER_MODIFIERS
     assert calibration.document["metadata"]["policy_mix"] == ["attack", "cautious", "ev_aware", "ev_aware"]
@@ -207,11 +320,18 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
     # This is NOT asserted for the late game (turn 13+): there, open hands that
     # failed to complete keep tsumogiri-ing without being tenpai — and harder
     # dealer-folding (M3) feeds that pool — so the relationship legitimately
-    # inverts. (Regenerated from seeds 30001-30040, mix attack/cautious/ev/ev.)
+    # inverts. Restrict this broad structural check to cells with 10x the
+    # lookup minimum so sparse early-game run buckets do not turn sampling
+    # noise into a committed-table failure.
     checked_buckets = 0
     for turn in ("1-6", "7-12"):
         for run in ("0", "1-2", "3+"):
-            populated = [table[f"{melds}|{turn}|{run}"] for melds in range(6) if table[f"{melds}|{turn}|{run}"]["observations"] >= 30]
+            populated = [
+                table[f"{melds}|{turn}|{run}"]
+                for melds in range(6)
+                if table[f"{melds}|{turn}|{run}"]["observations"]
+                >= 10 * MIN_CELL_COUNT
+            ]
             if len(populated) >= 2:
                 values = [cell["probability"] for cell in populated]
                 assert values == sorted(values), f"{turn}|{run} not monotonic: {values}"
@@ -269,10 +389,10 @@ def test_added_kong_can_be_robbed():
     players[2].hand = list(parse_tiles("112233m112233p1122s"))
     players[3].hand = list(parse_tiles("112233m112233p1122s"))
     six_s = next(index for index, count in enumerate(parse_tiles("6s")) if count)
-    assert _robbing_winner(players, konger=0, tile=six_s) == 1
+    assert _robbing_winners(players, konger=0, tile=six_s) == (1,)
     # A tile nobody waits on cannot be robbed.
     one_z = next(index for index, count in enumerate(parse_tiles("1z")) if count)
-    assert _robbing_winner(players, konger=0, tile=one_z) is None
+    assert _robbing_winners(players, konger=0, tile=one_z) == ()
 
 
 def test_kong_bloom_flag_reaches_settlement_and_adds_one_tai():

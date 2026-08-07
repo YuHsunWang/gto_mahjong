@@ -9,6 +9,8 @@ from .danger import MELD_FLUSH, MELD_FLUSH_HONOR, SUIT_SCARCE, SUIT_VOID
 
 
 MIN_CELL_COUNT = 30
+BETA_PRIOR_ALPHA = 0.5
+BETA_PRIOR_BETA = 0.5
 TURN_BUCKETS = ("1-6", "7-12", "13+")
 RUN_BUCKETS = ("0", "1-2", "3+")
 DANGER_EDGES = (0.0, 1.0, 2.0, 4.0, 6.0, 9.0, 13.0)
@@ -30,18 +32,22 @@ def run_bucket(run: int) -> str:
     return "0" if run == 0 else "1-2" if run <= 2 else "3+"
 
 
-def danger_bucket(score: float) -> str:
-    for index, edge in enumerate(DANGER_EDGES[1:]):
+def danger_bucket(
+    score: float,
+    danger_edges: tuple[float, ...] = DANGER_EDGES,
+    danger_buckets: tuple[str, ...] = DANGER_BUCKETS,
+) -> str:
+    for index, edge in enumerate(danger_edges[1:]):
         if score < edge:
-            return DANGER_BUCKETS[index]
-    return DANGER_BUCKETS[-1]
+            return danger_buckets[index]
+    return danger_buckets[-1]
 
 
-def empty_counts() -> dict:
+def empty_counts(danger_buckets: tuple[str, ...] = DANGER_BUCKETS) -> dict:
     return {
         "games": 0,
         "tenpai": {},
-        "deal_in": {bucket: {"observations": 0, "deal_ins": 0} for bucket in DANGER_BUCKETS},
+        "deal_in": {bucket: {"observations": 0, "deal_ins": 0} for bucket in danger_buckets},
         "fold": {
             "attack": {"windows": 0, "score_sum": 0.0},
             "cautious": {"windows": 0, "score_sum": 0.0},
@@ -49,7 +55,13 @@ def empty_counts() -> dict:
     }
 
 
-def add_observation(counts: dict, event: dict) -> None:
+def add_observation(
+    counts: dict,
+    event: dict,
+    *,
+    danger_edges: tuple[float, ...] = DANGER_EDGES,
+    danger_buckets: tuple[str, ...] = DANGER_BUCKETS,
+) -> None:
     """Add one simulator discard event to mergeable raw counts.
 
     Danger exposure is measured against each live opponent separately.  A ron
@@ -69,7 +81,7 @@ def add_observation(counts: dict, event: dict) -> None:
         winner = event.get("deal_in_winner")
         danger_rows = ((score, bool(event["dealt_in"]) and opponent == winner) for opponent, score in dangers.items())
     for score, dealt_in in danger_rows:
-        bucket = danger_bucket(score)
+        bucket = danger_bucket(score, danger_edges, danger_buckets)
         counts["deal_in"][bucket]["observations"] += 1
         counts["deal_in"][bucket]["deal_ins"] += int(dealt_in)
     if event.get("fold_window"):
@@ -83,25 +95,40 @@ def add_observation(counts: dict, event: dict) -> None:
             fold["score_sum"] += event["fold_score"]
 
 
-def counts_from_games(games: list) -> dict:
-    counts = empty_counts()
+def counts_from_games(
+    games: list,
+    *,
+    danger_edges: tuple[float, ...] = DANGER_EDGES,
+    danger_buckets: tuple[str, ...] = DANGER_BUCKETS,
+) -> dict:
+    counts = empty_counts(danger_buckets)
     counts["games"] = len(games)
     for game in games:
         for event in game.events:
-            add_observation(counts, event)
+            add_observation(
+                counts,
+                event,
+                danger_edges=danger_edges,
+                danger_buckets=danger_buckets,
+            )
     return counts
 
 
-def merge_counts(left: dict, right: dict) -> dict:
+def merge_counts(
+    left: dict,
+    right: dict,
+    *,
+    danger_buckets: tuple[str, ...] = DANGER_BUCKETS,
+) -> dict:
     """Merge two raw-count objects without retaining raw game logs."""
-    result = empty_counts()
+    result = empty_counts(danger_buckets)
     result["games"] = left.get("games", 0) + right.get("games", 0)
     for source in (left, right):
         for key, cell in source.get("tenpai", {}).items():
             target = result["tenpai"].setdefault(key, {"observations": 0, "tenpai": 0})
             target["observations"] += cell["observations"]
             target["tenpai"] += cell["tenpai"]
-        for bucket in DANGER_BUCKETS:
+        for bucket in danger_buckets:
             cell = source.get("deal_in", {}).get(bucket, {})
             result["deal_in"][bucket]["observations"] += cell.get("observations", 0)
             result["deal_in"][bucket]["deal_ins"] += cell.get("deal_ins", 0)
@@ -113,14 +140,20 @@ def merge_counts(left: dict, right: dict) -> dict:
 
 
 def _isotonic_probabilities(cells: list[dict]) -> list[float | None]:
-    """Weighted pool-adjacent-violators calibration for ordered danger bins."""
+    """Jeffreys-smoothed PAV calibration for ordered danger bins."""
     blocks: list[dict] = []
     for index, cell in enumerate(cells):
         observations = cell["observations"]
         if not observations:
             blocks.append({"indexes": [index], "weight": 0, "successes": 0})
             continue
-        blocks.append({"indexes": [index], "weight": observations, "successes": cell["deal_ins"]})
+        blocks.append(
+            {
+                "indexes": [index],
+                "weight": observations + BETA_PRIOR_ALPHA + BETA_PRIOR_BETA,
+                "successes": cell["deal_ins"] + BETA_PRIOR_ALPHA,
+            }
+        )
         while len(blocks) >= 2 and blocks[-2]["weight"] and blocks[-1]["weight"] and (
             blocks[-2]["successes"] / blocks[-2]["weight"] > blocks[-1]["successes"] / blocks[-1]["weight"]
         ):
@@ -141,7 +174,11 @@ def _isotonic_probabilities(cells: list[dict]) -> list[float | None]:
     return result
 
 
-def derive_tables(counts: dict) -> dict:
+def derive_tables(
+    counts: dict,
+    *,
+    danger_buckets: tuple[str, ...] = DANGER_BUCKETS,
+) -> dict:
     tenpai: dict[str, dict] = {}
     for melds in range(6):
         for turn in TURN_BUCKETS:
@@ -154,10 +191,10 @@ def derive_tables(counts: dict) -> dict:
                     "tenpai": cell["tenpai"],
                     "probability": cell["tenpai"] / observations if observations else None,
                 }
-    raw_deal_in = [counts.get("deal_in", {}).get(bucket, {"observations": 0, "deal_ins": 0}) for bucket in DANGER_BUCKETS]
+    raw_deal_in = [counts.get("deal_in", {}).get(bucket, {"observations": 0, "deal_ins": 0}) for bucket in danger_buckets]
     fitted_deal_in = _isotonic_probabilities(raw_deal_in)
     deal_in: dict[str, dict] = {}
-    for bucket, cell, fitted in zip(DANGER_BUCKETS, raw_deal_in, fitted_deal_in):
+    for bucket, cell, fitted in zip(danger_buckets, raw_deal_in, fitted_deal_in):
         observations = cell["observations"]
         deal_in[bucket] = {
             "observations": observations,
@@ -175,8 +212,18 @@ def derive_tables(counts: dict) -> dict:
     return {"tenpai": tenpai, "deal_in": deal_in, "fold": fold}
 
 
-def table_document(counts: dict, metadata: dict | None = None) -> dict:
-    return {"version": 2, "metadata": metadata or {}, "counts": counts, "tables": derive_tables(counts)}
+def table_document(
+    counts: dict,
+    metadata: dict | None = None,
+    *,
+    danger_buckets: tuple[str, ...] = DANGER_BUCKETS,
+) -> dict:
+    return {
+        "version": 2,
+        "metadata": metadata or {},
+        "counts": counts,
+        "tables": derive_tables(counts, danger_buckets=danger_buckets),
+    }
 
 
 def load_table(path: str | Path) -> dict:
@@ -217,7 +264,18 @@ class Calibration:
 
     def __init__(self, document: dict, min_cell_count: int = MIN_CELL_COUNT) -> None:
         self.document = document
-        self.tables = document.get("tables", derive_tables(document["counts"]))
+        binning = document.get("metadata", {}).get("danger_binning", {})
+        self.danger_edges = tuple(binning.get("edges", DANGER_EDGES))
+        self.danger_buckets = tuple(binning.get("buckets", DANGER_BUCKETS))
+        if (
+            len(self.danger_edges) != len(self.danger_buckets)
+            or tuple(sorted(self.danger_edges)) != self.danger_edges
+        ):
+            raise ValueError("danger binning requires one ordered edge per bucket")
+        self.tables = document.get(
+            "tables",
+            derive_tables(document["counts"], danger_buckets=self.danger_buckets),
+        )
         self.min_cell_count = min_cell_count
 
     @classmethod
@@ -233,11 +291,11 @@ class Calibration:
 
     def deal_in_probability(self, danger_score: float) -> float | None:
         usable: list[tuple[float, float]] = []
-        for index, bucket in enumerate(DANGER_BUCKETS):
+        for index, bucket in enumerate(self.danger_buckets):
             cell = self.tables["deal_in"].get(bucket, {})
             if cell.get("observations", 0) >= self.min_cell_count and cell.get("probability") is not None:
-                low = DANGER_EDGES[index]
-                high = DANGER_EDGES[index + 1] if index + 1 < len(DANGER_EDGES) else low + 4.0
+                low = self.danger_edges[index]
+                high = self.danger_edges[index + 1] if index + 1 < len(self.danger_edges) else low + 4.0
                 usable.append(((low + high) / 2.0, cell["probability"]))
         if not usable:
             return None

@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from server.api import ScoreRequest, score_endpoint
 from taimahjong.calibration import Calibration
+from taimahjong.danger import OpponentView, parse_river
 from taimahjong.ev import TileAccounting, ev_rank, remaining_draws
 from taimahjong.scoring import SCHEME_3_1, SCHEME_5_2, WinContext, score_hand
 from taimahjong.shanten import shanten
@@ -211,8 +212,16 @@ def calibration_zero_bucket_check() -> dict:
 
 
 def fold_action_check() -> dict:
-    hand = parse_tiles("123456789m11234p567s")
-    entries = ev_rank(hand, (), (0,) * 34, turns=2, sims=40, seed=5, top_k=3)
+    hand = parse_tiles("1112345678999m1234p")
+    opponent = OpponentView(
+        parse_river("19m"), [], 1,
+        is_dealer=True, dealer_streak=20,
+    )
+    visible = (1,) + (0,) * 7 + (1,) + (0,) * 25
+    entries = ev_rank(
+        hand, (opponent,), visible,
+        turns=3, sims=40, seed=17, exhaustive=True,
+    )
     fold = next(entry for entry in entries if entry.is_fold)
     real = [entry for entry in entries if not entry.is_fold]
     return {
@@ -221,6 +230,8 @@ def fold_action_check() -> dict:
         "minimum_real_risk_ev": min(entry.risk_ev for entry in real),
         "fold_risk_ev": fold.risk_ev,
         "fold_strictly_beats_best_real": fold.net_ev > max(entry.net_ev for entry in real),
+        "first_discard": fold.action_plan.first_discard if fold.action_plan else None,
+        "principles": list(fold.action_plan.principles) if fold.action_plan else [],
     }
 
 
@@ -232,7 +243,7 @@ def main() -> None:
         "simulation_convergence": simulation_convergence(),
         "ev_ranking_stability": ev_ranking_stability(),
         "calibration_zero_bucket": calibration_zero_bucket_check(),
-        "fold_pseudo_action": fold_action_check(),
+        "fold_policy": fold_action_check(),
     }
     print(json.dumps(output, ensure_ascii=False, indent=2))
 

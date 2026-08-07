@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from taimahjong.selfplay import head_to_head
+from taimahjong.moments import SampleMoments
 
 
 parser = argparse.ArgumentParser()
@@ -17,6 +18,7 @@ parser.add_argument("--seed", type=int, required=True)
 args = parser.parse_args()
 result = head_to_head(args.games, args.seed)
 differences = [ev - attack for ev, attack in result.game_deltas]
+moments = SampleMoments.from_values(differences)
 print(json.dumps({
     "games": result.games,
     "seed": result.seed_start,
@@ -24,4 +26,5 @@ print(json.dumps({
     "attack_sum": sum(attack for _, attack in result.game_deltas),
     "difference_sum": sum(differences),
     "difference_squared_sum": sum(value * value for value in differences),
+    "difference_moments": moments.payload(0.10),
 }))

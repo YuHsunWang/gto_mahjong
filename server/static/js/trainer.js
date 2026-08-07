@@ -4,9 +4,9 @@
 
 import { post, get, showError, randomSeed } from './api.js';
 import { tileEl } from './tiles.js';
-import { feltEl, handEl, computingEl, faceText } from './table.js';
-import { verdictEl, evDetailsEl, bestLineEl, modelScopeEl, scorebarEl } from './feedback.js';
-import { record } from './stats.js';
+import { feltEl, computingEl, faceText } from './table.js';
+import { reviewRailEl } from './feedback.js';
+import { record, recordOutcome, summary } from './stats.js';
 import { schemeToggle, schemeParams } from './scheme.js';
 
 const SESSION_KEY = 'mj-trainer-sid';
@@ -69,6 +69,9 @@ export function trainerScreen(root) {
     }
     try {
       state = await get(`/api/trainer/${sessionId}`);
+      if (state.decision.type === 'outcome') {
+        recordOutcome('trainer', state.session_id, state.scheme.id);
+      }
       phase = 'awaiting';
     } catch {
       sessionStorage.removeItem(SESSION_KEY);
@@ -86,7 +89,10 @@ export function trainerScreen(root) {
         step: state.step, ...move, ...schemeParams(state.scheme.id),
       });
       feedback = state.feedback;
-      record('trainer', feedback.verdict, feedback.ev_loss, state.scheme.id);
+      record('trainer', feedback, state.scheme.id);
+      if (state.decision.type === 'outcome') {
+        recordOutcome('trainer', state.session_id, state.scheme.id);
+      }
       phase = 'feedback';
     } catch (error) {
       showError(error);
@@ -106,6 +112,19 @@ export function trainerScreen(root) {
     feedback = null;
     phase = 'awaiting';
     render();
+  }
+
+  function workspace(board, grade = null, choiceText = null) {
+    const shell = document.createElement('div');
+    shell.className = 'table-workspace';
+    shell.append(board, reviewRailEl({
+      grade,
+      session: summary('trainer', state?.scheme?.id),
+      chosenTile: grade?.chosen_tile ?? grade?.chosen?.discard ?? null,
+      choiceText,
+      metadata: state,
+    }));
+    return shell;
   }
 
   function setupScreen() {
@@ -220,7 +239,7 @@ export function trainerScreen(root) {
     rows.forEach((row) => {
       const tr = document.createElement('tr');
       if (row.index === feedback.choice) tr.classList.add('chosen-row');
-      if (row.index === feedback.best_index) tr.classList.add('best-row');
+      if (row.index === feedback.best_index) tr.classList.add('model-leader-row');
       const name = document.createElement('td');
       name.textContent = row.label;
       const ev = document.createElement('td');
@@ -274,57 +293,51 @@ export function trainerScreen(root) {
   }
 
   function decisionScreen(decision) {
-    const fragment = document.createDocumentFragment();
+    const board = document.createElement('section');
+    board.className = 'table-board';
+    const hint = document.createElement('div');
+    hint.className = 'hand-hint';
     if (decision.type === 'discard') {
-      fragment.append(feltEl(decision.position));
-      const hint = document.createElement('div');
-      hint.className = 'hand-hint';
       hint.textContent = '點一張牌切出（再點一次確認；金框為剛摸入）';
-      fragment.append(hint, handEl(decision.position.hand, {
-        drawnTile: decision.position.drawn_tile,
-        onDiscard: (tile) => act({ action: 'discard', tile }, `你切 ${faceText(tile)}，計算 EV 中…`),
-        melds: decision.position.own_melds,
-      }));
+      board.append(feltEl(decision.position, {
+        handOptions: {
+          onDiscard: (tile) => act({ action: 'discard', tile }, `你切 ${faceText(tile)}，計算 net EV 中…`),
+        },
+      }), hint);
     } else if (decision.type === 'kong') {
-      fragment.append(feltEl(decision.position));
-      const hint = document.createElement('div');
-      hint.className = 'hand-hint';
       hint.textContent = '剛摸入的牌可形成不惡化向聽的槓 — 要宣告嗎？';
-      fragment.append(hint, handEl(decision.position.hand, { drawnTile: decision.position.drawn_tile, melds: decision.position.own_melds }));
-      fragment.append(optionButtons(decision));
+      board.append(feltEl(decision.position), hint, optionButtons(decision));
     } else if (decision.type === 'call') {
-      fragment.append(feltEl(decision.position, { offeredTile: decision.offered_tile }));
-      const hint = document.createElement('div');
-      hint.className = 'hand-hint';
       hint.textContent = `對手 ${decision.discarder} 打出 ${faceText(decision.offered_tile)} — 要鳴牌嗎？`;
-      fragment.append(hint, handEl(decision.position.hand, { melds: decision.position.own_melds }));
-      fragment.append(optionButtons(decision));
+      board.append(feltEl(decision.position, {
+        offeredTile: decision.offered_tile,
+        handOptions: { drawnTile: null },
+      }), hint, optionButtons(decision));
     }
-    return fragment;
+    return workspace(board);
   }
 
   function feedbackScreen() {
-    const fragment = document.createDocumentFragment();
     const decision = frozen;
-    fragment.append(feltEl(decision.position, {
-      offeredTile: decision.type === 'call' ? decision.offered_tile : null,
-    }));
+    const board = document.createElement('section');
+    board.className = 'table-board';
+    let choiceText = null;
 
     if (feedback.kind === 'discard') {
-      const bestTile = feedback.best.discard;
-      const showBest = feedback.ev_delta > 0 && bestTile !== feedback.chosen_tile;
-      fragment.append(handEl(decision.position.hand, {
-        drawnTile: decision.position.drawn_tile,
-        marks: { cut: feedback.chosen_tile, best: showBest ? bestTile : null },
-        melds: decision.position.own_melds,
+      const state = feedback.ranking_state || 'clear';
+      const topGap = feedback.top1_vs_top2;
+      board.append(feltEl(decision.position, {
+        handOptions: {
+          marks: {
+            cut: feedback.chosen_tile,
+            modelLeader: state === 'clear' ? feedback.best.discard : null,
+            indistinguishable: state === 'clear' || !topGap
+              ? []
+              : [topGap.top_discard, topGap.runner_up_discard],
+          },
+        },
       }));
-      fragment.append(verdictEl(feedback.verdict, feedback.marginal, feedback.ev_delta, `你切 ${faceText(feedback.chosen_tile)}`));
-      if (showBest) fragment.append(bestLineEl(`本模型估計切牌：${faceText(bestTile)}（淨 EV ${feedback.best.net_ev.toFixed(1)}，綠框標示）`));
-      fragment.append(evDetailsEl(feedback.ranked, {
-        chosenTile: feedback.chosen_tile,
-        bestTile,
-        explain: feedback.explain,
-      }));
+      choiceText = `你切 ${faceText(feedback.chosen_tile)}`;
     } else {
       const isCall = feedback.kind === 'call';
       const chosenLabel = feedback.choice === null
@@ -332,18 +345,11 @@ export function trainerScreen(root) {
         : (isCall
           ? `${callLabel(decision.options[feedback.choice])} ${decision.options[feedback.choice].meld.map(faceText).join('')}`
           : kongLabel(decision.options[feedback.choice]));
-      fragment.append(handEl(decision.position.hand, {
-        drawnTile: isCall ? null : decision.position.drawn_tile,
-        melds: decision.position.own_melds,
-      }));
-      fragment.append(verdictEl(feedback.verdict, feedback.marginal, feedback.ev_delta, `你選擇：${chosenLabel}`));
-      const bestLabel = feedback.best_index === null
-        ? (isCall ? '過（不鳴）' : '不槓')
-        : (isCall
-          ? `${callLabel(decision.options[feedback.best_index])} ${decision.options[feedback.best_index].meld.map(faceText).join('')}`
-          : kongLabel(decision.options[feedback.best_index]));
-      fragment.append(bestLineEl(`本模型估計：${bestLabel}，heuristic EV ${feedback.best_ev.toFixed(1)} 籌碼單位`));
-      fragment.append(optionEvRows(decision));
+      board.append(feltEl(decision.position, {
+        offeredTile: isCall ? decision.offered_tile : null,
+        handOptions: { drawnTile: isCall ? null : decision.position.drawn_tile },
+      }), optionEvRows(decision));
+      choiceText = `你選擇：${chosenLabel}`;
     }
 
     const controls = document.createElement('div');
@@ -353,8 +359,8 @@ export function trainerScreen(root) {
     next.textContent = state.decision.type === 'outcome' ? '看結果 ▶' : '下一手 ▶';
     next.addEventListener('click', advance);
     controls.append(next);
-    fragment.append(controls);
-    return fragment;
+    board.append(controls);
+    return workspace(board, feedback, choiceText);
   }
 
   function render(computingText) {
@@ -367,18 +373,15 @@ export function trainerScreen(root) {
       root.append(setupScreen());
       return;
     }
-    root.append(scorebarEl(state.scorecard));
-    root.append(modelScopeEl(state));
     if (phase === 'acting') {
       const decision = frozen;
-      root.append(feltEl(decision.position, {
+      const board = document.createElement('section');
+      board.className = 'table-board';
+      board.append(feltEl(decision.position, {
         offeredTile: decision.type === 'call' ? decision.offered_tile : null,
-      }));
-      root.append(handEl(decision.position.hand, {
-        drawnTile: decision.type === 'call' ? null : decision.position.drawn_tile,
-        melds: decision.position.own_melds,
-      }));
-      root.append(computingEl(computingText || '計算 EV 中…'));
+        handOptions: { drawnTile: decision.type === 'call' ? null : decision.position.drawn_tile },
+      }), computingEl(computingText || '計算 net EV 中…'));
+      root.append(workspace(board));
       return;
     }
     if (phase === 'feedback') {

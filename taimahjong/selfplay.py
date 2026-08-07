@@ -11,11 +11,29 @@ from functools import lru_cache
 from random import Random
 from math import sqrt
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from .calibration import Calibration
-from .config import DEFAULT_GAME_CONFIG, GameConfig
-from .danger import OpponentView, RiverEntry, danger_score, fold_score, tenpai_score
+from .config import (
+    DEFAULT_GAME_CONFIG,
+    DEFAULT_RULES,
+    GameConfig,
+    RulesConfig,
+    resolve_ron_claims,
+)
+from .danger import (
+    DeclaredKong,
+    DeclaredMeld,
+    KongLike,
+    MeldLike,
+    OpponentView,
+    RiverEntry,
+    danger_score,
+    fold_score,
+    kong_tiles,
+    meld_tiles,
+    tenpai_score,
+)
 from .ev import BASELINE_TENPAI_RATE, DECLARED_FACTOR, opponent_value_estimate
 from .scoring import BASE_UNITS, DEFAULT_SCHEME, DEALER_TAI, STREAK_TAI_PER_WIN, ScoringScheme, WinContext, score_hand
 from .shanten import shanten
@@ -80,7 +98,7 @@ class Player:
     policy: str
     hand: list[int] = field(default_factory=lambda: [0] * 34)
     river: list[RiverEntry] = field(default_factory=list)
-    melds: list[tuple[int, int, int]] = field(default_factory=list)
+    melds: list[MeldLike] = field(default_factory=list)
     declared_at: int | None = None
     discards: int = 0
     # Set on the DEALER_SEAT player only: dealership is table state, carried
@@ -89,7 +107,7 @@ class Player:
     dealer_streak: int = 0
     # Declared kongs as (tile, concealed) pairs; their four tiles live here,
     # outside ``hand``. Each occupies one declared set (see ``_declared``).
-    kongs: list[tuple[int, bool]] = field(default_factory=list)
+    kongs: list[KongLike] = field(default_factory=list)
 
     @property
     def declared(self) -> bool:
@@ -109,7 +127,7 @@ class GameResult:
     value_units: int = 0
     dealer_streak: int = 0
     dealer_premium: int = 0  # units added to the dealer's leg for a non-dealer winner
-    kongs: tuple[tuple[int, bool], ...] = ()  # the winner's declared kongs
+    kongs: tuple[KongLike, ...] = ()  # the winner's declared kongs
     kong_bloom: bool = False  # win on a kong's self-drawn replacement (槓上開花)
     robbed_kong: bool = False  # win by robbing an added kong (搶槓)
     kong_log: tuple[tuple[int, int, bool], ...] = ()  # every declared kong: (seat, tile, concealed)
@@ -148,7 +166,7 @@ class DecisionSnapshot:
     seat: int
     hand: tuple[int, ...]
     river: tuple[RiverEntry, ...]
-    melds: tuple[tuple[int, int, int], ...]
+    melds: tuple[MeldLike, ...]
     opponents: tuple[tuple[int, OpponentView], ...]
     public_counts: tuple[int, ...]
     turn: int
@@ -163,9 +181,10 @@ def _public_counts(players: list[Player]) -> tuple[int, ...]:
         for entry in player.river:
             counts[entry.tile] += 1
         for meld in player.melds:
-            for tile in meld:
+            for tile in meld_tiles(meld):
                 counts[tile] += 1
-        for tile, _ in player.kongs:
+        for kong in player.kongs:
+            tile, _ = kong_tiles(kong)
             counts[tile] += 4
     return tuple(counts)
 
@@ -174,7 +193,7 @@ def _view(player: Player, seat: int) -> OpponentView:
     # A kong is public but OpponentView.melds is strictly three tiles, so we
     # expose the kong to the shape/danger layer as its triplet; the fourth copy
     # is already in the visible counts (_public_counts adds all four).
-    kong_triplets = [(tile, tile, tile) for tile, _ in player.kongs]
+    kong_triplets = [(tile, tile, tile) for tile, _ in map(kong_tiles, player.kongs)]
     return OpponentView(
         list(player.river), list(player.melds) + kong_triplets, player.declared_at,
         is_dealer=seat == DEALER_SEAT,
@@ -226,7 +245,8 @@ def _self_draw_kong_choice(player: Player, kong_policy: str) -> tuple[int, bool]
     for tile in range(34):
         if player.hand[tile] == 4 and not _kong_worsens_shanten(player, tile, True):
             return tile, True
-    for tile, second, third in player.melds:
+    for meld in player.melds:
+        tile, second, third = meld_tiles(meld)
         if tile == second == third and player.hand[tile] >= 1 and not _kong_worsens_shanten(player, tile, False):
             return tile, False
     return None
@@ -239,8 +259,14 @@ def _declare_kong(player: Player, tile: int, concealed: bool, dead: list[int]) -
         player.hand[tile] -= 4
     else:
         player.hand[tile] -= 1
-        player.melds.remove((tile, tile, tile))  # the pon becomes a kong
-    player.kongs.append((tile, concealed))
+        pon = (tile, tile, tile)
+        for index, meld in enumerate(player.melds):
+            if meld_tiles(meld) == pon:
+                del player.melds[index]  # the pon becomes a kong
+                break
+        else:
+            raise ValueError(f"{pon!r} is not in player melds")
+    player.kongs.append(DeclaredKong(tile, concealed))
     replacement = dead.pop(0)
     player.hand[replacement] += 1
     return replacement
@@ -262,25 +288,37 @@ def _big_kong_caller(players: list[Player], discarder: int, tile: int, seat_kong
     return None
 
 
-def _apply_big_kong(player: Player, tile: int, dead: list[int]) -> int:
+def _apply_big_kong(
+    player: Player,
+    tile: int,
+    dead: list[int],
+    declared_kong: DeclaredKong | None = None,
+) -> int:
     """Declare a 大明槓 on a discard (three from hand + the discard) and draw the
     dead-wall replacement. Open, no bloom eligibility. Returns the replacement."""
     player.hand[tile] -= 3
-    player.kongs.append((tile, False))
+    kong = DeclaredKong(tile, False) if declared_kong is None else declared_kong
+    if kong_tiles(kong) != (tile, False):
+        raise ValueError("big open kong metadata must match the declared tile")
+    player.kongs.append(kong)
     replacement = dead.pop(0)
     player.hand[replacement] += 1
     return replacement
 
 
-def _robbing_winner(players: list[Player], konger: int, tile: int) -> int | None:
-    """Closest downstream seat that can ron on an added-kong ``tile`` (搶槓)."""
-    for offset in range(1, 4):
-        index = (konger + offset) % 4
+def _robbing_winners(
+    players: list[Player],
+    konger: int,
+    tile: int,
+    rules: RulesConfig = DEFAULT_RULES,
+) -> tuple[int, ...]:
+    """Seats that can ron an added-kong ``tile`` (搶槓), under ``rules``."""
+    def can_win(index: int) -> bool:
         hand = players[index].hand
         completed = tuple(hand[:tile] + [hand[tile] + 1] + hand[tile + 1:])
-        if _cached_shanten(completed, _declared(players[index])) == -1:
-            return index
-    return None
+        return _cached_shanten(completed, _declared(players[index])) == -1
+
+    return resolve_ron_claims(konger, can_win, rules)
 
 
 def _trailing_tsumogiri_run(river: list[RiverEntry]) -> int:
@@ -296,7 +334,7 @@ def _trailing_tsumogiri_run(river: list[RiverEntry]) -> int:
 def _assert_conservation(players: list[Player], wall: list[int], dead: list[int]) -> None:
     total = len(wall) + len(dead)
     for player in players:
-        total += sum(player.hand) + len(player.river) + sum(len(meld) for meld in player.melds) + 4 * len(player.kongs)
+        total += sum(player.hand) + len(player.river) + sum(len(meld_tiles(meld)) for meld in player.melds) + 4 * len(player.kongs)
     assert total == 136, f"tile conservation failed: {total} != 136"
     all_counts = [0] * 34
     for tile in wall + dead:
@@ -307,9 +345,10 @@ def _assert_conservation(players: list[Player], wall: list[int], dead: list[int]
         for entry in player.river:
             all_counts[entry.tile] += 1
         for meld in player.melds:
-            for tile in meld:
+            for tile in meld_tiles(meld):
                 all_counts[tile] += 1
-        for tile, _ in player.kongs:
+        for kong in player.kongs:
+            tile, _ = kong_tiles(kong)
             all_counts[tile] += 4
     assert all(count == 4 for count in all_counts), "individual tile copies were not conserved"
 
@@ -338,6 +377,7 @@ def _ev_aware_discard(
     analyses: tuple[DiscardAnalysis, ...],
     players: list[Player],
     scheme: ScoringScheme = DEFAULT_SCHEME,
+    consume_calibration: bool = True,
 ) -> int:
     """Choose from M2's top candidates plus the raw minimum-danger discard."""
     player = players[player_index]
@@ -356,7 +396,7 @@ def _ev_aware_discard(
     if safest.discard not in {analysis.discard for analysis in candidates}:
         candidates.append(safest)
     best_ukeire = max((analysis.total for analysis in analyses), default=0)
-    calibration = _default_calibration()
+    calibration = _default_calibration() if consume_calibration else None
     ranked: list[tuple[float, int, int]] = []
     for order, analysis in enumerate(candidates):
         post = list(player.hand)
@@ -381,6 +421,7 @@ def _choose_discard(
     drawn_tile: int | None,
     players: list[Player],
     scheme: ScoringScheme = DEFAULT_SCHEME,
+    consume_calibration: bool = True,
 ) -> tuple[int, bool]:
     player = players[player_index]
     if player.declared:
@@ -390,7 +431,13 @@ def _choose_discard(
     analyses = _cached_analysis(tuple(player.hand), _declared(player), visible)
     assert analyses
     if player.policy == "ev_aware":
-        return _ev_aware_discard(player_index, analyses, players, scheme), False
+        return _ev_aware_discard(
+            player_index,
+            analyses,
+            players,
+            scheme,
+            consume_calibration=consume_calibration,
+        ), False
     fold_active = (
         player.policy == "cautious"
         and _cached_shanten(tuple(player.hand), _declared(player)) >= 2
@@ -500,8 +547,42 @@ def _settlement(
     return tuple(deltas), value
 
 
-def _post_call_choice(player: Player, removed: tuple[int, int]) -> tuple[int, int] | None:
-    """Return (resulting shanten, discard) if this two-tile call improves it."""
+def _settle_ron_winners(
+    winners: tuple[int, ...],
+    discarder: int,
+    players: list[Player],
+    winning_hands: Mapping[int, tuple[int, ...]],
+    winning_tile: int,
+    dealer_streak: int = 0,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    *,
+    robbed_kong: bool = False,
+) -> tuple[tuple[int, int, int, int], tuple[int, ...]]:
+    """Settle every resolved ron claim; the discarder pays each winner."""
+    if not winners:
+        raise ValueError("ron settlement requires at least one winner")
+    combined = [0, 0, 0, 0]
+    values = []
+    for winner in winners:
+        deltas, value = _settlement(
+            "ron",
+            winner,
+            discarder,
+            players,
+            winning_hands[winner],
+            winning_tile,
+            dealer_streak,
+            scheme,
+            robbed_kong=robbed_kong,
+        )
+        combined = [total + delta for total, delta in zip(combined, deltas)]
+        values.append(value)
+    assert sum(combined) == 0
+    return tuple(combined), tuple(values)
+
+
+def _policy_post_call_choice(player: Player, removed: tuple[int, int]) -> tuple[int, int] | None:
+    """Bot policy: return its discard only when this call strictly improves shanten."""
     before = _cached_shanten(tuple(player.hand), _declared(player))
     candidate = list(player.hand)
     candidate[removed[0]] -= 1
@@ -512,13 +593,16 @@ def _post_call_choice(player: Player, removed: tuple[int, int]) -> tuple[int, in
     return analyses[0].shanten_after, analyses[0].discard
 
 
-def _call_options(player: Player, tile: int, chi: bool) -> list[tuple[tuple[int, int], tuple[int, int, int], int]]:
-    options: list[tuple[tuple[int, int], tuple[int, int, int], int]] = []
+def _legal_call_options(
+    player: Player,
+    tile: int,
+    chi: bool,
+) -> list[tuple[tuple[int, int], tuple[int, int, int]]]:
+    """Enumerate every rule-legal pon or chi using two concealed tiles."""
+    options: list[tuple[tuple[int, int], tuple[int, int, int]]] = []
     if not chi:
         if player.hand[tile] >= 2:
-            choice = _post_call_choice(player, (tile, tile))
-            if choice:
-                options.append(((tile, tile), (tile, tile, tile), choice[0]))
+            options.append(((tile, tile), (tile, tile, tile)))
         return options
     if tile >= 27:
         return options
@@ -529,14 +613,27 @@ def _call_options(player: Player, tile: int, chi: bool) -> list[tuple[tuple[int,
             continue
         first, second = offset + pair[0], offset + pair[1]
         if player.hand[first] and player.hand[second]:
-            choice = _post_call_choice(player, (first, second))
-            if choice:
-                options.append(((first, second), tuple(sorted((tile, first, second))), choice[0]))
+            options.append(((first, second), tuple(sorted((tile, first, second)))))
+    return options
+
+
+def _policy_call_options(
+    player: Player,
+    tile: int,
+    chi: bool,
+) -> list[tuple[tuple[int, int], tuple[int, int, int], int]]:
+    """Filter legal pon/chi calls to the bot's strict shanten-improvement policy."""
+    options: list[tuple[tuple[int, int], tuple[int, int, int], int]] = []
+    for removed, meld in _legal_call_options(player, tile, chi):
+        choice = _policy_post_call_choice(player, removed)
+        if choice:
+            options.append((removed, meld, choice[0]))
     return options
 
 
 def _best_call(player: Player, tile: int, chi: bool) -> tuple[tuple[int, int], tuple[int, int, int]] | None:
-    options = _call_options(player, tile, chi)
+    """Select the bot's preferred call from its policy-filtered options."""
+    options = _policy_call_options(player, tile, chi)
     if not options:
         return None
     removed, meld, _ = min(options, key=lambda option: (option[2], option[1]))
@@ -560,6 +657,8 @@ def play_game(
     dealer_streak: int = 0,
     kong_policy: str | tuple[str, str, str, str] = "none",
     config: GameConfig = DEFAULT_GAME_CONFIG,
+    rules: RulesConfig = DEFAULT_RULES,
+    consume_calibration: bool = True,
 ) -> GameResult:
     """Play one deterministic-seeded game and retain every discard event in memory.
 
@@ -571,6 +670,8 @@ def play_game(
     """
     if len(policies) != 4 or any(policy not in POLICIES for policy in policies):
         raise ValueError("policies must name four entries from POLICIES")
+    if not isinstance(consume_calibration, bool):
+        raise ValueError("consume_calibration must be a boolean")
     if not isinstance(dealer_streak, int) or isinstance(dealer_streak, bool) or dealer_streak < 0:
         raise ValueError("dealer_streak must be a non-negative integer")
     seat_kong = tuple(_seat_kong_policy(kong_policy, seat) for seat in range(4))
@@ -623,16 +724,27 @@ def play_game(
                     break
                 kind_tile, concealed = choice
                 if not concealed:
-                    robber = _robbing_winner(players, current, kind_tile)
-                    if robber is not None:
-                        robbed_hand = list(players[robber].hand)
-                        robbed_hand[kind_tile] += 1
-                        winning = tuple(robbed_hand)
-                        points, value = _settlement(
-                            "ron", robber, current, players, winning, kind_tile, dealer_streak, config.scheme, robbed_kong=True,
+                    robbers = _robbing_winners(players, current, kind_tile, rules)
+                    if robbers:
+                        winning_hands = {}
+                        for robber in robbers:
+                            robbed_hand = list(players[robber].hand)
+                            robbed_hand[kind_tile] += 1
+                            winning_hands[robber] = tuple(robbed_hand)
+                        points, values = _settle_ron_winners(
+                            robbers,
+                            current,
+                            players,
+                            winning_hands,
+                            kind_tile,
+                            dealer_streak,
+                            config.scheme,
+                            robbed_kong=True,
                         )
+                        robber = robbers[0]
+                        winning = winning_hands[robber]
                         return GameResult(
-                            events, "ron", robber, current, actions, winning, _declared(players[robber]), points, value,
+                            events, "ron", robber, current, actions, winning, _declared(players[robber]), points, values[0],
                             dealer_streak, _dealer_leg_premium("ron", robber, current, dealer_streak, config.scheme),
                             kongs=tuple(players[robber].kongs), robbed_kong=True, kong_log=tuple(kong_log),
                         )
@@ -652,7 +764,13 @@ def play_game(
             if snapshot_hook is not None and not player.declared:
                 snapshot_hook(_decision_snapshot(current, drawn_tile, players, len(wall)))
 
-        tile, fold_active = _choose_discard(current, drawn_tile, players, config.scheme)
+        tile, fold_active = _choose_discard(
+            current,
+            drawn_tile,
+            players,
+            config.scheme,
+            consume_calibration=consume_calibration,
+        )
         assert player.hand[tile] > 0
         origin = "tsumogiri" if drawn_tile == tile else "tedashi"
         player.hand[tile] -= 1
@@ -695,30 +813,30 @@ def play_game(
         events.append(event)
         _assert_conservation(players, wall, dead)
 
-        winner = next(
-            (
-                index
-                for offset in range(1, 4)
-                for index in [(current + offset) % 4]
-                if _cached_shanten(
-                    tuple(players[index].hand[:tile] + [players[index].hand[tile] + 1] + players[index].hand[tile + 1 :]),
-                    _declared(players[index]),
-                )
-                == -1
-            ),
-            None,
-        )
-        if winner is not None:
+        def can_ron(index: int) -> bool:
+            hand = players[index].hand
+            completed = tuple(hand[:tile] + [hand[tile] + 1] + hand[tile + 1:])
+            return _cached_shanten(completed, _declared(players[index])) == -1
+
+        winners = resolve_ron_claims(current, can_ron, rules)
+        if winners:
+            winner = winners[0]
             event["dealt_in"] = True
             event["danger_score"] = dangers[winner]
             event["deal_in_winner"] = winner
-            winning_hand = list(players[winner].hand)
-            winning_hand[tile] += 1
-            assert _cached_shanten(tuple(winning_hand), _declared(players[winner])) == -1
-            winning = tuple(winning_hand)
-            points, value = _settlement("ron", winner, current, players, winning, tile, dealer_streak, config.scheme)
+            winning_hands = {}
+            for ron_winner in winners:
+                winning_hand = list(players[ron_winner].hand)
+                winning_hand[tile] += 1
+                winning = tuple(winning_hand)
+                assert _cached_shanten(winning, _declared(players[ron_winner])) == -1
+                winning_hands[ron_winner] = winning
+            points, values = _settle_ron_winners(
+                winners, current, players, winning_hands, tile, dealer_streak, config.scheme,
+            )
+            winning = winning_hands[winner]
             return GameResult(
-                events, "ron", winner, current, actions, winning, _declared(players[winner]), points, value,
+                events, "ron", winner, current, actions, winning, _declared(players[winner]), points, values[0],
                 dealer_streak, _dealer_leg_premium("ron", winner, current, dealer_streak, config.scheme),
                 kongs=tuple(players[winner].kongs), kong_log=tuple(kong_log),
             )
@@ -730,9 +848,15 @@ def play_game(
         if dead and not player.declared:
             big_caller = _big_kong_caller(players, current, tile, seat_kong)
             if big_caller is not None:
+                declared_kong = DeclaredKong(
+                    tile,
+                    False,
+                    called_from_seat=current,
+                    called_from_discard_number=players[current].discards,
+                )
                 player.river.pop()  # the konged tile leaves the discarder's river
                 kong_log.append((big_caller, tile, False))
-                replacement = _apply_big_kong(players[big_caller], tile, dead)
+                replacement = _apply_big_kong(players[big_caller], tile, dead, declared_kong)
                 any_call = True
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(players[big_caller].hand), _declared(players[big_caller])) == -1:
@@ -769,10 +893,16 @@ def play_game(
                         caller = index
         if caller is not None and selected is not None:
             removed, meld = selected
+            declared_meld = DeclaredMeld(
+                tiles=meld,
+                called_tile=tile,
+                called_from_seat=current,
+                called_from_discard_number=players[current].discards,
+            )
             players[current].river.pop()
             players[caller].hand[removed[0]] -= 1
             players[caller].hand[removed[1]] -= 1
-            players[caller].melds.append(meld)
+            players[caller].melds.append(declared_meld)
             any_call = True
             _assert_conservation(players, wall, dead)
             current = caller
@@ -788,12 +918,21 @@ def play_games(
     policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious"),
     dealer_streak: int = 0,
     config: GameConfig = DEFAULT_GAME_CONFIG,
+    rules: RulesConfig = DEFAULT_RULES,
+    consume_calibration: bool = True,
 ) -> list[GameResult]:
     if not isinstance(games, int) or isinstance(games, bool) or games < 0:
         raise ValueError("games must be a non-negative integer")
     rng = Random(seed)
     return [
-        play_game(rng.randrange(2**63), policies, dealer_streak=dealer_streak, config=config)
+        play_game(
+            rng.randrange(2**63),
+            policies,
+            dealer_streak=dealer_streak,
+            config=config,
+            rules=rules,
+            consume_calibration=consume_calibration,
+        )
         for _ in range(games)
     ]
 
@@ -803,6 +942,7 @@ def head_to_head(
     seed: int,
     dealer_streak: int = 0,
     config: GameConfig = DEFAULT_GAME_CONFIG,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> HeadToHeadResult:
     """Run alternating-seat ev_aware/attack games and summarize point EV.
 
@@ -820,7 +960,13 @@ def head_to_head(
     differences: list[float] = []
     for index in range(games):
         policies = paired_policies[index % 2]
-        game = play_game(seed + index, policies, dealer_streak=dealer_streak, config=config)
+        game = play_game(
+            seed + index,
+            policies,
+            dealer_streak=dealer_streak,
+            config=config,
+            rules=rules,
+        )
         ev_points = sum(game.point_deltas[seat] for seat, policy in enumerate(policies) if policy == "ev_aware") / 2
         attack_points = sum(game.point_deltas[seat] for seat, policy in enumerate(policies) if policy == "attack") / 2
         deltas.append((ev_points, attack_points))

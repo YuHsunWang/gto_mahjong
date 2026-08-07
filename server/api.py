@@ -30,14 +30,30 @@ if _REPO_ROOT not in sys.path:
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from taimahjong.analysis import AnalysisContext, CalibrationProvider
 from taimahjong.calibration import Calibration
 from taimahjong.config import DEFAULT_GAME_CONFIG, GameConfig
-from taimahjong.danger import OpponentView, RiverEntry, fold_score, parse_river, tenpai_score
+from taimahjong.danger import (
+    DeclaredKong,
+    DeclaredMeld,
+    OpponentView,
+    RiverEntry,
+    fold_score,
+    kong_tiles,
+    meld_tiles,
+    parse_river,
+    tenpai_score,
+)
 from taimahjong.endgame import EndgamePosition, generate_endgame_position
-from taimahjong.ev import EVRankEntry, TileAccounting, ev_rank, remaining_draws
+from taimahjong.ev import (
+    EVRankEntry,
+    TileAccounting,
+    ev_rank,
+    paired_delta_moments,
+    remaining_draws,
+)
 from taimahjong.quiz import QuizGrade, QuizPosition, explain, generate_position, grade
 from taimahjong.scoring import WinContext, score_hand
 from taimahjong.tiles import parse_tiles
@@ -102,7 +118,7 @@ def _opponent_discard_counts(opponent: OpponentView) -> tuple[int, ...]:
 def _opponent_holding_counts(opponent: OpponentView) -> tuple[int, ...]:
     counts = [0] * 34
     for meld in opponent.melds:
-        for tile in meld:
+        for tile in meld_tiles(meld):
             counts[tile] += 1
     return tuple(counts)
 
@@ -130,6 +146,31 @@ def _river_payload(river) -> list[dict[str, Any]]:
     return [{"tile": entry.tile, "origin": entry.origin} for entry in river]
 
 
+def _meld_detail_payload(meld) -> dict[str, Any]:
+    detail = meld if isinstance(meld, DeclaredMeld) else None
+    return {
+        "tiles": list(meld_tiles(meld)),
+        "called_tile": None if detail is None else detail.called_tile,
+        "called_from_seat": None if detail is None else detail.called_from_seat,
+        "called_from_discard_number": (
+            None if detail is None else detail.called_from_discard_number
+        ),
+    }
+
+
+def _kong_detail_payload(kong) -> dict[str, Any]:
+    tile, concealed = kong_tiles(kong)
+    detail = kong if isinstance(kong, DeclaredKong) else None
+    return {
+        "tile": tile,
+        "concealed": concealed,
+        "called_from_seat": None if detail is None else detail.called_from_seat,
+        "called_from_discard_number": (
+            None if detail is None else detail.called_from_discard_number
+        ),
+    }
+
+
 def _position_payload(position: QuizPosition) -> dict[str, Any]:
     return {
         "seed": position.seed,
@@ -138,12 +179,21 @@ def _position_payload(position: QuizPosition) -> dict[str, Any]:
         "drawn_tile": position.drawn_tile,
         "hand": list(position.hand),
         "own_river": _river_payload(position.own_river),
-        "own_melds": [list(meld) for meld in position.own_melds],
+        "own_melds": [list(meld_tiles(meld)) for meld in position.own_melds],
+        "own_meld_details": [
+            _meld_detail_payload(meld) for meld in position.own_melds
+        ],
+        "own_kong_details": [
+            _kong_detail_payload(kong) for kong in position.own_kongs
+        ],
         "opponents": [
             {
                 "seat": opponent.seat,
                 "river": _river_payload(opponent.river),
-                "melds": [list(meld) for meld in opponent.melds],
+                "melds": [list(meld_tiles(meld)) for meld in opponent.melds],
+                "meld_details": [
+                    _meld_detail_payload(meld) for meld in opponent.melds
+                ],
                 "declared": opponent.declared,
                 "declared_at": opponent.declared_at,
                 "tenpai_estimate": opponent.tenpai_estimate,
@@ -164,7 +214,7 @@ def _position_payload(position: QuizPosition) -> dict[str, Any]:
 
 
 def _entry_payload(entry: EVRankEntry) -> dict[str, Any]:
-    return {
+    payload = {
         "discard": entry.discard,
         "is_fold": entry.is_fold,
         "label": entry.label,
@@ -174,13 +224,53 @@ def _entry_payload(entry: EVRankEntry) -> dict[str, Any]:
         "p_draw": entry.p_draw,
         "mean_win_value": entry.mean_win_value,
         "risk_ev": entry.risk_ev,
+        "sample_count": entry.sample_count,
+        "win_count": entry.win_count,
+        "value_sum": entry.value_sum,
+        "value_sumsq": entry.value_sum_squares,
+        "se": entry.standard_error,
+        "ci95": [entry.ci95_low, entry.ci95_high],
     }
+    if entry.action_plan is not None:
+        payload["action_plan"] = {
+            "first_discard": entry.action_plan.first_discard,
+            "safe_inventory": list(entry.action_plan.safe_inventory),
+            "principles": list(entry.action_plan.principles),
+        }
+    return payload
+
+
+def _top_gap_payload(entries: tuple[EVRankEntry, ...] | list[EVRankEntry]) -> dict[str, Any] | None:
+    ranked = sorted(entries, key=lambda entry: (-entry.net_ev, entry.discard))
+    if len(ranked) < 2:
+        return None
+    moments = paired_delta_moments(ranked[0], ranked[1])
+    payload = moments.payload()
+    effect_small = abs(moments.mean) < 0.10
+    payload.update({
+        "top_discard": ranked[0].discard,
+        "top_is_fold": ranked[0].is_fold,
+        "runner_up_discard": ranked[1].discard,
+        "runner_up_is_fold": ranked[1].is_fold,
+        "effect_threshold": 0.10,
+        "effect_small": effect_small,
+        "wording": (
+            "uncertain"
+            if moments.crosses_zero
+            else "marginal"
+            if effect_small
+            else "clear"
+        ),
+    })
+    return payload
 
 
 def _grade_payload(result: QuizGrade) -> dict[str, Any]:
     return {
         "verdict": result.verdict,
         "marginal": result.marginal,
+        "ranking_uncertain": result.ranking_uncertain,
+        "ranking_state": result.ranking_state,
         "ev_delta": result.ev_delta,
         "ev_loss": result.ev_loss,
         "refined_sims": result.refined_sims,
@@ -188,6 +278,12 @@ def _grade_payload(result: QuizGrade) -> dict[str, Any]:
         "best": _entry_payload(result.best),
         "chosen": _entry_payload(result.chosen),
         "ranked": [_entry_payload(entry) for entry in result.ranked],
+        "defense_policy": (
+            None
+            if result.defense_policy is None
+            else _entry_payload(result.defense_policy)
+        ),
+        "top1_vs_top2": _top_gap_payload(result.ranked),
         "explain": explain(result),
     }
 
@@ -198,7 +294,11 @@ def _grade_payload(result: QuizGrade) -> dict[str, Any]:
 
 # 底/台 payout scheme. Absent → the house default (底3台1). A caller may send
 # the preset id or the exact pair; no third product scheme is accepted.
-class SchemeRequest(BaseModel):
+class ApiRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class SchemeRequest(ApiRequest):
     scheme: str | None = None
     base_units: int | None = None
     tai_units: int | None = None
@@ -288,6 +388,11 @@ def endgame_new(request: SeedRequest) -> dict[str, Any]:
     return {
         "position": _position_payload(drill.position),
         "tag": drill.tag,
+        "defense_policy": (
+            None
+            if drill.defense_policy is None
+            else _entry_payload(drill.defense_policy)
+        ),
         **_analysis_payload(analysis),
     }
 
@@ -522,16 +627,33 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
 # Stateless analysis: EV ranking and hand scoring
 
 
-class EvRankRequest(SchemeRequest):
-    hand: str
+class EvOpponentRequest(BaseModel):
     river: str = ""
     melds: str = ""
     declared_at: int | None = None
+    # Whether the modeled opponent is the dealer. Settlement always treats one
+    # seat as the dealer, so leaving this unset does not remove the premium —
+    # it lands on whichever seat the sampler filled first, and the defensive
+    # loss estimate then prices that same opponent as a non-dealer.
+    is_dealer: bool = False
+    dealer_streak: int = Field(default=0, ge=0, le=32)
+
+
+class EvRankRequest(SchemeRequest):
+    hand: str
+    # Legacy top-level fields remain the exact one-opponent wire format.
+    river: str = ""
+    melds: str = ""
+    declared_at: int | None = None
+    is_dealer: bool = False
+    dealer_streak: int = Field(default=0, ge=0, le=32)
+    opponents: list[EvOpponentRequest] = Field(default_factory=list, max_length=3)
     visible: str = ""
-    turns: int = 0  # 0 = derive from wall_remaining or the visible pool
-    wall_remaining: int | None = None
-    sims: int = 400
+    turns: int = Field(default=0, ge=0, le=24)  # 0 = derive from wall_remaining or the visible pool
+    wall_remaining: int | None = Field(default=None, ge=0, le=136)
+    sims: int = Field(default=400, ge=1, le=5_000)
     seed: int = 7
+    exhaustive: bool = False
 
 
 class ScoreRequest(SchemeRequest):
@@ -553,19 +675,43 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
     def run() -> dict[str, Any]:
         analysis = _analysis_context(request)
         counts = parse_tiles(request.hand)
-        opponent: OpponentView | None = None
-        if request.river or request.melds or request.declared_at is not None:
-            if not request.river:
+
+        def build_opponent(source: EvRankRequest | EvOpponentRequest) -> OpponentView:
+            if not source.river:
                 raise ValueError("opponent state requires the opponent's river")
-            opponent = OpponentView(parse_river(request.river), _parse_melds(request.melds), request.declared_at)
+            opponent = OpponentView(
+                parse_river(source.river),
+                _parse_melds(source.melds),
+                source.declared_at,
+                is_dealer=source.is_dealer,
+                dealer_streak=source.dealer_streak if source.is_dealer else 0,
+            )
             opponent.validate()
+            return opponent
+
+        legacy_present = bool(
+            request.river
+            or request.melds
+            or request.declared_at is not None
+            or request.is_dealer
+        )
+        if request.opponents and legacy_present:
+            raise ValueError("use either legacy opponent fields or opponents, not both")
+        opponents = (
+            [build_opponent(source) for source in request.opponents]
+            if request.opponents
+            else [build_opponent(request)] if legacy_present else []
+        )
         other_out_of_hands = (0,) * 34 if not request.visible.strip() else parse_tiles(request.visible)
         accounting = TileAccounting(
             _add_counts(
                 other_out_of_hands,
-                _opponent_discard_counts(opponent) if opponent else (0,) * 34,
+                *(_opponent_discard_counts(opponent) for opponent in opponents),
             ),
-            _opponent_holding_counts(opponent) if opponent else (0,) * 34,
+            _add_counts(*(
+                _opponent_holding_counts(opponent)
+                for opponent in opponents
+            )),
         )
         visible = accounting.visible
         if request.wall_remaining is not None and request.wall_remaining < 0:
@@ -577,21 +723,40 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
         else:
             turns = remaining_draws(counts, accounting)
         entries = ev_rank(
-            counts, [] if opponent is None else [opponent], visible,
+            counts, opponents, visible,
             turns=turns, sims=request.sims, seed=request.seed,
             calibration=analysis.calibration.calibration,
             scheme=analysis.game.scheme,
+            exhaustive=request.exhaustive,
         )
         payload: dict[str, Any] = {
             "turns": turns,
             "entries": [_entry_payload(entry) for entry in entries],
+            "exhaustive": request.exhaustive,
+            "candidate_scope": (
+                "all_legal_discards"
+                if request.exhaustive
+                else "confidence_bound_screened"
+            ),
+            "top1_vs_top2": _top_gap_payload(entries),
             **_analysis_payload(analysis),
         }
-        if opponent is not None:
+        if opponents and not request.opponents:
+            opponent = opponents[0]
             payload["opponent"] = {
                 "tenpai_estimate": tenpai_score(opponent, len(opponent.river)).score,
                 "fold_estimate": fold_score(opponent, []),
             }
+        elif opponents:
+            payload["opponents"] = [
+                {
+                    "tenpai_estimate": tenpai_score(
+                        opponent, len(opponent.river),
+                    ).score,
+                    "fold_estimate": fold_score(opponent, []),
+                }
+                for opponent in opponents
+            ]
         return payload
 
     return _engine(run)
@@ -601,6 +766,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
 def score_endpoint(request: ScoreRequest) -> dict[str, Any]:
     def run() -> dict[str, Any]:
         config = _game_config(request)
+        melds = tuple(_parse_melds(request.melds))
         context = WinContext(
             winning_tile=_tile_from_compact(request.win_tile),
             self_draw=request.self_draw,
@@ -609,10 +775,11 @@ def score_endpoint(request: ScoreRequest) -> dict[str, Any]:
             migi_declared=request.migi,
             heavenly=request.heavenly,
             earthly=request.earthly,
+            exposed_melds=len(melds),
             round_wind=None if request.round_wind is None else _tile_from_compact(request.round_wind),
             seat_wind=None if request.seat_wind is None else _tile_from_compact(request.seat_wind),
         )
-        result = score_hand(parse_tiles(request.hand), tuple(_parse_melds(request.melds)), context)
+        result = score_hand(parse_tiles(request.hand), melds, context)
         return {
             "items": [{"name": name, "tai": tai} for name, tai in result.items],
             "total_tai": result.total_tai,
@@ -630,7 +797,7 @@ def score_endpoint(request: ScoreRequest) -> dict[str, Any]:
 # Carlo, so it is fast and deterministic.
 
 
-class UkeireRequest(BaseModel):
+class UkeireRequest(ApiRequest):
     hand: str
     melds_declared: int = 0
     visible: str = ""

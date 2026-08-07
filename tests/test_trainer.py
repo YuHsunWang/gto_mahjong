@@ -2,13 +2,17 @@
 
 import pytest
 
+from taimahjong.config import DEFAULT_RULES, RulesConfig
+from taimahjong.danger import DeclaredKong, DeclaredMeld
 from taimahjong.quiz import grade
 from taimahjong.trainer import (
+    CallOption,
     KongOption,
     TrainerCallDecision,
     TrainerDecision,
     TrainerKongDecision,
     TrainerOutcome,
+    _human_call_options,
     _outcome,
     _human_kong_options,
     evaluate_call,
@@ -85,6 +89,99 @@ def test_trainer_validates_arguments():
 
 # --- Phase 2a: pon/chi call decisions ---
 
+def test_human_is_offered_legal_pon_that_does_not_improve_shanten():
+    from taimahjong.selfplay import Player, _cached_analysis, _cached_shanten
+    from taimahjong.tiles import parse_tiles
+
+    hand = parse_tiles("449m1124456p4578s13z")
+    player = Player("attack", hand=list(hand))
+    tile = next(index for index, count in enumerate(parse_tiles("4p")) if count)
+    post_call = list(hand)
+    post_call[tile] -= 2
+
+    assert _cached_analysis(tuple(post_call), 1, (0,) * 34)[0].shanten_after == _cached_shanten(hand, 0)
+    assert CallOption("pon", (tile, tile, tile), (tile, tile)) in _human_call_options(
+        player, tile, is_next_seat=False,
+    )
+
+
+def test_human_is_offered_open_kong_on_opponents_discard():
+    from taimahjong.selfplay import Player
+    from taimahjong.tiles import parse_tiles
+
+    hand = parse_tiles("11123456m123p123s11z")
+    player = Player("attack", hand=list(hand))
+    tile = next(index for index, count in enumerate(parse_tiles("1m")) if count)
+
+    assert CallOption("kong", (tile, tile, tile, tile), (tile, tile, tile)) in _human_call_options(
+        player, tile, is_next_seat=False,
+    )
+
+
+def test_open_kong_call_can_be_evaluated_and_graded(monkeypatch):
+    from dataclasses import replace
+
+    import taimahjong.trainer as trainer
+    from taimahjong.selfplay import _cached_shanten
+    from taimahjong.tiles import parse_tiles
+
+    hand = parse_tiles("11123456m123p123s11z")
+    tile = next(index for index, count in enumerate(parse_tiles("1m")) if count)
+    position = next(play_trainer(1)).position
+    position = replace(
+        position,
+        hand=hand,
+        own_melds=(),
+        own_kongs=(),
+        public_counts=tuple(1 if index == tile else 0 for index in range(34)),
+        visible_counts=hand,
+        shanten=_cached_shanten(hand, 0),
+        draws_remaining=1,
+    )
+    decision = TrainerCallDecision(
+        position,
+        tile,
+        discarder=1,
+        options=(CallOption("kong", (tile, tile, tile, tile), (tile, tile, tile)),),
+    )
+    monkeypatch.setattr(trainer.quiz, "EV_SIMS", 1)
+    monkeypatch.setattr(trainer.quiz, "REFINE_SIMS", 2)
+    monkeypatch.setattr(trainer.quiz, "ESCALATE_SIMS", 3)
+
+    evaluation = evaluate_call(decision, seed=41)
+    other_choice = None if evaluation.best_index == 0 else 0
+
+    assert len(evaluation.option_evs) == 1
+    assert evaluation.verdict_for(other_choice).verdict in {
+        "best", "good", "inaccuracy", "mistake",
+    }
+
+
+def test_taking_open_kong_draws_replacement_and_records_kong():
+    gen = play_trainer(79, human_seat=0)
+    item = next(gen)
+    while not isinstance(item, TrainerCallDecision):
+        choice = _discard_drawn(item.position) if isinstance(item, TrainerDecision) else None
+        item = gen.send(choice)
+
+    option_index = next(
+        index for index, option in enumerate(item.options) if option.kind == "kong"
+    )
+    kong_tile = item.offered_tile
+    discarder = item.discarder
+    item = gen.send(option_index)
+    if isinstance(item, TrainerKongDecision):
+        item = gen.send(None)
+
+    assert isinstance(item, TrainerDecision)
+    assert item.position.drawn_tile is not None
+    assert item.position.own_kongs == ((kong_tile, False),)
+    kong = item.position.own_kongs[0]
+    assert isinstance(kong, DeclaredKong)
+    assert kong.called_from_seat == discarder
+    assert kong.called_from_discard_number == 3
+
+
 def _first_call(seed_range=range(1, 20)):
     """Return the first TrainerCallDecision offered, passing everything before."""
     for seed in seed_range:
@@ -101,7 +198,7 @@ def test_trainer_offers_and_evaluates_call_decisions():
     decision = _first_call()
     assert decision is not None, "expected a call decision in seeds 1-19"
     assert decision.options, "a call decision must offer at least one legal call"
-    assert all(option.kind in {"pon", "chi"} for option in decision.options)
+    assert all(option.kind in {"kong", "pon", "chi"} for option in decision.options)
     # Every consumed tile is actually held; the meld includes the offered tile.
     for option in decision.options:
         for consumed in option.consumed:
@@ -132,13 +229,16 @@ def test_evaluate_call_is_deterministic_and_refines_best_and_chosen():
 
 
 def test_call_ev_credits_dealer_tai_for_dealer_seat():
-    # Seat 0 is the dealer, so a win there is worth an extra 莊 tai. The call-EV
-    # path (pass/option value) must credit it just like the discard grader does;
-    # a regression that drops the dealer flag understates the human's win EV and
-    # biases the pass-vs-call ev_delta that decides borderline call verdicts.
-    from taimahjong.ev import WinValueContext, estimate_win_value
-    from taimahjong.quiz import _evaluation_seed
-    from taimahjong.scoring import WinContext
+    # Seat 0 is the dealer, so every payment leg between the dealer and anyone
+    # else carries the 莊 premium. The call-EV path (pass/option value) must
+    # price it just like the discard grader does; a regression that drops the
+    # dealer flag biases the pass-vs-call ev_delta that decides borderline call
+    # verdicts. Asserting the flag *reaches* the valuation is the point — not
+    # which way it moves, which depends on how often this hand wins.
+    from dataclasses import replace
+
+    from taimahjong.ev import WinValueContext, evaluate_pass
+    from taimahjong.quiz import _evaluation_seed, _score_template
     from taimahjong.trainer import _pass_ev
 
     decision = _first_call()
@@ -146,39 +246,57 @@ def test_call_ev_credits_dealer_tai_for_dealer_seat():
     position = decision.position
     assert position.is_dealer, "human_seat 0 is the dealer in the trainer model"
     base = _evaluation_seed(position)
+    template = _score_template(position)
+    assert template.context.dealer is True
 
-    def win_ev(dealer: bool) -> float:
-        return estimate_win_value(
-            position.hand, position.draws_remaining, len(position.own_melds),
-            position.public_counts, 200, base,
-            WinValueContext(WinContext(winning_tile=0, dealer=dealer), position.own_melds),
-        ).expected_win_ev
+    def pass_ev(context: WinValueContext) -> float:
+        return evaluate_pass(
+            position.hand,
+            [opponent.view() for opponent in position.opponents],
+            position.public_counts,
+            len(position.own_melds) + len(position.own_kongs),
+            position.draws_remaining,
+            200,
+            base,
+            context,
+        ).net_ev
 
-    dealer_ev, non_dealer_ev = win_ev(True), win_ev(False)
-    assert dealer_ev > non_dealer_ev, "this position has win chance, so the 莊 tai must move the EV"
-    assert _pass_ev(decision, base, 200) == dealer_ev
+    stripped = WinValueContext(
+        replace(template.context, dealer=False, dealer_streak=0),
+        position.own_melds,
+        position.own_kongs,
+    )
+    assert _pass_ev(decision, base, 200) == pass_ev(template)
+    assert pass_ev(template) != pass_ev(stripped), (
+        "dropping the dealer flag must change the pass valuation"
+    )
 
 
-def test_call_ev_credits_dealer_streak_for_dealer_seat():
+def test_dealer_streak_is_priced_on_every_payment_leg():
+    # 連莊拉莊 is bilateral: the dealer collects the premium on a win and pays it
+    # on every leg they lose. Settlement adds it per leg and nothing about play
+    # depends on the streak, so under one seed the pass EV must be exactly
+    # linear in the streak. A premium applied to only some legs — or dropped on
+    # the paying side — breaks that linearity even when the sign looks right.
     from dataclasses import replace
 
-    from taimahjong.ev import estimate_win_value
-    from taimahjong.quiz import _evaluation_seed, _score_template
+    from taimahjong.quiz import _evaluation_seed
     from taimahjong.trainer import _pass_ev
 
     decision = _first_call()
     assert decision is not None
-    position = replace(decision.position, dealer_streak=2)
-    streak_decision = replace(decision, position=position)
-    base = _evaluation_seed(position)
-    expected = estimate_win_value(
-        position.hand, position.draws_remaining,
-        len(position.own_melds) + len(position.own_kongs), position.public_counts,
-        200, base, _score_template(position),
-    ).expected_win_ev
+    base = _evaluation_seed(decision.position)
+    evs = []
+    for streak in (0, 2, 4):
+        position = replace(decision.position, dealer_streak=streak)
+        assert position.is_dealer
+        evs.append(_pass_ev(replace(decision, position=position), base, 200))
 
-    assert _pass_ev(streak_decision, base, 200) == expected
-    assert _score_template(position).context.dealer_streak == 2
+    assert len(set(evs)) == 3, "each 連莊 increment must move the valuation"
+    first, second = evs[1] - evs[0], evs[2] - evs[1]
+    assert first == pytest.approx(second), (
+        f"streak must price linearly per leg; got steps {first} and {second}"
+    )
 
 
 def test_taking_a_call_opens_hand_and_game_terminates():
@@ -186,13 +304,19 @@ def test_taking_a_call_opens_hand_and_game_terminates():
         gen = play_trainer(seed, human_seat=0)
         item = next(gen)
         took = saw_open = False
+        called_from = None
         while not isinstance(item, TrainerOutcome):
             if isinstance(item, TrainerCallDecision) and not took:
                 took = True
+                called_from = (item.discarder, item.offered_tile)
                 item = gen.send(0)  # take the first offered call
             elif isinstance(item, TrainerDecision):
                 if took and item.position.own_melds:
                     saw_open = True
+                    meld = item.position.own_melds[-1]
+                    assert isinstance(meld, DeclaredMeld)
+                    assert (meld.called_from_seat, meld.called_tile) == called_from
+                    assert meld.called_from_discard_number > 0
                 item = gen.send(_discard_drawn(item.position))
             else:
                 item = gen.send(None)
@@ -218,9 +342,9 @@ def test_trainer_rejects_invalid_call_choice():
 
 # --- M6: self-draw kong decisions ---
 
-def test_kong_options_are_legal_and_shanten_safe():
-    """Only four-in-hand 暗槓 and a pon's drawn fourth 加槓 may be offered, and
-    either must preserve or improve shanten."""
+def test_human_kong_options_use_legality_without_a_shanten_filter():
+    """Four-in-hand 暗槓 and a pon's fourth 加槓 are offered even when the
+    teaching evaluation may later judge the legal action unsound."""
     from taimahjong.selfplay import Player, _cached_shanten, _declared
 
     concealed = Player("attack")
@@ -239,7 +363,7 @@ def test_kong_options_are_legal_and_shanten_safe():
     unsound = Player("attack")
     for tile, count in enumerate((4, 3, 3, 3, 3, 1)):
         unsound.hand[tile] = count
-    assert _human_kong_options(unsound) == ()
+    assert _human_kong_options(unsound) == (KongOption("concealed", 0, 0),)
 
 
 def test_kong_verdict_is_adaptive_and_deterministic(monkeypatch):
@@ -305,14 +429,20 @@ def test_human_added_kong_can_be_robbed_and_skip_reaches_discard(monkeypatch):
 
     forced = (KongOption("added", 0, 0),)
     monkeypatch.setattr(trainer, "_human_kong_options", lambda player: forced)
-    monkeypatch.setattr(trainer, "_settlement", lambda *args, **kwargs: ((-5, 5, 0, 0), 5))
 
     skipped = play_trainer(1)
     item = next(skipped)
     assert isinstance(item, TrainerKongDecision)
     assert isinstance(skipped.send(None), TrainerDecision)
 
-    monkeypatch.setattr(trainer, "_robbing_winner", lambda players, konger, tile: 1)
+    monkeypatch.setattr(
+        trainer, "_robbing_winners",
+        lambda players, konger, tile, rules: (1,),
+    )
+    monkeypatch.setattr(
+        trainer, "_settle_ron_winners",
+        lambda *args, **kwargs: ((-5, 5, 0, 0), (5,)),
+    )
     robbed = play_trainer(1)
     item = next(robbed)
     assert isinstance(item, TrainerKongDecision)
@@ -340,6 +470,27 @@ def test_streak_resets_and_rotates_human_on_dealer_loss():
     # this is how the player comes to sit in each relation to the dealer.
     out = _outcome("ron", 1, 2, human_seat=3, deltas=(0, 5, -5, 0), turns=12, dealer_streak=3)
     assert out.next_dealer_streak == 0 and out.next_human_seat == 0
+
+
+def test_dealer_continuation_rules_are_explicit_and_applied():
+    rules = RulesConfig(
+        rules_id="no-repeat-v1",
+        dealer_continues_on_draw=False,
+        dealer_continues_on_win=False,
+    )
+    drawn = _outcome(
+        "draw", None, None, human_seat=2, deltas=(0, 0, 0, 0),
+        turns=18, dealer_streak=2, rules=rules,
+    )
+    dealer_win = _outcome(
+        "tsumo", 0, None, human_seat=2, deltas=(3, -1, -1, -1),
+        turns=10, dealer_streak=2, rules=rules,
+    )
+
+    assert drawn.next_dealer_streak == dealer_win.next_dealer_streak == 0
+    assert drawn.next_human_seat == dealer_win.next_human_seat == 3
+    assert DEFAULT_RULES.dealer_continues_on_draw
+    assert DEFAULT_RULES.dealer_continues_on_win
 
 
 def test_streak_raises_dealer_opponent_value_in_a_trainer_position():

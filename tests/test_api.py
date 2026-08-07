@@ -7,6 +7,9 @@ from server import api
 from taimahjong import endgame
 
 
+pytestmark = pytest.mark.timeout(30)
+
+
 @pytest.fixture(autouse=True)
 def fast_budgets(monkeypatch):
     """Shrink the Monte Carlo budgets so endpoint flows stay fast; the verdict
@@ -18,10 +21,22 @@ def fast_budgets(monkeypatch):
     # into (or out of) this module's tiny-budget runs.
     from taimahjong import quiz
 
-    for cache in (api._quiz_position, api._endgame_position, quiz._rank_cached, api._calibration_context):
+    for cache in (
+        api._quiz_position,
+        api._endgame_position,
+        quiz._rank_cached,
+        quiz._display_rank_cached,
+        api._calibration_context,
+    ):
         cache.cache_clear()
     yield
-    for cache in (api._quiz_position, api._endgame_position, quiz._rank_cached, api._calibration_context):
+    for cache in (
+        api._quiz_position,
+        api._endgame_position,
+        quiz._rank_cached,
+        quiz._display_rank_cached,
+        api._calibration_context,
+    ):
         clear = getattr(cache, "cache_clear", None)
         if clear:
             clear()
@@ -44,6 +59,8 @@ def test_quiz_new_then_grade_roundtrip(client):
     assert sum(position["hand"]) in (17, 14, 11, 8, 5, 2)  # 17 minus 3 per declared meld
     assert position["wall_remaining"] > 0
     assert len(position["opponents"]) == 3
+    assert all(isinstance(opponent["hand_count"], int) for opponent in position["opponents"])
+    assert all(opponent["hand_count"] >= 0 for opponent in position["opponents"])
     assert created.json()["scheme"]["id"] == "3-1"
     assert created.json()["domain"] == "bot"
     assert created.json()["calibration_id"]
@@ -53,6 +70,8 @@ def test_quiz_new_then_grade_roundtrip(client):
     assert graded.status_code == 200
     grade = graded.json()["grade"]
     assert grade["verdict"] in {"best", "good", "inaccuracy", "mistake"}
+    assert grade["ranking_state"] in {"clear", "marginal", "uncertain"}
+    assert grade["ranking_uncertain"] is (grade["ranking_state"] != "clear")
     assert grade["ranked"] and not any(entry["is_fold"] for entry in grade["ranked"])
     assert isinstance(grade["explain"], str) and grade["explain"]
     assert graded.json()["scheme"]["id"] == "3-1"
@@ -65,18 +84,40 @@ def test_quiz_grade_rejects_a_tile_not_in_hand(client):
     assert response.status_code == 422
 
 
-def test_quiz_grade_honors_the_scoring_scheme(client):
-    position = client.post("/api/quiz/new", json={"seed": 1, "scheme": "3-1"}).json()["position"]
-    tile = _some_hand_tile(position)
-    body = {"seed": position["seed"], "tile": tile}
-    default = client.post("/api/quiz/grade", json=body).json()["grade"]
-    three_one = client.post("/api/quiz/grade", json={**body, "base_units": 3, "tai_units": 1}).json()["grade"]
-    five_two = client.post("/api/quiz/grade", json={**body, "base_units": 5, "tai_units": 2}).json()["grade"]
-    top = lambda grade: grade["ranked"][0]["net_ev"]
-    # An absent scheme means the house default (底3台1); 底5台2 must move the EV.
+def test_quiz_grade_honors_the_scoring_scheme(client, monkeypatch):
+    # Observed terminal payments need enough trials to include a non-draw
+    # outcome; keep the module-wide tiny budget for every other API test.
+    monkeypatch.setattr("taimahjong.quiz.REFINE_SIMS", 24)
+    from taimahjong import quiz
+    quiz._display_rank_cached.cache_clear()
+
+    # Both quiz endpoints select the drill *under the requested scheme* — the web
+    # client re-generates on a scheme switch for exactly that reason
+    # (static/js/quiz.js) — so a tile taken from the 底3台1 drill need not even
+    # exist in the 底5台2 one. Ask each scheme for its own drill.
+    def graded(extra: dict) -> dict:
+        position = client.post("/api/quiz/new", json={"seed": 1, **extra}).json()["position"]
+        body = {"seed": position["seed"], "tile": _some_hand_tile(position), **extra}
+        return client.post("/api/quiz/grade", json=body).json()
+
+    default = graded({})
+    three_one = graded({"base_units": 3, "tai_units": 1})
+    top = lambda response: response["grade"]["ranked"][0]["net_ev"]
+    # An absent scheme means the house default (底3台1), down to the same drill.
+    assert default["scheme"]["id"] == three_one["scheme"]["id"] == "3-1"
     assert top(default) == pytest.approx(top(three_one))
-    assert top(five_two) != pytest.approx(top(three_one))
-    assert client.post("/api/quiz/grade", json={**body, "scheme": "5-2"}).json()["scheme"]["id"] == "5-2"
+    assert graded({"base_units": 5, "tai_units": 2})["scheme"]["id"] == "5-2"
+    assert graded({"scheme": "5-2"})["scheme"]["id"] == "5-2"
+
+    # That the unit system actually moves the numbers is asserted on /api/ev/rank,
+    # whose output is a pure function of its request. Comparing two independently
+    # selected drills could not tell "the scheme was applied" apart from "the
+    # drills differ", so such a check would pass even if the scheme were ignored.
+    fixed = {"hand": "123m123p123s11122233z", "turns": 3, "sims": 24, "seed": 5}
+    low = client.post("/api/ev/rank", json={**fixed, "base_units": 3, "tai_units": 1}).json()
+    high = client.post("/api/ev/rank", json={**fixed, "base_units": 5, "tai_units": 2}).json()
+    assert low["scheme"]["id"] == "3-1" and high["scheme"]["id"] == "5-2"
+    assert high["entries"][0]["net_ev"] != pytest.approx(low["entries"][0]["net_ev"])
 
 
 def test_grade_rejects_a_half_specified_scheme(client):
@@ -217,6 +258,32 @@ def test_ev_rank_endpoint_with_opponent(client):
     assert body["domain"] == "bot" and body["fallback_used"] is False
 
 
+def test_ev_rank_endpoint_accepts_three_opponents(client, monkeypatch):
+    captured = {}
+
+    def capture_rank(_hand, opponents, _visible, **_kwargs):
+        captured["opponents"] = opponents
+        return []
+
+    monkeypatch.setattr(api, "ev_rank", capture_rank)
+    response = client.post("/api/ev/rank", json={
+        "hand": "123m123p123s11122233z",
+        "opponents": [
+            {"river": "9m"},
+            {"river": "9p", "melds": "111p"},
+            {"river": "1z", "is_dealer": True, "dealer_streak": 2},
+        ],
+        "turns": 1,
+        "sims": 1,
+    })
+
+    assert response.status_code == 200
+    assert len(captured["opponents"]) == 3
+    assert captured["opponents"][1].melds
+    assert captured["opponents"][2].is_dealer
+    assert len(response.json()["opponents"]) == 3
+
+
 def test_ev_rank_auto_turns_include_hidden_opponent_hands(client):
     response = client.post("/api/ev/rank", json={
         "hand": "123m123p123s11122233z",
@@ -252,6 +319,47 @@ def test_ev_rank_prefers_explicit_wall_remaining(client):
 
 def test_ev_rank_rejects_melds_without_river(client):
     response = client.post("/api/ev/rank", json={"hand": "123m123p123s11122233z", "melds": "111z"})
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sims", 5_001),
+        ("turns", 25),
+        ("wall_remaining", 137),
+        ("sims", 0),
+        ("turns", -1),
+        ("wall_remaining", -1),
+    ],
+)
+def test_ev_rank_rejects_budgets_outside_safe_bounds(client, field, value):
+    response = client.post("/api/ev/rank", json={
+        "hand": "123m123p123s11122233z",
+        "wall_remaining": 0,
+        "sims": 1,
+        field: value,
+    })
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "/api/ev/rank",
+            {"hand": "123m123p123s11122233z", "wall_remaining": 0, "sims": 1},
+        ),
+        (
+            "/api/ukeire",
+            {"hand": "4678s123m789m22p1z", "melds_declared": 1},
+        ),
+    ],
+)
+def test_api_rejects_unknown_request_fields(client, path, payload):
+    response = client.post(path, json={**payload, "unexpected": True})
+
     assert response.status_code == 422
 
 
@@ -292,6 +400,19 @@ def test_score_endpoint_rejects_more_than_four_physical_copies(client):
 
     assert response.status_code == 422
     assert "more than four" in response.json()["detail"]
+
+
+def test_score_endpoint_rejects_impossible_heavenly_context(client):
+    response = client.post("/api/score", json={
+        "hand": "22z",
+        "melds": "123m;456p;789s;111z;555z",
+        "win_tile": "2z",
+        "heavenly": True,
+        "migi": True,
+    })
+
+    assert response.status_code == 422
+    assert "heavenly" in response.json()["detail"]
 
 
 def _tile(text: str) -> int:

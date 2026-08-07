@@ -35,8 +35,10 @@ SHAPE_RIVER_DISCOUNT = 0.3
 # Opponent-state constants.  These are UNCALIBRATED pseudo-probability inputs.
 # Meld count is deliberately the largest tenpai signal: four or five calls
 # leave very little concealed hand to complete.  Turn is the number of
-# opponent discards observed (or the caller's explicitly supplied turn).
-TENPAI_BASE_BY_MELDS = (0.08, 0.24, 0.43, 0.65, 0.84, 0.94)
+# opponent discards observed (or the caller's explicitly supplied turn).  A
+# closed hand with an empty river is the dealt hand, whose true tenpai rate is
+# zero; later closed-hand probability comes from the turn component.
+TENPAI_BASE_BY_MELDS = (0.0, 0.24, 0.43, 0.65, 0.84, 0.94)
 TENPAI_TURN_INCREMENT = 0.018
 TENPAI_TURN_CAP = 18
 TSUMOGIRI_RUN_INCREMENT = 0.08
@@ -57,6 +59,133 @@ TERMINAL_FOLD_WEIGHT = 0.3
 DECLARED_TAI = 8
 
 RIVER_ORIGINS = frozenset(("tsumogiri", "tedashi", "unknown"))
+
+
+MeldTiles = tuple[int, int, int]
+KongTiles = tuple[int, bool]
+
+
+def _is_tile(tile: object) -> bool:
+    return isinstance(tile, int) and not isinstance(tile, bool) and 0 <= tile < 34
+
+
+def _validate_meld_tiles(tiles: object) -> MeldTiles:
+    if not isinstance(tiles, tuple) or len(tiles) != 3 or any(not _is_tile(tile) for tile in tiles):
+        raise ValueError("meld tiles must be a tuple of three tile indices 0 through 33")
+    return tiles
+
+
+def _validate_kong_tiles(value: object) -> KongTiles:
+    if not isinstance(value, tuple) or len(value) != 2:
+        raise ValueError("kong value must be a (tile, concealed) tuple")
+    tile, concealed = value
+    if not _is_tile(tile):
+        raise ValueError("kong tiles must be tile indexes 0-33")
+    if not isinstance(concealed, bool):
+        raise ValueError("kong concealed flags must be booleans")
+    return tile, concealed
+
+
+@dataclass(frozen=True)
+class DeclaredMeld:
+    """A called three-tile set with optional source-discard provenance."""
+
+    tiles: MeldTiles
+    called_tile: int | None = None
+    called_from_seat: int | None = None
+    called_from_discard_number: int | None = None
+
+    def __post_init__(self) -> None:
+        _validate_meld_tiles(self.tiles)
+        call_fields = (
+            self.called_tile,
+            self.called_from_seat,
+            self.called_from_discard_number,
+        )
+        if all(value is None for value in call_fields):
+            return
+        if any(value is None for value in call_fields):
+            raise ValueError("meld call provenance fields must all be null or all be known")
+        if not _is_tile(self.called_tile):
+            raise ValueError("called_tile must be an index from 0 through 33")
+        if self.called_tile not in self.tiles:
+            raise ValueError("called_tile must occur in meld tiles")
+        if (
+            not isinstance(self.called_from_seat, int)
+            or isinstance(self.called_from_seat, bool)
+            or self.called_from_seat not in range(4)
+        ):
+            raise ValueError("called_from_seat must be an absolute seat from 0 through 3")
+        if (
+            not isinstance(self.called_from_discard_number, int)
+            or isinstance(self.called_from_discard_number, bool)
+            or self.called_from_discard_number <= 0
+        ):
+            raise ValueError("called_from_discard_number must be a positive integer")
+
+
+MeldLike = MeldTiles | DeclaredMeld
+
+
+def meld_tiles(value: MeldLike) -> MeldTiles:
+    """Return the legacy three-tile shape for either supported meld value."""
+
+    return value.tiles if isinstance(value, DeclaredMeld) else _validate_meld_tiles(value)
+
+
+@dataclass(frozen=True, eq=False)
+class DeclaredKong:
+    """A declared kong that remains compatible with legacy two-item tuples."""
+
+    tile: int
+    concealed: bool
+    called_from_seat: int | None = None
+    called_from_discard_number: int | None = None
+
+    def __post_init__(self) -> None:
+        _validate_kong_tiles((self.tile, self.concealed))
+        if self.called_from_seat is None and self.called_from_discard_number is None:
+            return
+        if self.called_from_seat is None or self.called_from_discard_number is None:
+            raise ValueError("kong call provenance fields must both be null or both be known")
+        if (
+            not isinstance(self.called_from_seat, int)
+            or isinstance(self.called_from_seat, bool)
+            or self.called_from_seat not in range(4)
+        ):
+            raise ValueError("called_from_seat must be an absolute seat from 0 through 3")
+        if (
+            not isinstance(self.called_from_discard_number, int)
+            or isinstance(self.called_from_discard_number, bool)
+            or self.called_from_discard_number <= 0
+        ):
+            raise ValueError("called_from_discard_number must be a positive integer")
+
+    def __iter__(self):
+        return iter((self.tile, self.concealed))
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index):
+        return (self.tile, self.concealed)[index]
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, DeclaredKong):
+            return (self.tile, self.concealed) == (other.tile, other.concealed)
+        return isinstance(other, tuple) and (self.tile, self.concealed) == other
+
+    def __hash__(self) -> int:
+        return hash((self.tile, self.concealed))
+
+
+KongLike = KongTiles | DeclaredKong
+
+
+def kong_tiles(value: KongLike) -> KongTiles:
+    """Return the legacy ``(tile, concealed)`` shape for a declared kong."""
+
+    return (value.tile, value.concealed) if isinstance(value, DeclaredKong) else _validate_kong_tiles(value)
 
 
 @dataclass(frozen=True)
@@ -83,7 +212,7 @@ class OpponentView:
     """
 
     river: list[int | RiverEntry]
-    melds: list[tuple[int, int, int]]
+    melds: list[MeldLike]
     declared_at: int | None = None
     # Dealer identity of THIS opponent (seat 0 at the table). The shape
     # heuristics in this module stay seat-blind; these fields exist for the
@@ -123,9 +252,7 @@ class OpponentView:
         for entry in self.river:
             public[_river_tile(entry)] += 1
         for meld in self.melds:
-            if not isinstance(meld, tuple) or len(meld) != 3 or any(not _is_tile(tile) for tile in meld):
-                raise ValueError("each opponent meld must be a tuple of three tile indices 0 through 33")
-            for tile in meld:
+            for tile in meld_tiles(meld):
                 public[tile] += 1
         if any(count > 4 for count in public):
             raise ValueError("opponent river and melds cannot contain more than four copies of a tile kind")
@@ -177,10 +304,6 @@ class DangerDiscardAnalysis:
     def tenpai_score(self) -> float:
         """The shared opponent tenpai score retained alongside raw danger."""
         return self.tenpai.score
-
-
-def _is_tile(tile: object) -> bool:
-    return isinstance(tile, int) and not isinstance(tile, bool) and 0 <= tile < 34
 
 
 def _is_river_entry(entry: object) -> bool:
@@ -325,7 +448,7 @@ def _flush_suit(opponent: OpponentView) -> int | None:
     """Return the committed suit when all declared melds are in one suit."""
     if not opponent.melds:
         return None
-    suits = {_numeric_suit(tile) for meld in opponent.melds for tile in meld}
+    suits = {_numeric_suit(tile) for meld in opponent.melds for tile in meld_tiles(meld)}
     if len(suits) != 1 or None in suits:
         return None
     return suits.pop()
@@ -359,7 +482,7 @@ def _validate_inputs(
     for river_entry in opponent.river:
         opponent_public[_river_tile(river_entry)] += 1
     for meld in opponent.melds:
-        for meld_tile in meld:
+        for meld_tile in meld_tiles(meld):
             opponent_public[meld_tile] += 1
     if any(seen[index] < opponent_public[index] for index in range(34)):
         raise ValueError("visible must include the opponent river and melds")
@@ -384,6 +507,23 @@ def danger_score(
     it from feasibility.
     """
     seen, hand = _validate_inputs(tile, opponent, visible, own_hand)
+    return assess_validated_danger(tile, opponent, seen, hand)
+
+
+def assess_validated_danger(
+    tile: int,
+    opponent: OpponentView,
+    seen: tuple[int, ...],
+    hand: tuple[int, ...],
+) -> DangerAssessment:
+    """:func:`danger_score` without the argument checks, for rollout hot paths.
+
+    Terminal rollouts call this once per live opponent per discard — hundreds of
+    thousands of times for a single quiz question — and build both count vectors
+    themselves from state that is already well formed.  Re-validating there costs
+    more than the assessment it guards.  Callers taking counts from outside the
+    engine must go through :func:`danger_score` instead.
+    """
     if opponent.declared_at is not None and any(
         _river_tile(entry) == tile for entry in opponent.river[opponent.declared_at + 1 :]
     ):

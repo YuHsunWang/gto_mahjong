@@ -1,11 +1,9 @@
-// 單手 (quiz) and 殘局 (endgame) drills: one seeded position, one graded
-// discard, heuristic-EV feedback. Both modes share this screen; they differ in
-// API prefix and the endgame push/fold tag.
+// 單手 (quiz) and 殘局 (endgame): one seeded position and one graded discard.
 
 import { post, showError, randomSeed } from './api.js';
-import { feltEl, handEl, computingEl, faceText } from './table.js';
-import { verdictEl, evDetailsEl, bestLineEl, modelScopeEl, VERDICT_LABELS } from './feedback.js';
-import { record } from './stats.js';
+import { feltEl, computingEl, faceText } from './table.js';
+import { reviewRailEl } from './feedback.js';
+import { record, summary } from './stats.js';
 import { schemeToggle, schemeParams } from './scheme.js';
 
 const TAG_LABELS = { attack: '進攻題（推）', defense: '防守題（守）' };
@@ -53,7 +51,7 @@ export function drillScreen(root, { apiBase, mode, title }) {
       const body = await post(`${apiBase}/new`, { seed: requestedSeed, ...schemeParams() });
       position = body.position;
       metadata = body;
-      seed = position.seed; // the generator may advance past the requested seed
+      seed = position.seed;
       tag = body.tag || null;
       phase = 'awaiting';
     } catch (error) {
@@ -71,7 +69,7 @@ export function drillScreen(root, { apiBase, mode, title }) {
       const body = await post(`${apiBase}/grade`, { seed, tile, ...schemeParams() });
       gradeResult = body.grade;
       metadata = body;
-      record(mode, gradeResult.verdict, gradeResult.ev_loss, body.scheme.id);
+      record(mode, gradeResult, body.scheme.id);
       phase = 'feedback';
     } catch (error) {
       showError(error);
@@ -98,6 +96,29 @@ export function drillScreen(root, { apiBase, mode, title }) {
     return row;
   }
 
+  function hint(text) {
+    const el = document.createElement('div');
+    el.className = 'hand-hint';
+    el.textContent = text;
+    return el;
+  }
+
+  function workspace(board, grade = null) {
+    const shell = document.createElement('div');
+    shell.className = 'table-workspace';
+    const session = summary(mode, metadata?.scheme?.id);
+    shell.append(board, reviewRailEl({
+      grade,
+      session,
+      chosenTile,
+      metadata,
+      primaryLabel: 'Questions',
+      primaryValue: session.decisions,
+      showHandLoss: false,
+    }));
+    return shell;
+  }
+
   function render() {
     root.replaceChildren(header());
 
@@ -106,52 +127,48 @@ export function drillScreen(root, { apiBase, mode, title }) {
       return;
     }
 
-    const inFeedback = phase === 'feedback';
-    root.append(feltEl(position));
-
-    // A scheme change regenerates the seeded drill under that fixed analysis
-    // context, so generation, ranking, and grading never mix unit systems.
-    root.append(schemeToggle(() => {
-      generate(seed);
-    }));
-    root.append(modelScopeEl(metadata));
+    root.append(schemeToggle(() => generate(seed)));
+    const board = document.createElement('section');
+    board.className = 'table-board';
 
     if (phase === 'awaiting') {
-      const hint = document.createElement('div');
-      hint.className = 'hand-hint';
-      hint.textContent = '點一張牌切出（再點一次確認；金框為剛摸入）';
-      root.append(hint, handEl(position.hand, { drawnTile: position.drawn_tile, onDiscard: gradeTile, melds: position.own_melds }));
-      root.append(controls());
+      board.append(feltEl(position, {
+        handOptions: { onDiscard: gradeTile },
+      }));
+      board.append(
+        hint('點一張牌切出（再點一次確認；金框為剛摸入）'),
+        controls(),
+      );
+      root.append(workspace(board));
       return;
     }
 
     if (phase === 'grading') {
-      root.append(handEl(position.hand, { drawnTile: position.drawn_tile, marks: { cut: chosenTile }, melds: position.own_melds }));
-      root.append(computingEl(`你切 ${faceText(chosenTile)}，計算 EV 中…`));
+      board.append(feltEl(position, {
+        handOptions: { marks: { cut: chosenTile } },
+      }));
+      board.append(computingEl(`你切 ${faceText(chosenTile)}，計算 net EV 中…`));
+      root.append(workspace(board));
       return;
     }
 
-    if (inFeedback && gradeResult) {
-      const bestTile = gradeResult.best.discard;
-      const showBest = gradeResult.ev_delta > 0 && bestTile !== chosenTile;
-      root.append(handEl(position.hand, {
-        drawnTile: position.drawn_tile,
-        marks: { cut: chosenTile, best: showBest ? bestTile : null },
-        melds: position.own_melds,
+    if (phase === 'feedback' && gradeResult) {
+      const state = gradeResult.ranking_state || 'clear';
+      const topGap = gradeResult.top1_vs_top2;
+      const indistinguishable = state === 'clear' || !topGap
+        ? []
+        : [topGap.top_discard, topGap.runner_up_discard];
+      board.append(feltEl(position, {
+        handOptions: {
+          marks: {
+            cut: chosenTile,
+            modelLeader: state === 'clear' ? gradeResult.best.discard : null,
+            indistinguishable,
+          },
+        },
       }));
-      root.append(verdictEl(gradeResult.verdict, gradeResult.marginal, gradeResult.ev_delta, `你切 ${faceText(chosenTile)}`));
-      if (showBest) {
-        root.append(bestLineEl(`本模型估計切牌：${faceText(bestTile)}（淨 EV ${gradeResult.best.net_ev.toFixed(1)}，綠框標示）`));
-      } else {
-        root.append(bestLineEl(`判定 ${VERDICT_LABELS[gradeResult.verdict]} — 你的選擇不遜於本模型的估計最佳`));
-      }
-      root.append(evDetailsEl(gradeResult.ranked, {
-        chosenTile,
-        bestTile,
-        explain: gradeResult.explain,
-        open: true,
-      }));
-      root.append(controls());
+      board.append(controls());
+      root.append(workspace(board, gradeResult));
     }
   }
 

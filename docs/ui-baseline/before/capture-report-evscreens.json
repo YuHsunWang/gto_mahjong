@@ -1,0 +1,128 @@
+[
+  {
+    "label": "quiz-feedback/phone-compact-320x568",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-feedback/phone-375x812",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-feedback/phone-390x844",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-feedback/phone-landscape-844x390",
+    "blockedLandscape": true,
+    "evCols": null,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-feedback/tablet-portrait-768x1024",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-feedback/tablet-landscape-1024x768",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "quiz-feedback/desktop-1440x900",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-feedback/phone-compact-320x568",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-feedback/phone-375x812",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-feedback/phone-390x844",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-feedback/phone-landscape-844x390",
+    "blockedLandscape": true,
+    "evCols": null,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-feedback/tablet-portrait-768x1024",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-feedback/tablet-landscape-1024x768",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "endgame-feedback/desktop-1440x900",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/phone-compact-320x568",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/phone-375x812",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/phone-390x844",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/phone-landscape-844x390",
+    "blockedLandscape": true,
+    "evCols": null,
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/tablet-portrait-768x1024",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/tablet-landscape-1024x768",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  },
+  {
+    "label": "analyze-results/desktop-1440x900",
+    "blockedLandscape": false,
+    "evCols": 8,
+    "pageErrors": []
+  }
+]

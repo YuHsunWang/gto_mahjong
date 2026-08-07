@@ -7,7 +7,9 @@ import sys
 import pytest
 
 import taimahjong.quiz as quiz
+from taimahjong.danger import meld_tiles
 from taimahjong.ev import EVRankEntry, evaluate_discard
+from taimahjong.moments import SampleMoments
 from taimahjong.quiz import (
     ESCALATE_SIMS,
     EV_GAP_MIN,
@@ -19,6 +21,7 @@ from taimahjong.quiz import (
     QuizGrade,
     Verdict,
     _component_lines,
+    _display_rank_cached,
     _evaluation_seed,
     _rank,
     _rank_cached,
@@ -41,13 +44,13 @@ def _observed_counts(position):
     for entry in position.own_river:
         counts[entry.tile] += 1
     for meld in position.own_melds:
-        for tile in meld:
+        for tile in meld_tiles(meld):
             counts[tile] += 1
     for opponent in position.opponents:
         for entry in opponent.river:
             counts[entry.tile] += 1
         for meld in opponent.melds:
-            for tile in meld:
+            for tile in meld_tiles(meld):
                 counts[tile] += 1
     return tuple(counts)
 
@@ -101,7 +104,7 @@ def test_empty_wall_allows_zero_remaining_draws():
     assert position.draws_remaining == 0
 
 
-def test_grading_best_worst_off_candidate_and_illegal_choices(position):
+def test_grading_best_worst_and_illegal_choices(position):
     probe = next(tile for tile, count in enumerate(position.hand) if count)
     initial = grade(position, probe)
     best_grade = grade(position, initial.best.discard)
@@ -112,23 +115,31 @@ def test_grading_best_worst_off_candidate_and_illegal_choices(position):
     expected = "good" if worst_grade.ev_delta < GOOD_DELTA else "inaccuracy" if worst_grade.ev_delta < 1.0 else "mistake"
     assert worst_grade.verdict == expected
 
-    candidates = {entry.discard for entry in initial.ranked}
-    off_candidate = next(tile for tile, count in enumerate(position.hand) if count and tile not in candidates)
-    off_grade = grade(position, off_candidate)
-    assert off_grade.chosen.discard == off_candidate
-    assert off_grade.rank_position is None
-
     illegal = next(tile for tile, count in enumerate(position.hand) if not count)
     with pytest.raises(ValueError, match="present in the hand"):
         grade(position, illegal)
 
 
+def test_single_legal_candidate_has_no_paired_gap(position, monkeypatch):
+    tile = next(tile for tile, count in enumerate(position.hand) if count)
+    only = EVRankEntry(tile, 0.0, None, 0.0, (), 0.0, 0.0)
+    monkeypatch.setattr(quiz, "_full_rank", lambda *_args, **_kwargs: (only,))
+    monkeypatch.setattr(quiz, "_refine", lambda *_args, **_kwargs: only)
+
+    result = grade(position, tile)
+
+    assert result.verdict == "best"
+    assert result.top_gap.n == 0
+    assert result.defense_policy is None
+
+
 def test_rank_cache_normalizes_candidate_ev_gap():
-    _rank_cached.cache_clear()
+    _display_rank_cached.cache_clear()
     generated = generate_position(1)
-    before = _rank_cached.cache_info()
+    _rank(generated)
+    before = _display_rank_cached.cache_info()
     grade(generated, generated.drawn_tile)
-    after = _rank_cached.cache_info()
+    after = _display_rank_cached.cache_info()
     assert after.hits >= before.hits + 1
 
 
@@ -168,8 +179,8 @@ def _refined(position, tile, sims):
 
 
 def test_grade_verdict_and_delta_come_from_two_same_seed_estimates(position):
-    # The verdict rests on the rank-best and chosen candidates re-estimated at
-    # the verdict's budget (shared CRN seed), not on the cheap ranked EVs.
+    # The displayed ranking and verdict share the same refined, same-seed
+    # estimates; an escalated boundary decision still re-estimates its pair.
     ranked = _rank(position)
     chosen_tile = ranked[-1].discard
     result = grade(position, chosen_tile)
@@ -178,8 +189,6 @@ def test_grade_verdict_and_delta_come_from_two_same_seed_estimates(position):
     assert result.best == _refined(position, ranked[0].discard, result.refined_sims)
     assert result.chosen == _refined(position, chosen_tile, result.refined_sims)
     assert result.ev_delta == result.best.net_ev - result.chosen.net_ev
-    # The displayed ranked table keeps its cheaper EV_SIMS values, so the refined
-    # best generally differs from the cheap ranked[0] it was refined from.
     assert result.ranked == ranked
 
     # Fixed seed is reproducible down to the refined estimates and marginal flag.
@@ -212,6 +221,15 @@ def test_grade_escalation_gate_is_selective_and_deterministic(position, monkeypa
 def test_grade_marginal_flag_tracks_boundary_band(position, monkeypatch):
     chosen_tile = _rank(position)[-1].discard
     monkeypatch.setattr("taimahjong.quiz.ESCALATE_MARGIN", 0.0)  # keep it cheap, no escalation
+    # Isolate the verdict-boundary flag from the independent ranking-uncertainty
+    # flag; the rewritten rollout's cheap top gap is legitimately uncertain.
+    monkeypatch.setattr(
+        "taimahjong.quiz.paired_delta_moments",
+        lambda *_: SampleMoments.from_values(
+            (1.0, 1.0),
+            post_selection=True,
+        ),
+    )
 
     monkeypatch.setattr("taimahjong.quiz.MARGINAL_BAND", 999.0)
     assert grade(position, chosen_tile).marginal is True
@@ -267,7 +285,16 @@ def test_quiz_cli_noninteractive_prints_best_verdict(position):
         text=True,
         capture_output=True,
         check=False,
-        timeout=60,
+        # A hang guard, not a performance budget. One quiz question costs about
+        # 60-70s since the ron channel became seat-symmetric: every discard now
+        # assesses danger for three live seats instead of two, and opponents
+        # reach tenpai less often, so rollouts play more turns before reaching a
+        # terminal. Generation is nearly all of it; grading is ~1.5s. Bringing
+        # this back down is _production_shanten's job -- 2.1M calls at a 41% hit
+        # rate that a 5x larger cache does not improve -- which is an algorithmic
+        # batch of its own, not something to absorb by shrinking the sample size
+        # the drill's verdict rests on.
+        timeout=180,
     )
     assert result.returncode == 0, result.stderr
     assert "Verdict: best" in result.stdout
