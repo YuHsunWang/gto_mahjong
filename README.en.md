@@ -222,6 +222,10 @@ against humans.
 
 ### Methodology card
 
+**Outcomes**: every EV rollout trial lands on exactly one of five mutually exclusive terminal
+outcomes — `self_tsumo`, `self_ron`, `opponent_ron`, `opponent_tsumo`, `draw`; the draw payment is
+currently fixed at zero. The table below splits the model by *how* each piece is actually produced.
+
 | Category | What the project actually does | Limitation |
 | --- | --- | --- |
 | **Modeled and calculated exactly** | Given one sampled four-seat world, it validates ordinary-tile wins, scores the selected house rules, and performs zero-sum four-seat settlement. Each trial produces exactly one of `self_tsumo`, `self_ron`, `opponent_ron`, `opponent_tsumo`, or `draw`; `net_ev` is exactly the acting seat's mean sampled terminal payment. | “Exact” covers rules, settlement, and aggregation inside that sampled world—not exact terminal probabilities or human play. Draw payment is currently fixed at zero. |
@@ -229,7 +233,16 @@ against humans.
 | **Calibrated by a calibration table** | The per-opponent `danger_score` lookup supplies ron/deal-in probabilities on the opening and later discards. Its domain is the built-in-bot self-play ecology. | It is not calibrated on human games. If a calibrated event conflicts with the sampled concealed hand, a physically winning hand is redeterminized for valuation. If no usable calibration table is available, a reported heuristic fallback is used. |
 | **Not modeled** | Future chi, pon, kong/replacement draws and flowers, special hands, complete pass-on-ron decisions, and a full best response by every seat. | These events are absent from the terminal rollout transitions; draws also have no tenpai/noten settlement. |
 
+**Calibration domain**: only the ron/deal-in probability lookup is calibrated, and its domain is
+the built-in-bot self-play ecology, not human game records. When no usable calibration table is
+available, all three teaching paths fall back to the same heuristic and report that they did.
+
 **Sampling uncertainty**: production EV is a fixed-seed Monte Carlo point estimate; boundary drills add samples and expose uncertainty, but residual error remains. The locked-wait self-draw probability in `--declare` is exact only within its simplified unseen-pool hypergeometric model; survival against opponents is still heuristic.
+
+**Claim review checklist**: `[x]` the model-engineering owner confirmed this page describes its
+outputs only as model estimates / heuristic EV (Batch A, 2026-07-23). `[ ]` this card was rewritten
+on 2026-08-11 to match the terminal-rollout implementation; the four-category split is still
+awaiting owner re-confirmation.
 
 ### Research experiments
 

@@ -195,6 +195,10 @@ python3 -m taimahjong --selfplay-report data/calibration.json
 
 ### 方法論卡
 
+**Outcomes**：EV rollout 的每次 trial 恰好落在五種互斥終局之一——`self_tsumo`（自己自摸）、
+`self_ron`（自己榮和）、`opponent_ron`（對手榮和）、`opponent_tsumo`（對手自摸）、`draw`（流局）；
+流局 payment 目前固定為 0。下表按「這個項目怎麼算出來的」把模型拆成四類。
+
 | 類別 | 本專案實際處理 | 限制 |
 | --- | --- | --- |
 | **已建模且精確計算** | 給定一個已抽樣的四家世界後，檢查普通牌胡型，依選定家規計台並做四家零和結算；每次 trial 只會產生 `self_tsumo`、`self_ron`、`opponent_ron`、`opponent_tsumo`、`draw` 之一，`net_ev` 精確等於 acting seat 的 terminal payments 樣本平均。 | 「精確」只指該抽樣世界內的規則、結算與 aggregation，不代表終局機率或真人打法精確。流局 payment 目前固定為 0。 |
@@ -202,7 +206,15 @@ python3 -m taimahjong --selfplay-report data/calibration.json
 | **由 calibration table 校準** | RON／放銃機率由 `danger_score` 的 per-opponent lookup 提供，套用於當下與後續各次切牌。資料來自內建 bot self-play 的 bot ecology。 | 不是人類牌譜校準；校準事件若與抽到的暗手衝突，會重建一個可胡的實體手牌來估值。缺少可用的 calibration table 時改用 heuristic fallback 並回報。 |
 | **未建模** | EV rollout 中未來的吃、碰、槓／補牌與花牌、特殊牌型、完整過水決策，以及各家完整 best response。 | 這些事件不在 terminal rollout 的狀態轉移中；流局也沒有聽牌／未聽罰付。 |
 
+**Calibration domain**：只有 RON／放銃機率 lookup 經過校準，且校準來源是內建 bot self-play 的
+bot ecology，不是人類牌譜。缺少可用的 calibration table 時，三條教學路徑一致改用 heuristic
+fallback 並在輸出中回報。
+
 **Sampling uncertainty**：production EV 是 fixed-seed Monte Carlo 點估計；邊界題會加樣並顯示不確定性，仍有殘餘誤差。`--declare` 的鎖聽自摸機率是在其簡化未見牌池模型內用 hypergeometric 精確計算，但對手中途胡牌的 survival 仍是 heuristic。
+
+**聲稱 review checklist**：`[x]` 模型工程 owner 已確認本頁只把輸出稱為本模型估計／heuristic EV
+（Batch A，2026-07-23）。`[ ]` 本卡於 2026-08-11 依 terminal rollout 實作重寫，四類拆解尚待
+owner 複核。
 
 ### 研究實驗
 
