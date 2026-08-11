@@ -47,3 +47,24 @@ def test_ev_cli_forwards_legacy_or_three_opponents(
     if expected == 3:
         assert captured["opponents"][1].melds
         assert captured["opponents"][2].is_dealer
+
+
+def test_ev_cli_scores_five_meld_single_wait_without_an_18_tile_hand(
+    monkeypatch, capsys,
+):
+    monkeypatch.setattr(sys, "argv", [
+        "taimahjong",
+        "123m456m789m123p456p1z2z",
+        "--ev",
+        "--opp-river", "3m1m9m",
+        "--opp-declared", "0",
+        "--turns", "6",
+        "--sims", "24",
+        "--seed", "1",
+    ])
+
+    cli.main()
+
+    output = capsys.readouterr()
+    assert "Discard  Net EV" in output.out
+    assert "concealed hand has 18 tiles" not in output.err
