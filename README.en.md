@@ -10,12 +10,12 @@ play through a web UI that scores you live, or call any single feature from the 
 line.
 
 Scope first: it only handles the 34 ordinary tile kinds (characters, dots, bamboo,
-honors) — no flowers, no special hands. And one important caveat: every probability in
-the deal-in lookup table is calibrated from built-in-bot self-play. Self-draw rates are
-Monte Carlo rollouts, while the other opponent and defense terms are deterministic
-heuristics. None is calibrated to human play, and a missing lookup table is reported as
-a heuristic fallback. The tool is useful for practicing judgment, but its numbers are
-not exact real-table win rates.
+honors) — no flowers, no special hands. The EV rollout models self-draws, ron wins, and
+draws for both the player and opponents. Its ron-probability lookup is calibrated from
+built-in-bot self-play, while hidden hands and future policies include heuristic assumptions.
+None is calibrated to human play, and a missing lookup table is reported as a heuristic
+fallback. The tool is useful for practicing judgment, but its numbers are not exact
+real-table win rates or exact EVs.
 
 Tiles use a compact notation: digits before a suit — `m` characters, `p` dots,
 `s` bamboo, `z` honors (1–7). For example `123m456p789s1122334z` is 16 tiles.
@@ -35,6 +35,7 @@ uvicorn server.api:app
 **Tests (for developers):**
 
 ```bash
+python3 -m pip install -r requirements-dev.txt
 python3 -m pytest tests/ -q
 ```
 
@@ -67,8 +68,9 @@ Estimates how soon you'll win using the "deal many hands" method (Monte Carlo).
 
 It randomly deals many games against the 136-tile set, drawing without replacement, and
 whenever it draws a non-winning tile it follows a heuristic efficiency discard and continues. It then reports
-your cumulative tenpai and self-draw win rates after each turn. This counts your own
-self-draw only — it ignores what opponents do and ignores deal-ins.
+your cumulative tenpai and self-draw win rates after each turn. This standalone
+`--simulate` mode counts your own self-draw only — it ignores opponents and deal-ins;
+it is not the four-seat terminal rollout used by `--ev` below.
 
 ```bash
 python3 -m taimahjong "123m123p123s1112223z" --simulate --turns 10 --sims 5000 --seed 42
@@ -139,11 +141,13 @@ python3 -m taimahjong "22z" --score --my-melds "123m;456p;789s;111z;555z" \
 
 Turns "which discard is best" into a number you can compare.
 
-EV is expected value. It takes a win's value (in tai) times the chance of winning as the
-"attack" side, subtracts each opponent's deal-in loss, and gives a net EV per discard —
-the highest is **this model's estimated best play**. It also accounts for defense: an opponent
-may win before your next draw, so it discounts the attack side by "the chance you survive
-to your next turn," and it can value a draw (流局) too.
+EV is expected value. For each candidate discard, production EV samples four-seat hidden
+states and a wall, then lets all four seats draw and discard under the model until one
+mutually exclusive terminal occurs: player tsumo, player ron, opponent ron, opponent tsumo,
+or draw. That terminal is settled as signed four-seat payments under the selected rules;
+`net_ev` is the player's mean sampled payment, and the highest is **this model's estimated
+best play**. The displayed attack and risk EVs are diagnostics split from those same terminal
+payments, not separate estimates recombined to produce `net_ev`.
 
 ```bash
 python3 -m taimahjong "123m123p123s11122233z" --ev --opp-river "1m2m" --opp-declared 0 --turns 3
@@ -195,7 +199,7 @@ The page can also switch the **底/台 scheme** (底3台1 ⇄ 底5台2). The 底
 the trade-off between "win first" and "go for a big hand," so it can change the best
 discard — switching re-scores instantly.
 
-### Under the hood: how the engine got accurate
+### Under the hood: how the engine is calibrated
 
 The deal-in lookup is not set by hand — it is calibrated within the bot domain from self-play.
 
@@ -210,17 +214,22 @@ python3 -m taimahjong --selfplay --games 250 --seed 10001 --out data/calibration
 python3 -m taimahjong --selfplay-report data/calibration.json
 ```
 
-Again: only fields that use this lookup are calibrated against *these bots*. Monte Carlo
-self-draw rates and heuristic opponent values are different estimates, and none is
-calibrated against humans.
+The table maps each discard's per-opponent `danger_score` to a ron probability, and the
+production rollout uses it on the opening and later discards. Again: only this ron/deal-in
+probability lookup is calibrated against *these bots*. Self-draw and wall outcomes come from
+Monte Carlo, while hidden hands and future policies include heuristics; none is calibrated
+against humans.
 
 ### Methodology card
 
-- **Outcomes**: attack rollouts count only the player's self-draw; draw value is currently zero.
-- **Not modeled**: the player's ron, opponent-tsumo payments, future-turn deal-ins, and a full best response.
-- **Calibration domain**: the deal-in lookup comes from the built-in bot ecology; if it is missing, all three teaching paths report and use the same heuristic fallback.
-- **Sampling uncertainty**: self-draw and attack EV are fixed-seed Monte Carlo point estimates; boundary drills add samples but retain residual error.
-- **Claims-review checklist**: `[x]` model-engineering owner confirmed that this page describes outputs only as model estimates / heuristic EV (Batch A, 2026-07-23).
+| Category | What the project actually does | Limitation |
+| --- | --- | --- |
+| **Modeled and calculated exactly** | Given one sampled four-seat world, it validates ordinary-tile wins, scores the selected house rules, and performs zero-sum four-seat settlement. Each trial produces exactly one of `self_tsumo`, `self_ron`, `opponent_ron`, `opponent_tsumo`, or `draw`; `net_ev` is exactly the acting seat's mean sampled terminal payment. | “Exact” covers rules, settlement, and aggregation inside that sampled world—not exact terminal probabilities or human play. Draw payment is currently fixed at zero. |
+| **Heuristic approximation** | Public information drives opponent-tenpai estimates and hidden-hand sampling; efficiency-discard and fixed defense policies advance future play. Wall and terminal frequencies are fixed-seed Monte Carlo estimates. | Opponents do not fully adapt; the hidden-world distribution and policies are model assumptions, and finite sampling leaves error. |
+| **Calibrated by a calibration table** | The per-opponent `danger_score` lookup supplies ron/deal-in probabilities on the opening and later discards. Its domain is the built-in-bot self-play ecology. | It is not calibrated on human games. If a calibrated event conflicts with the sampled concealed hand, a physically winning hand is redeterminized for valuation. If no usable calibration table is available, a reported heuristic fallback is used. |
+| **Not modeled** | Future chi, pon, kong/replacement draws and flowers, special hands, complete pass-on-ron decisions, and a full best response by every seat. | These events are absent from the terminal rollout transitions; draws also have no tenpai/noten settlement. |
+
+**Sampling uncertainty**: production EV is a fixed-seed Monte Carlo point estimate; boundary drills add samples and expose uncertainty, but residual error remains. The locked-wait self-draw probability in `--declare` is exact only within its simplified unseen-pool hypergeometric model; survival against opponents is still heuristic.
 
 ### Research experiments
 
@@ -234,8 +243,9 @@ each kong type is worth declaring (`scripts/kong_ev.py`). Method and data are in
 ## Honest scope and limits
 
 - **Ordinary tiles only**: no flowers, no special hands.
-- **Only the deal-in lookup has bot-domain calibration**, not human calibration;
-  self-draw is Monte Carlo and the defensive-side opponent value is a directional heuristic.
+- **Only the ron/deal-in probability lookup has bot-domain calibration**, not human calibration;
+  self-draw and wall outcomes are Monte Carlo, while hidden hands, opponent discards, and
+  defense policies include heuristic assumptions.
 - **Danger is not a safety guarantee**: Taiwan has no permanent furiten, so river
   evidence only discounts.
 - **House rules are adjustable**: how 全求人 counts, kong tai, whether a draw is

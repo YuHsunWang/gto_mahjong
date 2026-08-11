@@ -7,10 +7,10 @@ EV（期望值，也就是「這一手平均下來值多少籌碼單位」）提
 介面一邊打一邊看評分，也可以用命令列單獨叫某個功能。
 
 適用範圍先講清楚：只處理 34 種普通牌（萬、筒、條、字），不做花牌，也不算特殊
-牌型。放銃率的 lookup table 來自內建機器人自我對局；自摸率則是 Monte Carlo
-rollout，其他對手與防守項是 deterministic heuristic。這些都不是對真人牌局的校準，
-缺少 lookup table 時還會明示改用 heuristic fallback。因此它適合拿來練判斷、練手感，
-但別把數字當成真人牌桌上的精準勝率。
+牌型。EV rollout 會模擬自己與對手的自摸、榮和及流局；其中榮和機率的 lookup table
+來自內建機器人自我對局，隱藏手牌與各家後續策略則含 heuristic 假設。這些都不是對真人
+牌局的校準，缺少 lookup table 時還會明示改用 heuristic fallback。因此它適合拿來練判斷、
+練手感，但別把數字當成真人牌桌上的精準勝率或精準 EV。
 
 牌的寫法用簡寫：數字寫在花色前面，`m` 萬、`p` 筒、`s` 條、`z` 字牌（1–7）。例如
 `123m456p789s1122334z` 就是 16 張。
@@ -30,6 +30,7 @@ uvicorn server.api:app
 **跑測試（給開發者）：**
 
 ```bash
+python3 -m pip install -r requirements-dev.txt
 python3 -m pytest tests/ -q
 ```
 
@@ -59,8 +60,9 @@ python3 -m taimahjong "123m123p123s11122233z" --analyze   # 切牌排名
 用「發很多次牌」的方法（蒙地卡羅模擬）估你大概多久會胡。
 
 它對著 136 張牌隨機發很多局，每局抽了就不放回，抽到不能胡的牌就照 heuristic 牌效切牌繼續
-打，最後告訴你：每摸一巡之後，累積的聽牌率和自摸胡牌率各是多少。這只算你自己
-摸牌自摸，不管對手怎麼打、不管放槍。
+打，最後告訴你：每摸一巡之後，累積的聽牌率和自摸胡牌率各是多少。這個獨立的
+`--simulate` 模式只算你自己摸牌自摸，不管對手怎麼打、不管放槍；它不是下文
+`--ev` 使用的四家終局 rollout。
 
 ```bash
 python3 -m taimahjong "123m123p123s1112223z" --simulate --turns 10 --sims 5000 --seed 42
@@ -124,10 +126,11 @@ python3 -m taimahjong "22z" --score --my-melds "123m;456p;789s;111z;555z" \
 
 把「切哪張最好」變成一個可以比較的數字。
 
-EV 就是期望值。它把胡牌的價值（用台當單位）乘上胡的機率當作「進攻分」，再減掉每個
-對手的「放槍損失」，算出每一種切牌的淨 EV；數字最高的是**本模型估計最佳**的一手。它還會
-考慮防守：在你下次摸牌前別家可能先胡，所以會用「你能撐到下一巡的機率」幫進攻分
-打折；也算得出流局的價值。
+EV 就是期望值。production EV 會為每種候選切牌抽樣四家隱藏狀態與牌牆，讓四家依模型
+策略輪流摸切，直到出現一個互斥終局：自己自摸、自己榮和、對手榮和、對手自摸或流局。
+每次終局都按家規結算四家的正負 payment；`net_ev` 是自己 payment 的樣本平均，數字最高的
+是**本模型估計最佳**的一手。介面上的進攻 EV 與風險 EV 是同一批終局 payment 拆出的診斷量，
+不是另外估完再拼成 `net_ev`。
 
 ```bash
 python3 -m taimahjong "123m123p123s11122233z" --ev --opp-river "1m2m" --opp-declared 0 --turns 3
@@ -172,7 +175,7 @@ python3 -m taimahjong --quiz-batch 5 --seed 1
 網頁上還能切換**底/台方案**（底3台1 ⇄ 底5台2）。底和台的比例會改變「先求胡」還是
 「拚大牌」的取捨，所以有時本模型估計的切牌也跟著變——切換就即時重新打分。
 
-### 底層：引擎怎麼變準的
+### 底層：引擎怎麼校準
 
 放銃率表不是憑空設定，而是靠自對局在 bot domain 內校準出來的。
 
@@ -186,16 +189,20 @@ python3 -m taimahjong --selfplay --games 250 --seed 10001 --out data/calibration
 python3 -m taimahjong --selfplay-report data/calibration.json
 ```
 
-再強調一次：只有使用該 lookup 的項目對「這些機器人」校準；Monte Carlo 自摸率與
-heuristic 對手模型不是同一種校準，更不是對真人。
+這張表把每次切牌對每位對手的 `danger_score` 映射成榮和機率，production rollout 會在
+當下及後續每次切牌使用它。再強調一次：只有這個 RON／放銃機率 lookup 對「這些機器人」
+校準；自摸與牌牆結果來自 Monte Carlo，隱藏手牌及後續策略含 heuristic 假設，更不是對真人。
 
 ### 方法論卡
 
-- **Outcomes**：進攻 rollout 只計自己的自摸；流局值目前為 0。
-- **未建模**：自己的榮和、對手自摸支付、未來每巡放銃與完整 best response。
-- **Calibration domain**：放銃 lookup 來自內建 bot ecology；缺表時三條教學路徑一致使用 heuristic fallback 並回報。
-- **Sampling uncertainty**：自摸與攻擊 EV 是固定 seed 的 Monte Carlo 點估計；邊界題會加樣，但仍有殘餘誤差。
-- **聲稱 review checklist**：`[x]` 模型工程 owner 已確認本頁只把輸出稱為本模型估計／heuristic EV（Batch A，2026-07-23）。
+| 類別 | 本專案實際處理 | 限制 |
+| --- | --- | --- |
+| **已建模且精確計算** | 給定一個已抽樣的四家世界後，檢查普通牌胡型，依選定家規計台並做四家零和結算；每次 trial 只會產生 `self_tsumo`、`self_ron`、`opponent_ron`、`opponent_tsumo`、`draw` 之一，`net_ev` 精確等於 acting seat 的 terminal payments 樣本平均。 | 「精確」只指該抽樣世界內的規則、結算與 aggregation，不代表終局機率或真人打法精確。流局 payment 目前固定為 0。 |
+| **以 heuristic 近似** | 依公開資訊估對手聽牌、抽樣隱藏手牌，並用牌效出牌與固定防守 policy 推進後續牌局；牌牆與終局頻率用 fixed-seed Monte Carlo 估計。 | 對手不會做完整策略調整；隱藏世界分布與 policy 都是模型假設，有限樣本仍有誤差。 |
+| **由 calibration table 校準** | RON／放銃機率由 `danger_score` 的 per-opponent lookup 提供，套用於當下與後續各次切牌。資料來自內建 bot self-play 的 bot ecology。 | 不是人類牌譜校準；校準事件若與抽到的暗手衝突，會重建一個可胡的實體手牌來估值。缺少可用的 calibration table 時改用 heuristic fallback 並回報。 |
+| **未建模** | EV rollout 中未來的吃、碰、槓／補牌與花牌、特殊牌型、完整過水決策，以及各家完整 best response。 | 這些事件不在 terminal rollout 的狀態轉移中；流局也沒有聽牌／未聽罰付。 |
+
+**Sampling uncertainty**：production EV 是 fixed-seed Monte Carlo 點估計；邊界題會加樣並顯示不確定性，仍有殘餘誤差。`--declare` 的鎖聽自摸機率是在其簡化未見牌池模型內用 hypergeometric 精確計算，但對手中途胡牌的 survival 仍是 heuristic。
 
 ### 研究實驗
 
@@ -208,8 +215,8 @@ heuristic 對手模型不是同一種校準，更不是對真人。
 ## 老實話（範圍與限制）
 
 - **只做普通牌**：不含花牌、不含特殊牌型。
-- **只有放銃 lookup 是 bot-domain calibration**，不是真人牌局；自摸是 Monte Carlo，
-  防守側的對手價值是方向性的 heuristic。
+- **只有 RON／放銃機率 lookup 是 bot-domain calibration**，不是真人牌局；自摸與牌牆結果
+  是 Monte Carlo，隱藏手牌、對手出牌與防守 policy 含 heuristic 假設。
 - **危險度不保證安全**：台灣沒有永久振聽，牌河證據只是打折。
 - **家規可改**：全求人怎麼算、槓的台數、流局要不要罰（`DRAW_VALUE`）、底台方案，
   都寫成常數或選項，牌桌規則不同時可以改。
