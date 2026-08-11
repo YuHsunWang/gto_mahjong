@@ -19,8 +19,8 @@
 **1. 向聽數 DP，不是暴力搜尋。** 手牌以 base-5 suit encoding 表示，各花色的可行拆解結果存成
 bitset，再用 memoized suit-profile composition 取代跨花色的笛卡兒積合併
 （[`taimahjong/shanten.py`](taimahjong/shanten.py)）。正確性由一個獨立的暴力 oracle 把關：
-50,000 手隨機牌加上**所有**單一花色 shape 的窮舉比對
-（[`tests/test_shanten_optimized.py`](tests/test_shanten_optimized.py)）。
+50,000 個生成的胡牌／差一張的牌型（涵蓋所有副露數與兩種手牌長度），加上所有每種牌不超過 3 張的
+合法單花色 shape 窮舉比對（[`tests/test_shanten_optimized.py`](tests/test_shanten_optimized.py)）。
 
 **2. EV 是共用亂數的終局模擬，不是公式拼裝。** 所有候選切牌共用同一批抽樣的隱藏世界與亂數流
 （common random numbers），每次 trial 只落在一個互斥終局上，再依家規做四家零和結算；搭配信賴
@@ -29,8 +29,12 @@ bitset，再用 memoized suit-profile composition 取代跨花色的笛卡兒積
 
 **3. 有一把獨立的尺在量這個模型。** `reference_ev` 是一組 26 個分層抽樣的小牌牆局面，可以把終局
 機率算到精確值，用來量測 production EV 的 MAE、top-1 一致率、排名倒轉、regret 與等級相關係數
-（[`taimahjong/reference_ev.py`](taimahjong/reference_ev.py)、[`docs/ev-reference-report.md`](docs/ev-reference-report.md)）。
-換句話說，「這個估計值有多準」在這個 repo 裡是一個有數字的問題，不是一句形容詞。
+（[`taimahjong/reference_ev.py`](taimahjong/reference_ev.py)）。目前 production 在這組語料上
+top-1 一致率 100%、排名倒轉率 0%，而且在預設取樣預算下誤差**恰好為 0** —— 因為 ≤4 張的牌牆會被
+窮舉排列而非抽樣，24 次剛好走完 4! 種順序。有趣的是把預算加到 1000 次反而讓誤差變成 0.0126，那
+不是雜訊而是排列配重不均；完整說明見
+[`docs/ev-reference-report.md`](docs/ev-reference-report.md)。換句話說，「這個估計值有多準」
+在這個 repo 裡是一個有數字、而且解釋得出來的問題。
 
 ## 老實說它不是什麼
 
@@ -115,15 +119,18 @@ flowchart TB
     DANGER --> UKEIRE --> SHANTEN
     ROLLOUT --> SCORING --> DANGER
     CALIB --> DANGER
-    CALIB -.讀取.-> DATA
-    SELFPLAY -."--selfplay 產生".-> DATA
+    CALIB -.讀寫.-> DATA
+    CLI -."--selfplay 對局結果".-> CALIB
+    DATA -.啟動時載入.-> SELFPLAY
     BRUTE -.測試中比對.-> SHANTEN
     REF -.測試中比對.-> EV
 ```
 
-校準表是**自己餵自己**的：`selfplay.py` 跑機器人自我對局產生 `data/calibration.json`，
-`calibration.py` 再把它讀回來供 production rollout 使用。這也是為什麼校準資料域只涵蓋內建
-bot——這條迴圈裡沒有真人。
+校準表是**自己餵自己**的：`--selfplay` 跑機器人自我對局，CLI 把結果交給
+`calibration.write_merged_table` 寫成 `data/calibration.json`（`__main__.py:283`）；而
+`selfplay.py` 自己又會在啟動時把這張 committed 的表載回來當預設危險度來源
+（`selfplay.py:361` 的 `_default_calibration`）。所以這是一個真正的閉環——也正因如此，校準資料域
+只涵蓋內建 bot，這條迴圈裡從頭到尾沒有真人。
 
 ---
 

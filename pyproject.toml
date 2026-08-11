@@ -18,6 +18,8 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Keep the default run fast; `-m slow` on the command line overrides this.
+addopts = ["-m", "not slow"]
 markers = [
     "slow: exhaustive oracle sweeps and large simulations; excluded from the default run",
 ]

@@ -22,8 +22,10 @@ unresolved rankings is the part of this project that took the most work.
 **1. Shanten by DP, not brute force.** Hands are held in a base-5 suit encoding, each suit's
 feasible decompositions are packed into a bitset, and a memoized suit-profile composition replaces
 the cartesian merge across suits ([`taimahjong/shanten.py`](taimahjong/shanten.py)). Correctness is
-pinned by an independent brute-force oracle: 50,000 seeded random hands plus an exhaustive sweep of
-*every* single-suit shape ([`tests/test_shanten_optimized.py`](tests/test_shanten_optimized.py)).
+pinned by an independent brute-force oracle: 50,000 generated winning/one-away hands covering every
+declared-meld count and both hand sizes, plus an exhaustive sweep of every legal single-suit shape
+with at most 3 copies of a tile
+([`tests/test_shanten_optimized.py`](tests/test_shanten_optimized.py)).
 
 **2. EV is a common-random-numbers terminal simulation, not a formula.** Every candidate discard
 shares the same sampled hidden worlds and random streams, each trial resolves to exactly one
@@ -35,9 +37,13 @@ it is flagged unresolved rather than forced ([`taimahjong/ev.py`](taimahjong/ev.
 **3. There is an independent ruler measuring the model.** `reference_ev` is a 26-case stratified
 small-wall corpus where terminal probabilities can be computed exactly, used to measure the
 production EV's MAE, top-1 agreement, ranking inversions, regret, and rank correlation
-([`taimahjong/reference_ev.py`](taimahjong/reference_ev.py),
-[`docs/ev-reference-report.md`](docs/ev-reference-report.md)). "How accurate is this estimate" is a
-question with a number attached in this repo, not an adjective.
+([`taimahjong/reference_ev.py`](taimahjong/reference_ev.py)). Production currently scores 100%
+top-1 agreement and a 0% inversion rate on it, with **exactly zero** error at the default budget —
+because a wall of four or fewer tiles is enumerated rather than sampled, and 24 sims walks all `4!`
+orderings once. Raising the budget to 1000 *increases* the error to 0.0126, which is not noise but
+permutation-weighting imbalance; the full explanation is in
+[`docs/ev-reference-report.md`](docs/ev-reference-report.md). "How accurate is this estimate" is a
+question with a number attached here — and one the repo can explain.
 
 ## What it honestly is not
 
@@ -126,16 +132,18 @@ flowchart TB
     DANGER --> UKEIRE --> SHANTEN
     ROLLOUT --> SCORING --> DANGER
     CALIB --> DANGER
-    CALIB -.reads.-> DATA
-    SELFPLAY -."produced by --selfplay".-> DATA
+    CALIB -."reads / writes".-> DATA
+    CLI -."--selfplay game counts".-> CALIB
+    DATA -."loaded at import".-> SELFPLAY
     BRUTE -.compared in tests.-> SHANTEN
     REF -.compared in tests.-> EV
 ```
 
-The calibration table feeds itself: `selfplay.py` runs bot self-play to produce
-`data/calibration.json`, and `calibration.py` reads it back for the production rollout. That is
-exactly why the calibration domain covers only the built-in bots — there is no human anywhere in
-this loop.
+The calibration table feeds itself: `--selfplay` runs bot self-play and the CLI hands the counts to
+`calibration.write_merged_table`, which writes `data/calibration.json` (`__main__.py:283`); and
+`selfplay.py` in turn loads that committed table as its default danger source
+(`_default_calibration`, `selfplay.py:361`). It is a genuine closed loop — and precisely because of
+that, the calibration domain covers only the built-in bots. There is no human anywhere in it.
 
 ---
 
