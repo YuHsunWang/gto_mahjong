@@ -136,21 +136,45 @@ done
 - **暗槓 / 加槓 historical point estimate (n=1000/cell; paired CI unavailable):**
   `concealed_added − none = −0.013` units/game.
 - **大明槓 historical point estimate (n=1000/cell; paired CI unavailable):**
-  `all − concealed_added = −0.112` units/game. The
-  extra open kongs in `all` are 大明槓, and enabling them lowers the actor's EV.
-  This is exactly what the house rule predicts — a 大明槓 scores 0 tai, breaks
-  nothing extra, forfeits 槓上開花, and locks four tiles into a fixed set — so it
-  can only cost tempo and flexibility. Pinned by
-  `test_daiminkan_is_not_positive_ev_under_house_rule`.
+  `all − concealed_added = −0.112` units/game. **This figure does not survive a
+  larger sample — see the paired measurements below before quoting it.**
 
 槓上開花 did not occur in either kong batch (the replacement tile completing the
 hand is rare with attack bots), and 搶槓 cannot occur when only seat 0 kongs and
 no opponent is left to rob — both are exercised instead by the dedicated
 selfplay/trainer tests.
 
-**Current evidence status:** the historical point estimate for open 大明槓 is
-−0.112 units/game, but its paired CI was not retained. Treat the direction as
-unconfirmed until the paired command below passes the CI/effect gate.
+### Paired re-measurement of 大明槓 (2026-08-12)
+
+`scripts/kong_ev.py --kong-policy all --compare-to concealed_added`, seed base
+40001, with the paired CI the earlier run did not retain:
+
+| n | mean | 95% CI | crosses zero | vs 0.10 effect gate | verdict |
+|---:|---:|---|---|---|---|
+| 1000 | −0.112 | [−0.254, +0.030] | yes | above | `uncertain` |
+| 3000 | −0.031 | [−0.108, +0.045] | yes | **below** | `uncertain` |
+
+**The direction is not established.** Tripling the sample moved the point
+estimate 3.5x toward zero rather than tightening it around −0.112, so the
+original figure was sampling noise, not a stable effect. At n=3000 the estimate
+also falls under the 0.10 effect threshold, so even a significant result at that
+magnitude would be reported as `marginal`.
+
+This does not contradict the rules argument, but it does narrow it. A 大明槓
+scores 0 tai, breaks 門清, and is bloom-ineligible in this implementation
+(`selfplay.py:298`, "Open, no bloom eligibility") — but it still draws a
+dead-wall replacement, and that extra draw appears to offset most of the cost.
+Note also that 槓上開花 never fired in these batches, so bloom-ineligibility
+cannot be where the measured cost comes from; the README's phrasing overstates
+its contribution.
+
+**Do not write "大明槓 is negative EV" as a data-backed claim.** The supportable
+statement is that the house rules make it strictly worse in tai terms while the
+replacement draw compensates, leaving a net effect this bot ecology cannot
+resolve at n=3000. `test_daiminkan_is_not_positive_ev_under_house_rule` asserts
+only `with_daiminkan <= added_only + 0.05` — a non-improvement guard, not
+evidence of a loss. Open questions are tracked in
+[dev-notes.md](dev-notes.md#2-大明槓的代價要真的量出來).
 
 ## Reproducing
 
