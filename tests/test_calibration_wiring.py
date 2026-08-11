@@ -33,6 +33,8 @@ def _real_entry(payload, discard):
     )
 
 
+# Drives quiz and trainer end-to-end twice (~26s).
+@pytest.mark.slow
 def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monkeypatch):
     # risk_ev and net_ev are sample means over terminal rollouts (ev.py:895),
     # so comparing two calibrations compares two expectations and needs enough

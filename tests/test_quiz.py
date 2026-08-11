@@ -62,6 +62,8 @@ def test_same_seed_renders_and_grades_identically(position):
     assert grade(position, answer) == grade(repeated, answer)
 
 
+# Sweeps several seeded positions (~27s).
+@pytest.mark.slow
 def test_filter_constraints_hold_for_several_seeded_positions():
     for seed in (1, 2, 3):
         position = generate_position(seed)
@@ -237,6 +239,8 @@ def test_grade_marginal_flag_tracks_boundary_band(position, monkeypatch):
     assert grade(position, chosen_tile).marginal is False
 
 
+# Cross-seed variance comparison needs many seeds (~33s).
+@pytest.mark.slow
 def test_refined_ev_delta_has_lower_cross_seed_variance_than_cheap(position):
     # The point of the refinement stage: with more sims per candidate, the
     # verdict's ev_delta swings far less as the CRN base seed changes.
@@ -258,6 +262,8 @@ def test_refined_ev_delta_has_lower_cross_seed_variance_than_cheap(position):
     assert refined < 0.7 * cheap
 
 
+# CLI end-to-end over a seeded position (~75s).
+@pytest.mark.slow
 def test_quiz_cli_noninteractive_prints_best_verdict(position):
     # CLI composition loads the committed calibration, so reproduce its
     # calibration-keyed seeded position rather than the core fallback fixture.

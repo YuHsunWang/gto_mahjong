@@ -1,7 +1,12 @@
 """Regression coverage for common-random-number EV comparisons."""
 
+import pytest
+
 from taimahjong.ev import ev_rank
 from taimahjong.tiles import parse_tiles
+
+# Needs enough samples for the reported uncertainty to be meaningful (~24s).
+pytestmark = pytest.mark.slow
 
 
 def test_equivalent_lone_wind_discards_agree_within_reported_uncertainty():

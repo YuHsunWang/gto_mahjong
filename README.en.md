@@ -2,6 +2,10 @@
 
 # Taiwanese Mahjong Heuristic-EV Trainer
 
+[![tests](../../actions/workflows/tests.yml/badge.svg)](../../actions/workflows/tests.yml)
+[![python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 **Play a hand of Taiwanese 16-tile mahjong; every discard is scored by Monte Carlo terminal
 rollouts — and the engine says so out loud when it cannot tell two discards apart.**
 
@@ -64,12 +68,18 @@ uvicorn server.api:app
 
 ```bash
 python3 -m pip install -r requirements-dev.txt
-python3 -m pytest tests/ -q
+python3 -m pytest -q              # 269 tests, about 2.5 minutes
+python3 -m pytest -q -m slow      # 14 exhaustive-oracle and large-sample tests, about 15 minutes
 ```
 
-The full suite takes about 12 minutes, 9 of which are the exhaustive oracle sweep in
-`tests/test_shanten_optimized.py`. For a quick check, skip it:
-`python3 -m pytest tests/ -q --ignore=tests/test_shanten_optimized.py`.
+The slow batch is marked `slow` and excluded from the default run — brute-force oracle sweeps and
+statistical tests that need large trial counts to have any power; the single-suit shape sweep alone
+is 7.5 minutes. CI runs the fast batch on every push (Python 3.10 and 3.13) and the slow batch on a
+nightly schedule.
+
+The split shortens push-time feedback, not total machine time: run separately the two batches add
+up to more than the combined run, because the `_cached_shanten` warm-up that the whole suite used
+to amortise is now paid twice.
 
 ## Architecture
 

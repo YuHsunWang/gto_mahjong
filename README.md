@@ -2,6 +2,10 @@
 
 # 台灣麻將 heuristic EV 訓練器
 
+[![tests](../../actions/workflows/tests.yml/badge.svg)](../../actions/workflows/tests.yml)
+[![python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 **一局台灣十六張麻將，每一次切牌都用蒙地卡羅終局 rollout 打分，並在模型分不出高下時直說。**
 
 ![整場實戰：切牌後即時 net EV 回饋](docs/screenshots/trainer-feedback.png)
@@ -55,11 +59,16 @@ uvicorn server.api:app
 
 ```bash
 python3 -m pip install -r requirements-dev.txt
-python3 -m pytest tests/ -q
+python3 -m pytest -q              # 269 個測試，約 2 分半
+python3 -m pytest -q -m slow      # 14 個窮舉 oracle 與大樣本統計測試，約 15 分鐘
 ```
 
-完整測試約 12 分鐘，其中 9 分鐘花在 `tests/test_shanten_optimized.py` 的窮舉 oracle 比對上。
-想快速確認可以先跳過它：`python3 -m pytest tests/ -q --ignore=tests/test_shanten_optimized.py`。
+慢的那批標成 `slow` 並從預設執行中排除——它們是暴力 oracle 全掃描與需要大量 trial 才有檢定力的
+統計測試，光是單一花色 shape 的窮舉比對就佔 7 分半。CI 每次 push 跑快的那批（Python 3.10 與
+3.13），慢的那批走每日排程。
+
+拆分的目的是縮短 push 當下的回饋時間，不是縮短總時數：兩批分開跑的總和其實比合併跑更久，因為
+`_cached_shanten` 的暖機成本原本由整套共同攤提，拆開後兩邊各付一次。
 
 ## 架構
 

@@ -61,6 +61,8 @@ def test_trainer_is_deterministic_for_a_fixed_policy():
     assert a_outcome == b_outcome
 
 
+# Grades a batch of generated trainer positions (~21s).
+@pytest.mark.slow
 def test_trainer_positions_are_gradeable():
     decisions, _ = _play(3, _discard_drawn)
     assert decisions, "seed 3 should present at least one human decision"

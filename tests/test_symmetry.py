@@ -31,6 +31,9 @@ from taimahjong.rollout import resolve_terminal
 from taimahjong.scoring import WinContext
 
 
+# Exchangeability checks need large trial counts to have any power (~57s).
+pytestmark = pytest.mark.slow
+
 TRIALS = 1200
 CONTROL_TRIALS = 400
 TURNS = 14

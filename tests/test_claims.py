@@ -17,6 +17,15 @@ CLAIM_FILES = [
 
 
 def test_ui_readmes_and_metadata_do_not_make_unqualified_solver_claims():
+    # These words are barred because they are not true yet, not because they are
+    # forbidden. Nothing here solves for a best response: every seat runs a fixed
+    # deterministic policy, and reference_ev.py is an outcome/payment oracle over
+    # draw orders, not a game-theoretic solve (see its module docstring).
+    #
+    # To lift a bar, earn it and scope the wording to what was actually solved --
+    # e.g. computing an equilibrium for the shallow-endgame subgame would license
+    # "GTO-solved in the <=N-tile endgame", not a bare "GTO trainer".
+    # docs/equilibrium-plan.md sketches what that would take.
     combined = "\n".join(path.read_text(encoding="utf-8") for path in CLAIM_FILES)
     lowered = combined.lower()
     assert "gto" not in lowered

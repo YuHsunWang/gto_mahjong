@@ -3,8 +3,13 @@
 from itertools import product
 import random
 
+import pytest
+
 from taimahjong.bruteforce import bruteforce_shanten
 from taimahjong.ev import _production_shanten
+
+# Exhaustive oracle sweeps: ~7.5 minutes, the bulk of the whole suite.
+pytestmark = pytest.mark.slow
 
 
 def _random_meld(rng):

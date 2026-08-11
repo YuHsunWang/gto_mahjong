@@ -366,6 +366,8 @@ def test_kong_policy_none_reproduces_baseline():
         assert play_game(seed).summary() == play_game(seed, kong_policy="none").summary()
 
 
+# Full-game invariant sweep (~22s).
+@pytest.mark.slow
 def test_kong_all_policy_conserves_tiles_and_uses_dead_wall():
     # Conservation is asserted inside play_game after every kong/replacement, so
     # a batch that actually declares kongs exercises the dead-wall draw path.
@@ -429,6 +431,8 @@ def test_per_seat_kong_policy_restricts_kongs_to_enabled_seats():
     assert seen_seats == {0}, f"only seat 0 may kong, saw {seen_seats}"
 
 
+# EV comparison over a large self-play batch (~35s).
+@pytest.mark.slow
 def test_daiminkan_is_not_positive_ev_under_house_rule():
     # 大明槓 scores 0 tai, breaks nothing extra, and forfeits 槓上開花, so enabling
     # it on top of 暗槓/加槓 must not raise the actor's EV. Paired seeds (same wall)

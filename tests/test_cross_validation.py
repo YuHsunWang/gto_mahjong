@@ -2,8 +2,13 @@
 
 import random
 
+import pytest
+
 from taimahjong.bruteforce import bruteforce_shanten
 from taimahjong.shanten import shanten
+
+# Brute-force oracle cross-check over 320 seeded hands (~15s).
+pytestmark = pytest.mark.slow
 
 
 def _random_meld(rng):

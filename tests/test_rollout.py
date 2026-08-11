@@ -5,6 +5,8 @@ from dataclasses import replace
 from math import sqrt
 from random import Random
 
+import pytest
+
 from taimahjong.config import DEFAULT_RULES
 from taimahjong.danger import RiverEntry
 from taimahjong.ev import _production_discard_policy
@@ -201,6 +203,8 @@ def test_acting_continuation_advances_caller_visible_by_each_discard_once():
     assert snapshots[0][called] == snapshots[1][called] == 4
 
 
+# Convergence against the exact oracle (~12s).
+@pytest.mark.slow
 def test_rollout_converges_to_exact_oracle_and_covers_reachable_kinds():
     cases = representative_reference_cases()
     all_observed = set()
