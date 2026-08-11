@@ -2,20 +2,48 @@
 
 # Taiwanese Mahjong Heuristic-EV Trainer
 
-A tool for practicing Taiwanese 16-tile mahjong. It works out your hand efficiency,
-estimates deal-in danger, scores winning hands, and uses EV (expected value — roughly
-"how many chip units this move is worth on average") to provide this model's estimated
-discard recommendation. You can
-play through a web UI that scores you live, or call any single feature from the command
-line.
+**Play a hand of Taiwanese 16-tile mahjong; every discard is scored by Monte Carlo terminal
+rollouts — and the engine says so out loud when it cannot tell two discards apart.**
 
-Scope first: it only handles the 34 ordinary tile kinds (characters, dots, bamboo,
-honors) — no flowers, no special hands. The EV rollout models self-draws, ron wins, and
-draws for both the player and opponents. Its ron-probability lookup is calibrated from
-built-in-bot self-play, while hidden hands and future policies include heuristic assumptions.
-None is calibrated to human play, and a missing lookup table is reported as a heuristic
-fallback. The tool is useful for practicing judgment, but its numbers are not exact
-real-table win rates or exact EVs.
+![Full-hand trainer: live net-EV feedback after a discard](docs/screenshots/trainer-feedback.png)
+
+That is the screen after one played discard. The engine does not merely say "wrong move." It says:
+this is 0.44 net EV behind the model's own top choice — and, by the way, the paired difference
+between 9p and 7p is +0.04 with a descriptive interval of `[-0.53, +0.61]` spanning zero, so
+**under the current simulation budget the model cannot separate them**. Reporting its own
+unresolved rankings is the part of this project that took the most work.
+
+## Three technical points
+
+**1. Shanten by DP, not brute force.** Hands are held in a base-5 suit encoding, each suit's
+feasible decompositions are packed into a bitset, and a memoized suit-profile composition replaces
+the cartesian merge across suits ([`taimahjong/shanten.py`](taimahjong/shanten.py)). Correctness is
+pinned by an independent brute-force oracle: 50,000 seeded random hands plus an exhaustive sweep of
+*every* single-suit shape ([`tests/test_shanten_optimized.py`](tests/test_shanten_optimized.py)).
+
+**2. EV is a common-random-numbers terminal simulation, not a formula.** Every candidate discard
+shares the same sampled hidden worlds and random streams, each trial resolves to exactly one
+mutually exclusive terminal outcome, and the house rules settle all four seats zero-sum. Confidence
+-bound candidate screening and sampling-error estimates mean that when a ranking will not separate,
+it is flagged unresolved rather than forced ([`taimahjong/ev.py`](taimahjong/ev.py) →
+[`taimahjong/rollout.py`](taimahjong/rollout.py)).
+
+**3. There is an independent ruler measuring the model.** `reference_ev` is a 26-case stratified
+small-wall corpus where terminal probabilities can be computed exactly, used to measure the
+production EV's MAE, top-1 agreement, ranking inversions, regret, and rank correlation
+([`taimahjong/reference_ev.py`](taimahjong/reference_ev.py),
+[`docs/ev-reference-report.md`](docs/ev-reference-report.md)). "How accurate is this estimate" is a
+question with a number attached in this repo, not an adjective.
+
+## What it honestly is not
+
+It only handles the 34 ordinary tile kinds (characters, dots, bamboo, honors) — no flowers, no
+special hands. The EV rollout models self-draws, ron wins, and draws for both the player and
+opponents. Its ron-probability lookup is calibrated from built-in-bot self-play, while hidden hands
+and future policies include heuristic assumptions. None is calibrated to human play, and a missing
+lookup table is reported as a heuristic fallback. The tool is useful for practicing judgment, but
+its numbers are not exact real-table win rates or exact EVs. The full four-way split is in the
+[methodology card](#methodology-card) below.
 
 Tiles use a compact notation: digits before a suit — `m` characters, `p` dots,
 `s` bamboo, `z` honors (1–7). For example `123m456p789s1122334z` is 16 tiles.
@@ -38,6 +66,66 @@ uvicorn server.api:app
 python3 -m pip install -r requirements-dev.txt
 python3 -m pytest tests/ -q
 ```
+
+The full suite takes about 12 minutes, 9 of which are the exhaustive oracle sweep in
+`tests/test_shanten_optimized.py`. For a quick check, skip it:
+`python3 -m pytest tests/ -q --ignore=tests/test_shanten_optimized.py`.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph entry["Entry points"]
+        WEB["server/api.py<br/>FastAPI + static UI"]
+        CLI["taimahjong/__main__.py<br/>CLI"]
+    end
+
+    subgraph product["Drill layer"]
+        TRAINER["trainer.py<br/>full hand"]
+        QUIZ["quiz.py<br/>spot / endgame"]
+        ANALYSIS["analysis.py<br/>calibration source + fallback reporting"]
+    end
+
+    subgraph core["EV core"]
+        EV["ev.py<br/>screening · CRN sampling · sampling error"]
+        ROLLOUT["rollout.py<br/>terminal resolution + 4-seat settlement"]
+        SELFPLAY["selfplay.py<br/>game engine / discard policy"]
+    end
+
+    subgraph support["Support modules"]
+        SHANTEN["shanten.py<br/>shanten DP"]
+        UKEIRE["ukeire.py<br/>ukeire"]
+        DANGER["danger.py<br/>danger features"]
+        SCORING["scoring.py<br/>scoring + settlement rules"]
+        CALIB["calibration.py<br/>deal-in probability lookup"]
+    end
+
+    subgraph validate["Correctness gates"]
+        BRUTE["bruteforce.py<br/>shanten brute-force oracle"]
+        REF["reference_ev.py<br/>exact EV reference (26 cases)"]
+    end
+
+    DATA[("data/calibration.json<br/>bot self-play calibration table")]
+
+    WEB --> TRAINER & QUIZ & ANALYSIS
+    CLI --> TRAINER & QUIZ & ANALYSIS
+    TRAINER & QUIZ --> EV
+    ANALYSIS --> CALIB
+    EV --> ROLLOUT --> SELFPLAY
+    EV --> SHANTEN & UKEIRE & DANGER
+    DANGER --> UKEIRE --> SHANTEN
+    ROLLOUT --> SCORING --> DANGER
+    CALIB --> DANGER
+    CALIB -.reads.-> DATA
+    SELFPLAY -."produced by --selfplay".-> DATA
+    BRUTE -.compared in tests.-> SHANTEN
+    REF -.compared in tests.-> EV
+```
+
+The calibration table feeds itself: `selfplay.py` runs bot self-play to produce
+`data/calibration.json`, and `calibration.py` reads it back for the production rollout. That is
+exactly why the calibration domain covers only the built-in bots — there is no human anywhere in
+this loop.
 
 ---
 
@@ -152,6 +240,16 @@ payments, not separate estimates recombined to produce `net_ev`.
 ```bash
 python3 -m taimahjong "123m123p123s11122233z" --ev --opp-river "1m2m" --opp-declared 0 --turns 3
 ```
+
+The same output in the web UI:
+
+![Discard EV ranking with 95% CIs and unresolved markers](docs/screenshots/analyze-ev-ranking.png)
+
+Every candidate carries a 95% CI and its sample count. The top two are marked `≈` because the
+interval on their paired difference spans zero — the engine's position is "these two cannot be
+separated at this budget," not a confident pick. The `sha256:` string is the content hash of the
+calibration table used for this run; swapping the table changes the id, so a result can always be
+traced back to the version that produced it.
 
 There's also a "should I declare migi?" feature (`--declare`): it computes the exact
 probability of the locked wait after declaring versus a simulation of the normal style

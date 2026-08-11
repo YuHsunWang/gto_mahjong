@@ -2,15 +2,39 @@
 
 # 台灣麻將 heuristic EV 訓練器
 
-這是一套幫你練台灣十六張麻將的工具。它會幫你算牌效、估放槍危險、算台，還會用
-EV（期望值，也就是「這一手平均下來值多少籌碼單位」）提供本模型的估計切牌建議。你可以用網頁
-介面一邊打一邊看評分，也可以用命令列單獨叫某個功能。
+**一局台灣十六張麻將，每一次切牌都用蒙地卡羅終局 rollout 打分，並在模型分不出高下時直說。**
 
-適用範圍先講清楚：只處理 34 種普通牌（萬、筒、條、字），不做花牌，也不算特殊
-牌型。EV rollout 會模擬自己與對手的自摸、榮和及流局；其中榮和機率的 lookup table
-來自內建機器人自我對局，隱藏手牌與各家後續策略則含 heuristic 假設。這些都不是對真人
-牌局的校準，缺少 lookup table 時還會明示改用 heuristic fallback。因此它適合拿來練判斷、
-練手感，但別把數字當成真人牌桌上的精準勝率或精準 EV。
+![整場實戰：切牌後即時 net EV 回饋](docs/screenshots/trainer-feedback.png)
+
+上圖是打完一手之後的畫面。引擎不只說「你切錯了」，它說的是：這手比模型的首選差 0.44 net EV；
+順帶一提，九筒和七筒之間 paired 差為 +0.04、描述區間 `[-0.53, +0.61]` 跨過 0，**在目前的模擬
+預算下模型分不出這兩張誰好**。會主動報告自己分不出來的排名，是這個專案最花力氣的部分。
+
+## 三個技術重點
+
+**1. 向聽數 DP，不是暴力搜尋。** 手牌以 base-5 suit encoding 表示，各花色的可行拆解結果存成
+bitset，再用 memoized suit-profile composition 取代跨花色的笛卡兒積合併
+（[`taimahjong/shanten.py`](taimahjong/shanten.py)）。正確性由一個獨立的暴力 oracle 把關：
+50,000 手隨機牌加上**所有**單一花色 shape 的窮舉比對
+（[`tests/test_shanten_optimized.py`](tests/test_shanten_optimized.py)）。
+
+**2. EV 是共用亂數的終局模擬，不是公式拼裝。** 所有候選切牌共用同一批抽樣的隱藏世界與亂數流
+（common random numbers），每次 trial 只落在一個互斥終局上，再依家規做四家零和結算；搭配信賴
+界線候選篩選與取樣誤差估計，排名分不開時就標記為 unresolved 而不是硬排
+（[`taimahjong/ev.py`](taimahjong/ev.py) → [`taimahjong/rollout.py`](taimahjong/rollout.py)）。
+
+**3. 有一把獨立的尺在量這個模型。** `reference_ev` 是一組 26 個分層抽樣的小牌牆局面，可以把終局
+機率算到精確值，用來量測 production EV 的 MAE、top-1 一致率、排名倒轉、regret 與等級相關係數
+（[`taimahjong/reference_ev.py`](taimahjong/reference_ev.py)、[`docs/ev-reference-report.md`](docs/ev-reference-report.md)）。
+換句話說，「這個估計值有多準」在這個 repo 裡是一個有數字的問題，不是一句形容詞。
+
+## 老實說它不是什麼
+
+只處理 34 種普通牌（萬、筒、條、字），不做花牌，也不算特殊牌型。EV rollout 會模擬自己與對手的
+自摸、榮和及流局；其中榮和機率的 lookup table 來自內建機器人自我對局，隱藏手牌與各家後續策略
+則含 heuristic 假設。這些都不是對真人牌局的校準，缺少 lookup table 時還會明示改用 heuristic
+fallback。因此它適合拿來練判斷、練手感，但別把數字當成真人牌桌上的精準勝率或精準 EV。
+完整的四類拆解在下面的[方法論卡](#方法論卡)。
 
 牌的寫法用簡寫：數字寫在花色前面，`m` 萬、`p` 筒、`s` 條、`z` 字牌（1–7）。例如
 `123m456p789s1122334z` 就是 16 張。
@@ -33,6 +57,64 @@ uvicorn server.api:app
 python3 -m pip install -r requirements-dev.txt
 python3 -m pytest tests/ -q
 ```
+
+完整測試約 12 分鐘，其中 9 分鐘花在 `tests/test_shanten_optimized.py` 的窮舉 oracle 比對上。
+想快速確認可以先跳過它：`python3 -m pytest tests/ -q --ignore=tests/test_shanten_optimized.py`。
+
+## 架構
+
+```mermaid
+flowchart TB
+    subgraph entry["入口"]
+        WEB["server/api.py<br/>FastAPI + 靜態 UI"]
+        CLI["taimahjong/__main__.py<br/>CLI"]
+    end
+
+    subgraph product["題型層"]
+        TRAINER["trainer.py<br/>整場實戰"]
+        QUIZ["quiz.py<br/>單手 / 殘局"]
+        ANALYSIS["analysis.py<br/>校準來源與 fallback 回報"]
+    end
+
+    subgraph core["EV 核心"]
+        EV["ev.py<br/>候選篩選 · CRN 抽樣 · 取樣誤差"]
+        ROLLOUT["rollout.py<br/>終局判定與四家結算"]
+        SELFPLAY["selfplay.py<br/>對局引擎 / 出牌 policy"]
+    end
+
+    subgraph support["支援模組"]
+        SHANTEN["shanten.py<br/>向聽 DP"]
+        UKEIRE["ukeire.py<br/>進張"]
+        DANGER["danger.py<br/>危險度特徵"]
+        SCORING["scoring.py<br/>台數與結算規則"]
+        CALIB["calibration.py<br/>放銃機率 lookup"]
+    end
+
+    subgraph validate["正確性把關"]
+        BRUTE["bruteforce.py<br/>向聽暴力 oracle"]
+        REF["reference_ev.py<br/>精確 EV 基準（26 局面）"]
+    end
+
+    DATA[("data/calibration.json<br/>bot self-play 校準表")]
+
+    WEB --> TRAINER & QUIZ & ANALYSIS
+    CLI --> TRAINER & QUIZ & ANALYSIS
+    TRAINER & QUIZ --> EV
+    ANALYSIS --> CALIB
+    EV --> ROLLOUT --> SELFPLAY
+    EV --> SHANTEN & UKEIRE & DANGER
+    DANGER --> UKEIRE --> SHANTEN
+    ROLLOUT --> SCORING --> DANGER
+    CALIB --> DANGER
+    CALIB -.讀取.-> DATA
+    SELFPLAY -."--selfplay 產生".-> DATA
+    BRUTE -.測試中比對.-> SHANTEN
+    REF -.測試中比對.-> EV
+```
+
+校準表是**自己餵自己**的：`selfplay.py` 跑機器人自我對局產生 `data/calibration.json`，
+`calibration.py` 再把它讀回來供 production rollout 使用。這也是為什麼校準資料域只涵蓋內建
+bot——這條迴圈裡沒有真人。
 
 ---
 
@@ -135,6 +217,14 @@ EV 就是期望值。production EV 會為每種候選切牌抽樣四家隱藏狀
 ```bash
 python3 -m taimahjong "123m123p123s11122233z" --ev --opp-river "1m2m" --opp-declared 0 --turns 3
 ```
+
+網頁上的同一份輸出長這樣：
+
+![切牌 EV 排名，含 95% CI 與無法區分標記](docs/screenshots/analyze-ev-ranking.png)
+
+每個候選都附 95% CI 與樣本數，最上面兩個掛著 `≈` 是因為它們的 paired 差區間跨過 0——引擎的
+立場是「這兩張在目前預算下分不出來」，而不是挑一個假裝有把握。畫面上那串 `sha256:` 是這次用到
+的校準表 content hash，換表會換 id，方便回頭對照結果是哪一版算出來的。
 
 另外有個「要不要宣告 migi」的功能（`--declare`）：一邊算「宣告後鎖聽、直接等」的
 機率，一邊模擬「不宣告、還有機會換大牌」的打法，幫你比哪個 EV 高。
