@@ -912,22 +912,37 @@ def _sample_production_world(
             for tile, count in enumerate(sampled):
                 remaining[tile] -= count
         player.hand[:] = sampled
-    ron_value_hands = (
-        tuple(
-            _ron_value_hand(
-                player.hand,
+    ron_value_hands = (None, None, None, None)
+    if calibrated_ron_values:
+        value_hands = []
+        for seat, player in enumerate(players):
+            source_hand = player.hand.copy()
+            declared = len(player.melds) + len(player.kongs)
+            if seat == acting_seat:
+                # The actor enters the discard decision holding 17 tiles, but
+                # _ron_value_hand's tenpai test assumes a post-discard hand of
+                # 16 - 3*declared.  Feeding it 17 makes a five-meld single wait
+                # read as tenpai, so it keeps all 17 tiles and then hands an
+                # 18-tile winner to scoring.  Drop one to restore that size.
+                #
+                # Which tile does not matter: _ron_value_hand rebuilds its pool
+                # as available + hand, and available is 4 - seen - hand, so the
+                # hand term cancels and the pool is 4 - seen either way.  The
+                # removal only feeds the tenpai test, and it is identical for
+                # every candidate, so the shared world stays candidate-neutral.
+                source_hand[next(
+                    tile for tile, count in enumerate(source_hand) if count
+                )] -= 1
+            value_hands.append(_ron_value_hand(
+                source_hand,
                 [
-                    4 - seen[tile] - player.hand[tile]
+                    4 - seen[tile] - source_hand[tile]
                     for tile in range(34)
                 ],
-                len(player.melds) + len(player.kongs),
+                declared,
                 value_rng,
-            )
-            for player in players
-        )
-        if calibrated_ron_values
-        else (None, None, None, None)
-    )
+            ))
+        ron_value_hands = tuple(value_hands)
     pool = [
         tile
         for tile, count in enumerate(remaining)
