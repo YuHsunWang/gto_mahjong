@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import resource
 import sys
 from collections import Counter
 from dataclasses import dataclass
@@ -34,9 +35,8 @@ from taimahjong.tiles import parse_tiles
 from taimahjong.ukeire import discard_analysis
 
 
-SIMS = 200
+DEFAULT_SIMS = 200
 TOP_K = 5
-CURRENT_POOL = 32
 
 
 @dataclass(frozen=True)
@@ -98,6 +98,7 @@ def _validate_mechanisms(
     case: ProbeCase,
     ranked: list[ev.EVRankEntry],
     pool: int,
+    sims: int,
     stratification: str,
     calibration_active: bool,
     quantile_records: list[tuple[tuple[float, ...], tuple[float, ...]]],
@@ -106,29 +107,29 @@ def _validate_mechanisms(
     if len(world_batches) != 1:
         raise AssertionError(f"expected one production-world batch, got {len(world_batches)}")
     worlds = world_batches[0]
-    if len(worlds) != SIMS or len(quantile_records) != pool:
+    if len(worlds) != sims or len(quantile_records) != pool:
         raise AssertionError("configured hidden-world pool was not exercised")
 
     strata = tuple(world.hidden_stratum for world in worlds)
-    if strata != tuple(trial % pool for trial in range(SIMS)):
+    if strata != tuple(trial % pool for trial in range(sims)):
         raise AssertionError("hidden-world strata were not reused in balanced trial order")
     cluster_sizes = sorted(Counter(strata).values())
     expected_sizes = sorted(
-        SIMS // pool + int(index < SIMS % pool)
+        sims // pool + int(index < sims % pool)
         for index in range(pool)
     )
     if cluster_sizes != expected_sizes:
         raise AssertionError("hidden-world cluster sizes are not balanced")
 
     terminal_seeds = [world.terminal_seed for world in worlds]
-    if None in terminal_seeds or len(set(terminal_seeds)) != SIMS:
+    if None in terminal_seeds or len(set(terminal_seeds)) != sims:
         raise AssertionError("terminal streams were not fresh per trial")
-    if pool < SIMS:
-        for trial in range(pool, SIMS):
+    if pool < sims:
+        for trial in range(pool, sims):
             source = worlds[trial % pool]
             if worlds[trial].players is not source.players or worlds[trial].wall is not source.wall:
                 raise AssertionError("capped trials did not reuse their hidden determinization")
-    elif len({id(world.players) for world in worlds}) != SIMS:
+    elif len({id(world.players) for world in worlds}) != sims:
         raise AssertionError("uncapped trials unexpectedly reused hidden determinizations")
 
     for opponent_index in range(3):
@@ -161,7 +162,7 @@ def _validate_mechanisms(
         raise AssertionError(
             f"confidence screening inactive: returned={len(real)} legal={legal_count}"
         )
-    if any(entry.sample_count != SIMS for entry in real):
+    if any(entry.sample_count != sims for entry in real):
         raise AssertionError("a screened finalist did not receive the production budget")
     if any(entry.trial_strata != real[0].trial_strata for entry in real[1:]):
         raise AssertionError("discard candidates did not share common random worlds")
@@ -195,6 +196,7 @@ def run_case(
     case: ProbeCase,
     *,
     pool: int,
+    sims: int,
     stratification: str,
     calibration: Calibration | None,
 ) -> dict[str, object]:
@@ -247,7 +249,7 @@ def run_case(
             case.opponents,
             case.visible,
             turns=case.turns,
-            sims=SIMS,
+            sims=sims,
             seed=case.seed,
             calibration=calibration,
             top_k=TOP_K,
@@ -262,6 +264,7 @@ def run_case(
         case=case,
         ranked=ranked,
         pool=pool,
+        sims=sims,
         stratification=stratification,
         calibration_active=calibration is not None,
         quantile_records=quantile_records,
@@ -296,16 +299,27 @@ def run_case(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pool", choices=("32", "full"), required=True)
+    # "32" and "full" are the original two arms; an explicit integer lets a
+    # run target a specific cap, such as the committed production constant.
+    parser.add_argument("--pool", required=True)
     parser.add_argument("--stratification", choices=("lhs", "iid"), required=True)
     parser.add_argument("--calibration", choices=("on", "off"), required=True)
     parser.add_argument("--corpus", choices=("historical", "study"), required=True)
     parser.add_argument("--repeat", type=int, default=0)
+    parser.add_argument("--sims", type=int, default=DEFAULT_SIMS)
     args = parser.parse_args()
     if args.repeat < 0:
         raise ValueError("repeat must be non-negative")
+    if args.sims < 2:
+        raise ValueError("sims must be at least two")
 
-    pool = CURRENT_POOL if args.pool == "32" else SIMS
+    sims = args.sims
+    if args.pool == "full":
+        pool = sims
+    else:
+        pool = int(args.pool)
+        if not 1 <= pool <= sims:
+            raise ValueError("pool must be between one and sims")
     calibration = (
         Calibration.from_path(ROOT / "data" / "calibration.json")
         if args.calibration == "on"
@@ -320,6 +334,7 @@ def main() -> None:
         run_case(
             case,
             pool=pool,
+            sims=sims,
             stratification=args.stratification,
             calibration=calibration,
         )
@@ -328,15 +343,18 @@ def main() -> None:
     print(json.dumps({
         "configuration": {
             "pool": pool,
-            "cap_enabled": pool < SIMS,
+            "cap_enabled": pool < sims,
             "stratification": args.stratification,
             "calibration": args.calibration,
             "corpus": args.corpus,
             "repeat": args.repeat,
-            "sims": SIMS,
+            "sims": sims,
             "top_k": TOP_K,
         },
         "total_seconds": sum(result["seconds"] for result in results),
+        # Whole-process peak RSS.  Every configuration runs in a fresh process,
+        # so this is the configuration's peak, not a running maximum.
+        "peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
         "cases": results,
     }, sort_keys=True))
 

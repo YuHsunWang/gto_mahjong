@@ -69,7 +69,11 @@ BASE_OPPONENT_HAZARD = 0.03
 FOLD_HAZARD_CUTOFF = 0.60
 DRAW_VALUE = 0.0
 SCREENING_EFFECT_MARGIN = 0.10
-PRODUCTION_HIDDEN_WORLD_STRATA = 32
+# Measured, not heuristic: see docs/hidden-world-strata.md.  A pool this size
+# or smaller puts a floor of sd(cluster means)/sqrt(pool) under the reported
+# error that added trials cannot cross.  800 covers every shipped budget; above
+# it the pool clusters as before, bounding cost at the API's 5,000 ceiling.
+PRODUCTION_HIDDEN_WORLD_STRATA = 800
 
 
 @dataclass(frozen=True)
