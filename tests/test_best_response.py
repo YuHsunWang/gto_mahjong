@@ -37,9 +37,16 @@ def test_exploitability_is_never_negative():
         assert result.exploitability >= 0.0, case.name
 
 
+@pytest.mark.slow
 def test_measuring_the_best_response_against_itself_yields_zero():
     """Feeding the solved plan back in as the measured policy must close the
-    gap exactly; any residue means the solver and the scorer disagree."""
+    gap exactly; any residue means the solver and the scorer disagree.
+
+    Slow rather than fast only because it costs 9s of a 2.5-minute push
+    budget: it solves twice per case. The four structural checks that stay in
+    the fast batch cover non-negativity, the clairvoyant bound, the shape of
+    the information key, and the zero end of the scale.
+    """
     for case in DEEP_CASES[:2]:
         solved = exploitability(case, sims=8, seed=1, mode="opening")
         again = exploitability(
