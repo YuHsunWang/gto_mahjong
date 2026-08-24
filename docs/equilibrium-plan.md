@@ -61,3 +61,66 @@ GTO 要的是一組策略組合，其中沒有任何一家能靠偏離獲利。�
 
 `tests/test_claims.py` 的守門條件應該逐項解除，不是整包拿掉：真的解出哪個子賽局，就只放行對應
 範圍的措辭。
+
+---
+
+## 步驟 2 已完成（2026-08-24）：exploitability 量出來了
+
+`taimahjong/best_response.py` 實作了 acting seat 的 best response 與
+exploitability 量測，語料沿用 `reference_ev` 那 26 個 ≤4 張牌牆局面。
+
+### 可以講的一句話
+
+> production rollout policy 在 ≤4 張牌牆、無鳴牌的殘局子賽局中，在 production
+> 自身的對手信念模型下，exploitability 為 **0.556 台**（26 局面平均，sims=60），
+> clairvoyant 上界 **0.898 台**。26 個局面中有 11 個恰為 0。
+
+範圍要連著講：這不是中盤（`ev_rank` 評到 24 巡）、不含吃碰槓、不是對真人。
+
+### 設計上的兩個決定
+
+**對照組**：acting seat 與三家對手都跑 `_production_discard_policy`，best response
+只替換 acting seat。這是 production rollout 實際模擬的組合。
+
+**資訊限制**：兩邊吃同樣的資訊。production 的 rollout policy 平常拿到的是 rollout
+的真實剩餘牌牆——那對真人是暗的——所以在這裡 acting seat 自己的決策改吃它的信念池
+（4 − 手牌 − 可見 − 已觀察到的棄牌）。少了這一步，被量測的 policy 會看得比 best
+response 多，非負不變量就失去意義。
+
+### 一個必須記錄的負面結果：完整 information-set BR 會退化
+
+原計畫的「對整個 policy 求 information-set best response」**在任何負擔得起的樣本數
+下都會退化成 clairvoyant**，原因是結構性的而非實作錯誤。
+
+acting seat 在第二次決策時觀測到自己摸的那張加三家各棄的一張，這個觀測太細，兩個
+抽樣世界幾乎不可能落進同一個資訊集：
+
+| sims | 資訊集 | 被 >1 個世界抵達 | full 值 | clairvoyant 值 |
+|---:|---:|---:|---:|---:|
+| 20 | 304 | 0 | 1.762 | 1.762 |
+| 100 | 1,631 | 3 | 1.675 | 1.675 |
+| 200 | 3,170 | 17 (0.5%) | 1.522 | 1.522 |
+
+資訊集數隨樣本數線性成長，所以加樣本只會讓退化更嚴重，不會改善。這個模式以
+`mode="full"` 保留，並由 `test_full_mode_information_sets_are_effectively_singletons`
+釘住其退化，避免下一個人把它的數字當成 exploitability。
+
+**繞過的方式**：只優化開局那次決策（`mode="opening"`，預設）。所有抽樣世界依定義
+共享開局資訊集，所以沒有退化，而且那正是 `ev_rank` 存在要回答的決策。續打維持
+measured policy，兩邊一致。
+
+### 這個數字怎麼用
+
+policy 偏誤 0.56–0.90 台，與 `docs/hidden-world-strata.md` 量到的抽樣雜訊
+（sims=2000 時 paired gap 半寬 0.67 台）**同一量級**。沒有一方輾壓另一方，因此：
+
+- 加樣本仍有意義，雜訊還沒被偏誤淹沒；
+- 但總誤差有一個約 0.6 台的地板是加樣本跨不過去的，把雜訊壓到遠低於此純屬拋光。
+
+**這個比較要打折**：exploitability 語料是 ≤4 張牌牆殘局，strata 研究是中盤最多 12
+巡，兩個不同 regime，屬量級參考而非嚴格對照。
+
+### 解除了哪一條守門
+
+`tests/test_claims.py` 的 `gto`／`理論最佳`／`最佳解` **維持全部封鎖**。本步驟量的是
+exploitability，不是均衡；步驟 3（迭代到近似均衡）尚未開始。
