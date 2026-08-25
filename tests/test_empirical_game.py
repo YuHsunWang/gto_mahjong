@@ -3,7 +3,12 @@
 The claim is only as good as the tabulation under it, so these pin the
 properties a broken payoff table would violate: settlement is zero-sum,
 profiles are compared on shared worlds, a best reply really is the row
-maximum, and a seat the wall never reaches changes nothing by exactly zero.
+maximum, and a role the wall never reaches changes nothing by exactly zero.
+
+The players are roles -- actor, then relative draw order 1, 2, 3 -- so a
+profile entry means the same thing in the 13 cases whose actor sits at seat 0
+and the 13 whose actor sits at seat 1.  The role-to-seat rotation lives in
+``profile_payoffs``; the exact-zeros test is what pins it.
 
 The slow pair at the bottom pins both halves of what step 3 concluded -- that
 production's profile is not an equilibrium, and that no profile was shown to
@@ -51,19 +56,19 @@ def test_one_world_is_exact_and_zero_sum():
 
 
 def test_best_reply_is_the_row_maximum():
-    """A best reply must beat every alternative for that seat, holding the
+    """A best reply must beat every alternative for that role, holding the
     rest of the profile fixed; anything less means the search is skipping."""
     game = build_game(SMALL, sims=3, seed=1)
     profile = ("efficiency",) * 4
-    for seat in range(4):
-        name, gain = game.best_reply(profile, seat)
+    for role in range(4):
+        name, gain = game.best_reply(profile, role)
         assert gain >= 0.0
         for alternative in game.strategies:
             candidate = list(profile)
-            candidate[seat] = alternative
+            candidate[role] = alternative
             assert (
-                game.payoffs[tuple(candidate)][seat]
-                <= game.payoffs[profile][seat] + gain + 1e-12
+                game.payoffs[tuple(candidate)][role]
+                <= game.payoffs[profile][role] + gain + 1e-12
             )
 
 
@@ -121,34 +126,36 @@ def test_efficiency_and_oracle_are_one_behaviour_not_two():
     assert disagree > 0, (agree, disagree)
 
 
-def test_a_seat_the_wall_never_reaches_cannot_change_anything():
+def test_a_role_the_wall_never_reaches_cannot_change_anything():
     """The sharpest structural check available: exact zeros.
 
-    With ``w`` tiles left, only relative positions 1..w after the actor ever
-    draw, so a seat past that never discards and its strategy cannot move any
-    payoff by any amount.  Verified 2026-08-24 over 4,000 such unit
-    observations at 400 worlds: every gain was exactly 0.0, not merely small.
-    Leaking hidden state or misaligning a seat index would perturb these.
+    With ``w`` tiles left, only roles 1..w ever draw, so a role past that never
+    discards and its strategy cannot move any payoff by any amount.  Verified
+    2026-08-24 over 4,000 such unit observations at 400 worlds: every gain was
+    exactly 0.0, not merely small.  Leaking hidden state would perturb these,
+    and so would a wrong role-to-seat rotation: the idle role is stated here in
+    role terms and resolved to a seat inside ``profile_payoffs``.  That is not
+    vacuous -- checked 2026-08-25, the two wall-2 cases whose actor sits at
+    seat 1 have idle role 3, and the seat that entry 3 would name without the
+    rotation is one the wall does reach, whose tilt moves payoffs in 2 of 8
+    sampled worlds.  Reading profiles as seats fails here.
     """
     E, S = "efficiency", "safety"
     checked = 0
     for case in CASES:
         wall = len(case.state.wall)
-        idle = [
-            seat for seat in range(4)
-            if (seat - case.state.acting_seat) % 4 > wall
-        ]
+        idle = [role for role in range(4) if role > wall]
         if not idle:
             continue
         observation = observation_for(case)
         for world in sample_worlds(observation, 2, 1 + case.seed):
             base = profile_payoffs(world, observation, (E,) * 4)
-            for seat in idle:
+            for role in idle:
                 profile = list((E,) * 4)
-                profile[seat] = S
+                profile[role] = S
                 assert profile_payoffs(world, observation, tuple(profile)) == base
                 checked += 1
-    assert checked, "corpus no longer contains a seat the wall cannot reach"
+    assert checked, "corpus no longer contains a role the wall cannot reach"
 
 
 def test_strategy_set_is_listed_not_inferred():
@@ -196,9 +203,10 @@ def test_regret_interval_and_regret_agree_on_the_point_estimate():
 def corpus_game():
     """The corpus game at a budget the two slow claims can both be read off.
 
-    100 worlds costs ~130s and is the cheapest budget whose interval clears
-    zero with room: seeds 1/2/3 gave lower bounds +0.064/+0.127/+0.074, all
-    naming seat 0 -> safety.  The reported measurement is at 400 worlds
+    100 worlds costs ~150s and clears zero with room: measured 2026-08-25 on
+    the role-indexed game, world seeds 1/2/3 gave lower bounds
+    +0.078/+0.147/+0.087, all naming role 0 -> safety, and none of the three
+    put any profile below zero.  The reported measurement is at 400 worlds
     (docs/equilibrium-plan.md); this only has to pin the claim, not restate
     its precision.
     """
@@ -209,14 +217,17 @@ def corpus_game():
 def test_the_production_profile_is_shown_not_to_be_an_equilibrium(corpus_game):
     """The headline result.
 
-    Recorded 2026-08-24 at 26 cases x 400 worlds: regret +0.265 tai, 95% CI
-    [+0.082, +0.519] resampling cases, best deviation seat 0 -> safety.  The
-    interval clearing zero is the whole claim -- the point estimate alone
-    survived every budget while the equilibrium it implied did not.
+    Recorded 2026-08-25 on the role-indexed game at 26 cases x 400 worlds:
+    regret +0.259 tai, 95% CI [+0.100, +0.555] resampling cases, best deviation
+    role 0 -- the actor -- to safety.  The interval clearing zero is the whole
+    claim; the point estimate alone survived every budget while the equilibrium
+    it implied did not.  Naming the *actor* rather than a seat is what the role
+    rebuild bought: under seat indexing the same deviation was reported for
+    seat 0, which is the actor in only half the corpus.
     """
     result = corpus_game.regret_interval(("efficiency",) * 4)
     assert result.resolved and result.low > 0.0, result
-    assert (result.seat, result.reply) == (0, "safety"), result
+    assert (result.role, result.reply) == (0, "safety"), result
 
 
 @pytest.mark.slow
@@ -224,10 +235,12 @@ def test_no_profile_in_this_abstraction_is_shown_to_be_an_equilibrium(corpus_gam
     """Guards the *negative* half of the step 3 writeup.
 
     Being an equilibrium means no deviation pays, which this budget can only
-    show by putting the regret interval entirely below zero.  At 400 worlds no
-    profile managed it and five stayed unresolved.  If one ever does, the
-    "no equilibrium was solved" wording in docs/equilibrium-plan.md is stale
-    and should fail here rather than quietly stay in the file.
+    show by putting the regret interval entirely below zero.  Rebuilding the
+    game on roles did not change that: at 400 worlds no profile managed it and
+    four stayed unresolved (`EESS`, `SEES`, `SESS`, `SSSS`), against five under
+    seat indexing.  If one ever does, the "no equilibrium was solved" wording
+    in docs/equilibrium-plan.md is stale and should fail here rather than
+    quietly stay in the file.
     """
     solved = [
         profile for profile in corpus_game.payoffs

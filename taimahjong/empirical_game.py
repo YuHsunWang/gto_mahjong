@@ -23,6 +23,16 @@ Seats are held to their own information.  Each seat's policy is called with its
 own belief pool -- four copies minus its own hand minus everything publicly
 visible -- never with the true remaining wall, which no seat can see.
 
+The players are *roles*, not absolute seats: the actor, then the seats drawing
+1, 2 and 3 turns after it.  The actor sits at seat 0 in 13 of the 26 cases and
+at seat 1 in the other 13, so a seat-indexed profile entry meant the actor in
+half the corpus and a downstream seat in the other half, and the payoff row
+averaged the two.  Role indexing buys no extra observations -- either way each
+player gets the same 26 case clusters -- only a player that means one thing.
+It also moves the remaining confound rather than removing it: the dealer is
+absolute seat 0, so each role now mixes 13 dealer cases with 13 non-dealer
+ones, where seat indexing had kept that clean and the role dirty.
+
 Nothing here is worth reading without :meth:`EmpiricalGame.regret_interval`.
 :meth:`EmpiricalGame.equilibria` compares point estimates, and at a thin budget
 it returns whichever profile the sampling noise favoured: the same corpus named
@@ -130,8 +140,17 @@ def profile_payoffs(
     profile: tuple[str, str, str, str],
     rules: RulesConfig = DEFAULT_RULES,
 ) -> tuple[Fraction, Fraction, Fraction, Fraction]:
-    """Exact per-seat expectation over draw orders for one world and profile."""
-    policies = tuple(STRATEGIES[name] for name in profile)
+    """Exact per-*role* expectation over draw orders for one world and profile.
+
+    ``profile`` is indexed by role, not by seat: entry ``r`` is the policy of
+    the seat that draws ``r`` turns after the actor, and entry 0 is the actor.
+    Returned payoffs are indexed the same way.  Everything between is still
+    seat-indexed, because the wall, the settlement and the dealer are.
+    """
+    acting = state.acting_seat
+    policies = tuple(
+        STRATEGIES[profile[(seat - acting) % 4]] for seat in range(4)
+    )
     totals = [Fraction(0)] * 4
 
     def credit(outcome, probability: Fraction) -> None:
@@ -207,7 +226,7 @@ def profile_payoffs(
         Fraction(1),
         state.players[state.acting_seat].hand,
     )
-    return tuple(totals)
+    return tuple(totals[(acting + role) % 4] for role in range(4))
 
 
 @dataclass(frozen=True)
@@ -218,7 +237,7 @@ class Regret:
     equilibrium"; anything else means the budget did not resolve the question.
     """
 
-    seat: int
+    role: int
     reply: str
     gain: float
     low: float
@@ -232,7 +251,15 @@ class Regret:
 
 @dataclass(frozen=True)
 class EmpiricalGame:
-    """Per-seat payoffs for every profile over the restricted strategy set.
+    """Per-role payoffs for every profile over the restricted strategy set.
+
+    The players are roles -- actor, then relative draw order 1, 2, 3 -- not
+    absolute seats.  Under seat indexing a profile entry meant two different
+    things in two halves of the corpus (the actor sits at seat 0 in 13 cases
+    and at seat 1 in the other 13), so a payoff row averaged the actor
+    deviating with a downstream seat deviating.  Role indexing does not add
+    observations -- both ways give each player the same 26 case clusters -- it
+    stops them from being a mixture.
 
     ``units`` keeps the per-(case, world) payoff vectors rather than only
     their means, because a regret without an interval cannot be reported.  The
@@ -248,20 +275,20 @@ class EmpiricalGame:
     cases: int
     sims: int
 
-    def best_reply(self, profile: tuple[str, ...], seat: int) -> tuple[str, float]:
-        """This seat's best strategy and its gain, holding the others fixed."""
-        current = self.payoffs[profile][seat]
-        best_name, best_value = profile[seat], current
+    def best_reply(self, profile: tuple[str, ...], role: int) -> tuple[str, float]:
+        """This role's best strategy and its gain, holding the others fixed."""
+        current = self.payoffs[profile][role]
+        best_name, best_value = profile[role], current
         for name in self.strategies:
             candidate = list(profile)
-            candidate[seat] = name
-            value = self.payoffs[tuple(candidate)][seat]
+            candidate[role] = name
+            value = self.payoffs[tuple(candidate)][role]
             if value > best_value + 1e-12:
                 best_name, best_value = name, value
         return best_name, best_value - current
 
     def equilibria(self) -> tuple[tuple[str, ...], ...]:
-        """Profiles no seat can improve on *by point estimate alone*.
+        """Profiles no role can improve on *by point estimate alone*.
 
         Read with :meth:`regret_interval`: at a thin budget this returns
         whichever profile the noise happened to favour.
@@ -270,21 +297,21 @@ class EmpiricalGame:
             profile
             for profile in self.payoffs
             if all(
-                self.best_reply(profile, seat)[1] <= 1e-12
-                for seat in range(4)
+                self.best_reply(profile, role)[1] <= 1e-12
+                for role in range(4)
             )
         )
 
     def regret(self, profile: tuple[str, ...]) -> float:
         """Largest unilateral gain available at ``profile``, in tai."""
         return max(
-            self.best_reply(profile, seat)[1] for seat in range(4)
+            self.best_reply(profile, role)[1] for role in range(4)
         )
 
     def _deviation_gains(
         self, profile: tuple[str, ...],
     ) -> dict[tuple[int, str], tuple[float, ...]]:
-        """Per-case mean paired gain for each (seat, alternative) deviation.
+        """Per-case mean paired gain for each (role, alternative) deviation.
 
         Units arrive as ``sims`` consecutive worlds per case, and the worlds
         inside one case all share that case's hand, so they are not
@@ -296,16 +323,16 @@ class EmpiricalGame:
         if len(base) != self.cases * self.sims:
             raise ValueError("units are not sims-per-case; cannot cluster")
         gains: dict[tuple[int, str], tuple[float, ...]] = {}
-        for seat in range(4):
+        for role in range(4):
             for name in self.strategies:
-                if name == profile[seat]:
+                if name == profile[role]:
                     continue
                 candidate = list(profile)
-                candidate[seat] = name
+                candidate[role] = name
                 other = self.units[tuple(candidate)]
-                gains[(seat, name)] = tuple(
+                gains[(role, name)] = tuple(
                     sum(
-                        other[i][seat] - base[i][seat]
+                        other[i][role] - base[i][role]
                         for i in range(case * self.sims, (case + 1) * self.sims)
                     ) / self.sims
                     for case in range(self.cases)
@@ -325,7 +352,7 @@ class EmpiricalGame:
         Two things this gets right that the obvious version does not.  The
         maximum is taken *inside* each resample, so the interval covers the
         selection of which deviation looked best -- picking the winner first
-        and bootstrapping only that one reports an interval for a seat chosen
+        and bootstrapping only that one reports an interval for a role chosen
         by the same noise it is meant to measure.  And the resampled unit is
         the case, not the world: measured 2026-08-24 at 26 cases x 400 worlds,
         resampling worlds gave [+0.189, +0.340] and resampling cases
@@ -350,7 +377,7 @@ class EmpiricalGame:
         high = draws[min(resamples - 1, int((1.0 - tail) * resamples))]
         best = max(keys, key=lambda key: sum(gains[key]) / count)
         return Regret(
-            seat=best[0],
+            role=best[0],
             reply=best[1],
             gain=sum(gains[best]) / count,
             low=low,
@@ -366,10 +393,12 @@ def build_game(
     strategies: tuple[str, ...] = DEFAULT_STRATEGIES,
     rules: RulesConfig = DEFAULT_RULES,
 ) -> EmpiricalGame:
-    """Tabulate every profile's per-seat payoff over the corpus.
+    """Tabulate every profile's per-role payoff over the corpus.
 
-    Worlds are sampled once per case and reused across every profile, so
-    profile differences are paired under common random numbers.
+    Profiles are indexed by role (actor first), so the same profile means the
+    same thing in a case whose actor sits at seat 0 and one whose actor sits at
+    seat 1.  Worlds are sampled once per case and reused across every profile,
+    so profile differences are paired under common random numbers.
     """
     for name in strategies:
         if name not in STRATEGIES:
