@@ -1,4 +1,4 @@
-"""Structural invariants for the empirical game's own 104-case corpus.
+"""Structural invariants for the empirical game's own 416-case corpus.
 
 These pin the corpus's shape, not any conclusion drawn from it: the
 conclusions stay pinned to the 26-case acceptance corpus in
@@ -25,6 +25,7 @@ from taimahjong.shanten import shanten
 
 CASES = empirical_game_cases()
 STEP_3C = empirical_game_cases(13)
+STEP_3D = empirical_game_cases(26)
 
 
 def test_the_acceptance_corpus_is_untouched():
@@ -43,10 +44,10 @@ def test_every_hand_appears_once_at_each_wall_depth():
         (case.strata.hand_state, case.name.rsplit("-threat-", 1)[0])
         for case in CASES
     )
-    assert len(actor_hands()) == 26
-    assert len(CASES) == 104
+    assert len(actor_hands()) == 104
+    assert len(CASES) == 416
     assert Counter(len(case.state.wall) for case in CASES) == {
-        1: 26, 2: 26, 3: 26, 4: 26,
+        1: 104, 2: 104, 3: 104, 4: 104,
     }
     assert all(count == 1 for count in seen.values())
 
@@ -54,7 +55,7 @@ def test_every_hand_appears_once_at_each_wall_depth():
 def test_the_reported_averages_are_over_a_balanced_corpus():
     """Every average this corpus feeds is an average over its own strata, so
     an imbalance is a silent reweighting of the claim."""
-    for cases, half in ((CASES, 52), (STEP_3C, 26)):
+    for cases, half in ((CASES, 208), (STEP_3D, 52), (STEP_3C, 26)):
         assert Counter(case.state.acting_seat for case in cases) == {0: half, 1: half}
         assert Counter(case.state.dealer_streak for case in cases) == {0: half, 2: half}
         assert Counter(case.strata.scheme for case in cases) == {
@@ -66,15 +67,17 @@ def test_the_reported_averages_are_over_a_balanced_corpus():
         ) == {0: half // 2, 1: half // 2, 2: half // 2, 3: half // 2}
 
 
-def test_the_52_case_corpus_stays_reproducible():
-    """The step 3c tables were measured on the first thirteen templates.  If
-    growing the corpus reordered or renumbered them, those tables would no
-    longer be reproducible from this code and could not be compared against."""
+def test_the_earlier_corpora_stay_reproducible():
+    """The published tables were measured at 52 and 104 cases.  If growing the
+    corpus reordered or renumbered those, the tables would no longer be
+    reproducible from this code and could not be compared against."""
     assert len(STEP_3C) == 52
-    for small, full in zip(STEP_3C, CASES):
-        assert small.name == full.name
-        assert small.seed == full.seed
-        assert small.state == full.state
+    assert len(STEP_3D) == 104
+    for earlier in (STEP_3C, STEP_3D):
+        for small, full in zip(earlier, CASES):
+            assert small.name == full.name
+            assert small.seed == full.seed
+            assert small.state == full.state
 
 
 def test_truncating_off_a_block_boundary_is_refused():
