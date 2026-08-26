@@ -61,6 +61,7 @@ from .reference_ev import (
     _terminal,
 )
 from .best_response import ActorObservation, observation_for, sample_worlds
+from .danger import _wait_shapes
 
 
 # A seat policy: (own 17-tile hand, that seat's belief pool) -> discard.
@@ -100,17 +101,75 @@ def safety(hand17: tuple[int, ...], belief: tuple[int, ...]) -> int:
     return _production_discard_policy(tuple(masked), belief, 0)
 
 
-# Three names, two behaviours: measured 2026-08-24 over all 26 cases at 20
+def _deal_in_weight(tile: int, belief: tuple[int, ...], pool: int) -> float:
+    """Weighted chance one unseen hand is waiting on ``tile``.
+
+    ``safety`` above asks a single binary question -- are there unseen copies
+    of this tile? -- which makes every tile with one copy left look alike.
+    This asks how a hand could be *waiting* on the tile instead: it walks the
+    standard wait shapes from :func:`danger._wait_shapes` and weights each by
+    the chance an opponent holds the tiles that shape needs.
+
+    Two approximations, both forced by what a seat may look at.  The seat
+    knows only its own hand and the unseen pool, so an opponent's hand is
+    treated as a draw from that pool, and each required tile is treated as
+    drawn independently -- true only in the limit of a large pool.  What this
+    keeps that ``safety`` cannot is the ordering *between* live tiles: a tile
+    whose neighbours are gone is safer than one whose neighbours are live,
+    even when both still have copies unseen.
+    """
+    if pool <= 0:
+        return 0.0
+    total = 0.0
+    for _, required, weight in _wait_shapes(tile):
+        chance = 1.0
+        for needed in required:
+            # An opponent holds 16 of the ``pool`` unseen tiles.
+            chance *= min(1.0, _HAND_TILES * belief[needed] / pool)
+        total += weight * chance
+    return total
+
+
+# One opponent hand, used as the draw size when turning the unseen pool into
+# a per-tile holding chance.
+_HAND_TILES = 16
+
+
+def deal_in_risk(hand17: tuple[int, ...], belief: tuple[int, ...]) -> int:
+    """Discard the tile least likely to be waited on, then by efficiency.
+
+    The step-3 replacement for ``safety``.  Same shape as ``safety`` -- a
+    defensive tilt that falls back to the production efficiency rule among
+    equally safe tiles -- so a table comparing them isolates the risk estimate
+    and nothing else.
+    """
+    held = [tile for tile, count in enumerate(hand17) if count]
+    pool = sum(belief)
+    risks = {tile: _deal_in_weight(tile, belief, pool) for tile in held}
+    safest = min(risks.values())
+    candidates = [tile for tile in held if risks[tile] <= safest + 1e-12]
+    if len(candidates) == 1:
+        return candidates[0]
+    masked = list(hand17)
+    for tile in held:
+        if tile not in candidates:
+            masked[tile] = 0
+    return _production_discard_policy(tuple(masked), belief, 0)
+
+
+# Four names, three behaviours: measured 2026-08-24 over all 26 cases at 20
 # worlds, ``efficiency`` and ``oracle`` pick the same tile on all 5,415
 # reachable decisions, so the abstraction any claim must carry is
-# {efficiency, safety}.  ``oracle`` stays reachable because its tie-break
-# differs in principle and a corpus that separated them would be worth
-# knowing about; ``test_efficiency_and_oracle_are_one_behaviour_not_two``
-# fails if that day comes, which is exactly when the wording would change.
+# {efficiency, safety} or {efficiency, deal_in_risk}.  ``oracle`` stays
+# reachable because its tie-break differs in principle and a corpus that
+# separated them would be worth knowing about;
+# ``test_efficiency_and_oracle_are_one_behaviour_not_two`` fails if that day
+# comes, which is exactly when the wording would change.
 STRATEGIES: dict[str, SeatPolicy] = {
     "efficiency": efficiency,
     "oracle": oracle_efficiency,
     "safety": safety,
+    "deal_in_risk": deal_in_risk,
 }
 
 # ...but it is not in the default set, because including it costs a great

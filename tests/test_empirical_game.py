@@ -23,7 +23,9 @@ import pytest
 
 from taimahjong.empirical_game import (
     STRATEGIES,
+    _deal_in_weight,
     build_game,
+    deal_in_risk,
     efficiency,
     oracle_efficiency,
     profile_payoffs,
@@ -93,6 +95,48 @@ def test_safety_only_ever_discards_a_held_tile():
                 4 - hand[tile] - observation.visible[tile] for tile in range(34)
             )
             assert hand[safety(hand, belief)] > 0
+
+
+def test_deal_in_risk_only_ever_discards_a_held_tile():
+    """Same masking contract as the safety tilt: a wrong mask would hand back
+    a tile the seat does not hold."""
+    case = next(case for case in CASES if len(case.state.wall) == 4)
+    observation = observation_for(case)
+    for world in sample_worlds(observation, 4, 7):
+        for player in world.players:
+            hand = player.hand
+            if sum(hand) != 17:
+                continue
+            belief = tuple(
+                4 - hand[tile] - observation.visible[tile] for tile in range(34)
+            )
+            assert hand[deal_in_risk(hand, belief)] > 0
+
+
+def test_a_tile_with_no_unseen_copies_is_not_automatically_safe():
+    """This is the gap ``deal_in_risk`` exists to close.
+
+    ``safety`` reads one bit -- are there unseen copies? -- so a tile whose
+    other copies are all accounted for looks perfectly safe to it.  That is
+    only true of the waits needing a *second* copy of the tile (tanki,
+    shanpon).  A two-sided wait needs the tile's neighbours instead, so an
+    opponent holding 3p4p is waiting on 2p and 5p however many 5p are already
+    visible.  ``deal_in_risk`` must therefore rank such a tile as more
+    dangerous than one that still has a copy unseen but whose neighbours are
+    exhausted -- the ordering ``safety`` gets backwards.
+    """
+    pool = 60
+    reachable_belief = [0] * 34
+    for tile in (11, 12, 14, 15):  # 3p 4p 6p 7p live, so ryanmen waits exist
+        reachable_belief[tile] = 4
+    reachable_belief[13] = 0  # 5p itself: no copies unseen
+
+    isolated_belief = [0] * 34
+    isolated_belief[4] = 1  # 5m: a copy unseen, but nothing around it survives
+
+    reachable = _deal_in_weight(13, tuple(reachable_belief), pool)
+    isolated = _deal_in_weight(4, tuple(isolated_belief), pool)
+    assert reachable > isolated
 
 
 def test_efficiency_and_oracle_are_one_behaviour_not_two():
@@ -166,7 +210,9 @@ def test_strategy_set_is_listed_not_inferred():
     assert len(game.payoffs) == 2 ** 4
     with pytest.raises(ValueError):
         build_game(SMALL, sims=3, seed=1, strategies=("efficiency", "nope"))
-    assert set(STRATEGIES) == {"efficiency", "oracle", "safety"}
+    assert set(STRATEGIES) == {
+        "efficiency", "oracle", "safety", "deal_in_risk",
+    }
 
 
 def test_identical_strategies_leave_exactly_nothing_on_the_table():
