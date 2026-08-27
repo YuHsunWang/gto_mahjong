@@ -64,6 +64,7 @@ from .reference_ev import (
     _ron_terminal,
     _terminal,
 )
+from .rollout import DiscardPolicy
 from .scoring import ScoringScheme, WinContext
 from .tiles import validate_counts
 
@@ -394,10 +395,17 @@ def _analyse_opening(
 def _production_action(
     observation: ActorObservation,
     key: InfoKey,
+    policy: DiscardPolicy = _production_discard_policy,
 ) -> int:
-    """What the production rollout policy plays at one actor information set."""
+    """What the measured rollout policy plays at one actor information set.
+
+    ``policy`` defaults to production's, which is what the reported number
+    measures.  Substituting another policy measures that one against the same
+    fixed environment: the opponents in :func:`_analyse_opening` keep playing
+    production's rule either way, so the two numbers stay comparable.
+    """
     hand, observed = key
-    return _production_discard_policy(
+    return policy(
         hand, observation.belief_remaining(hand, observed), 0,
     )
 
@@ -475,6 +483,7 @@ def exploitability(
     mode: str = "opening",
     measured_opening: int | None = None,
     measured_plan: dict[InfoKey, int] | None = None,
+    measured_policy: DiscardPolicy = _production_discard_policy,
 ) -> ExploitabilityResult:
     """Measure how much the measured policy leaves on the table in ``case``.
 
@@ -482,6 +491,13 @@ def exploitability(
     to the acting seat's information exactly as the best response is.  Passing
     ``measured_opening``/``measured_plan`` substitutes another policy, which is
     what lets a test feed the solved best response back in and require zero.
+
+    ``measured_policy`` swaps the acting seat's rule for a whole other policy
+    of the same shape.  Only the actor's rule changes: the opponents inside
+    :func:`_analyse_opening` stay on production's, so two policies measured
+    this way face the same environment and their numbers may be compared.  What
+    this cannot measure is a policy whose point is what the *opponents* do
+    differently -- that needs the empirical game, not this module.
 
     Three modes, because only one of them is a sound information-set number:
 
@@ -522,7 +538,7 @@ def exploitability(
     if (measured_opening is None) != (measured_plan is None):
         raise ValueError("measured_opening and measured_plan go together")
     opening_discard = (
-        _production_discard_policy(
+        measured_policy(
             observation.hand, observation.belief_remaining(), 0,
         )
         if measured_opening is None
@@ -541,10 +557,12 @@ def exploitability(
         failing.
         """
         if measured_plan is None:
-            return _production_action(observation, key)
+            return _production_action(observation, key, measured_policy)
         # Tile 0 is a legal action, so test for absence rather than falsiness.
         action = measured_plan.get(key)
-        return _production_action(observation, key) if action is None else action
+        if action is None:
+            return _production_action(observation, key, measured_policy)
+        return action
 
     best_totals: dict[int, Fraction] = {}
     plans: dict[int, dict[InfoKey, int] | None] = {}

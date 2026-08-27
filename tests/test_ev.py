@@ -633,3 +633,61 @@ def test_deal_in_ev_rises_against_dealer():
     peer_risk = ev.deal_in_ev(tile, opponent_peer, visible, POST_DRAW, None)
     dealer_risk = ev.deal_in_ev(tile, opponent_dealer, visible, POST_DRAW, None)
     assert dealer_risk > peer_risk
+
+
+def test_defensive_policy_buys_safety_with_win_equity_when_nothing_threatens():
+    """Why the defensive rule must not become production's unconditional default.
+
+    The empirical game over ``{efficiency, deal_in_risk}`` makes all-defensive
+    the unique equilibrium of the shallow endgame, which reads as an argument
+    for shipping :func:`ev._defensive_discard_policy` as the rollout default.
+    Measured 2026-08-27 on the 26 reference cases at 60 worlds, that swap costs
+    0.835 tai of mean actor EV and triples exploitability (0.556 -> 1.684), and
+    the loss is concentrated in cases where *no opponent has declared tenpai*.
+
+    This pins the mechanism on the six cases that pay the most.  The defensive
+    rule does not break its own tenpai there -- both rules stay at shanten 0 --
+    it narrows the wait, trading a third of its live winning tiles for a tile
+    that is marginally safer against opponents who are not threatening at all.
+    A rule that earns its place has to condition on whether defence is called
+    for; this test fails once one does, which is exactly when it should.
+    """
+    from taimahjong.best_response import observation_for
+    from taimahjong.ev import _defensive_discard_policy, _production_discard_policy
+
+    def live_waits(hand: tuple[int, ...], belief: tuple[int, ...]) -> int:
+        return sum(
+            belief[tile]
+            for tile in range(34)
+            if hand[tile] < 4
+            and ev._production_shanten(
+                tuple(count + (tile == index) for index, count in enumerate(hand)), 0,
+            ) == -1
+        )
+
+    cases = [
+        case for case in representative_reference_cases()
+        if case.name.startswith("actor-tsumo-tenpai") and "threat-none" in case.name
+    ]
+    assert len(cases) == 6, "the corpus block this documents has changed size"
+
+    for case in cases:
+        observation = observation_for(case)
+        belief = observation.belief_remaining()
+        assert ev._production_shanten(observation.hand, 0) == 0, case.name
+
+        measured = {}
+        for label, policy in (
+            ("production", _production_discard_policy),
+            ("defensive", _defensive_discard_policy),
+        ):
+            discard = policy(observation.hand, belief, 0)
+            after = list(observation.hand)
+            after[discard] -= 1
+            after = tuple(after)
+            # Neither rule may drop tenpai here; the cost is in the wait, and
+            # a broken tenpai would mean this test documents the wrong thing.
+            assert ev._production_shanten(after, 0) == 0, (case.name, label)
+            measured[label] = live_waits(after, belief)
+
+        assert measured["defensive"] < measured["production"], case.name

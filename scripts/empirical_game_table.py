@@ -210,14 +210,25 @@ def role_table(
     resamples: int,
     *,
     tilt: str,
+    baseline: str = "efficiency",
     depth_of: dict[int, int] | None = None,
 ) -> None:
-    print(f"\n## Deviating from all-efficiency to {tilt}, one role at a time\n")
+    """One role at a time, deviating away from ``baseline``.
+
+    The baseline matters more than it looks.  Deviating from all-efficiency
+    measures the gradient at the profile production actually plays; deviating
+    from the all-tilt profile measures it at the equilibrium.  A depth-by-role
+    cell can pay at one and not the other, and only the second says anything
+    about what an equilibrium-shaped policy should condition on.
+    """
+    profile = (baseline,) * 4
+    reply = "efficiency" if baseline == tilt else tilt
+    print(f"\n## Deviating from all-{baseline} to {reply}, one role at a time\n")
     header = f"{'role':>5} {'cases':>6} {'gain':>9} {'95% CI':>20} {'verdict':>20}  seed-robust"
     print(header)
     for role in range(4):
-        gains = case_gains(game, EFFICIENCY, role, tilt)
-        _emit(role, gains, list(range(game.cases)), resamples, tilt=tilt)
+        gains = case_gains(game, profile, role, reply)
+        _emit(role, gains, list(range(game.cases)), resamples, reply=reply)
     if depth_of is None:
         return
     print("\n## Same deviation, split by wall depth\n")
@@ -225,9 +236,9 @@ def role_table(
     for depth in sorted(set(depth_of.values())):
         picks = [case for case, value in depth_of.items() if value == depth]
         for role in range(4):
-            gains = case_gains(game, EFFICIENCY, role, tilt)
+            gains = case_gains(game, profile, role, reply)
             print(f"{depth:>5} ", end="")
-            _emit(role, gains, picks, resamples, tilt=tilt)
+            _emit(role, gains, picks, resamples, reply=reply)
 
 
 def _emit(
@@ -236,7 +247,7 @@ def _emit(
     picks: list[int],
     resamples: int,
     *,
-    tilt: str,
+    reply: str,
 ) -> None:
     values = [gains[case] for case in picks]
     if all(value == 0.0 for value in values):
@@ -251,8 +262,8 @@ def _emit(
     low, high = intervals[0]
     stable, spread = robust(intervals)
     label = (
-        f"{tilt} gains" if low > 0
-        else f"{tilt} loses" if high < 0
+        f"{reply} gains" if low > 0
+        else f"{reply} loses" if high < 0
         else "undecided"
     )
     if not stable:
@@ -272,6 +283,11 @@ def main() -> int:
     parser.add_argument(
         "--tilt", default="safety", choices=("safety", "deal_in_risk"),
         help="which defensive policy plays against the efficiency baseline",
+    )
+    parser.add_argument(
+        "--baseline", default="efficiency", choices=("efficiency", "tilt"),
+        help="which profile the per-role table deviates away from: the "
+             "all-efficiency profile production plays, or the all-tilt one",
     )
     parser.add_argument(
         "--templates", type=int, default=None,
@@ -299,6 +315,7 @@ def main() -> int:
         game,
         args.resamples,
         tilt=args.tilt,
+        baseline=args.tilt if args.baseline == "tilt" else "efficiency",
         depth_of={
             index: len(case.state.wall) for index, case in enumerate(cases)
         },

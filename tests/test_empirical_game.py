@@ -21,9 +21,9 @@ from __future__ import annotations
 
 import pytest
 
+from taimahjong.danger import deal_in_weight
 from taimahjong.empirical_game import (
     STRATEGIES,
-    _deal_in_weight,
     build_game,
     deal_in_risk,
     efficiency,
@@ -134,8 +134,8 @@ def test_a_tile_with_no_unseen_copies_is_not_automatically_safe():
     isolated_belief = [0] * 34
     isolated_belief[4] = 1  # 5m: a copy unseen, but nothing around it survives
 
-    reachable = _deal_in_weight(13, tuple(reachable_belief), pool)
-    isolated = _deal_in_weight(4, tuple(isolated_belief), pool)
+    reachable = deal_in_weight(13, tuple(reachable_belief), pool)
+    isolated = deal_in_weight(4, tuple(isolated_belief), pool)
     assert reachable > isolated
 
 

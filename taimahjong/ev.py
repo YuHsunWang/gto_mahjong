@@ -25,6 +25,7 @@ from .danger import (
     _flush_suit,
     assess_validated_danger,
     danger_score,
+    deal_in_weight,
     fold_score,
     meld_tiles,
     tenpai_score,
@@ -670,6 +671,43 @@ def _production_discard_policy(
             -item[0],
         ),
     )[0]
+
+
+def _defensive_discard_policy(
+    hand17: tuple[int, ...],
+    remaining: tuple[int, ...],
+    melds_declared: int,
+) -> int:
+    """Discard the tile least likely to be waited on, then by ukeire.
+
+    Same slot and signature as :func:`_production_discard_policy`, so the two
+    are interchangeable wherever a rollout takes a discard policy.  The tilt is
+    :func:`danger.deal_in_weight`; among tiles it ranks equally safe, the
+    ukeire rule above picks, which is what keeps this a defensive *tilt* on the
+    production policy rather than an unrelated third behaviour.
+
+    Measured 2026-08-27 on the 416-case endgame corpus: in the empirical game
+    over ``{efficiency, deal_in_risk}``, the profile where every role plays
+    this rule is the unique equilibrium, and every role deviating from it to
+    pure ukeire loses (0.015-0.019 tai overall; 9 of the 16 role-by-wall-depth
+    cells decided under both world seeds, none of them favouring ukeire).  That
+    measurement is scoped to a wall of at most four tiles with no calls, and to
+    that two-strategy abstraction; it is not a claim about midgame play.
+    """
+    held = [tile for tile, count in enumerate(hand17) if count]
+    pool = sum(remaining)
+    risks = {tile: deal_in_weight(tile, remaining, pool) for tile in held}
+    safest = min(risks.values())
+    candidates = [tile for tile in held if risks[tile] <= safest + 1e-12]
+    if len(candidates) == 1:
+        return candidates[0]
+    masked = list(hand17)
+    for tile in held:
+        if tile not in candidates:
+            masked[tile] = 0
+    # Every candidate survives in the masked hand, so the ukeire rule picks
+    # among exactly the safe ones.
+    return _production_discard_policy(tuple(masked), remaining, melds_declared)
 
 
 def _copy_view_player(view: OpponentView | None) -> Player:
