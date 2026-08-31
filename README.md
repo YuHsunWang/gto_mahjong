@@ -76,6 +76,11 @@ python3 -m pytest -q -m slow      # 14 個窮舉 oracle 與大樣本統計測試
 
 ## 架構
 
+資料檔、固定評估語料、模擬結果與視覺證據的分層規則記在
+[`docs/architecture/data-layout.md`](docs/architecture/data-layout.md)，完整機器可讀清單在
+[`catalog/datasets.toml`](catalog/datasets.toml)。新增或移動資料時，必須在同一個 commit 更新清單、
+產生指令、所有讀取路徑與測試；來源不明時明確標成 `unknown`，不得猜測。
+
 ```mermaid
 flowchart TB
     subgraph entry["入口"]
