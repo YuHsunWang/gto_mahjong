@@ -142,3 +142,45 @@ def test_stateless_ev_response_adds_ci_paired_gap_and_candidate_scope():
     assert response["top1_vs_top2"]["n"] == 4
     assert all(entry["sample_count"] == 4 for entry in response["entries"])
     assert all(len(entry["ci95"]) == 2 for entry in response["entries"])
+
+
+def test_screening_pilot_draws_worlds_the_reported_sample_never_sees(monkeypatch):
+    # A trial that helped eliminate a candidate must not also help price the
+    # survivor, or the reported interval is a post-selection one.  The two
+    # phases therefore build two CRN bases from two different seeds.
+    import taimahjong.ev as ev_module
+
+    seeds = []
+    original = ev_module._production_worlds
+
+    def recording(*args, **kwargs):
+        seeds.append(args[5])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ev_module, "_production_worlds", recording)
+    ev_rank(
+        parse_tiles("123456789m11234p567s"),
+        (), (0,) * 34, turns=2, sims=8, seed=23, top_k=2,
+    )
+
+    assert len(seeds) == 2
+    assert seeds[0] != seeds[1]
+
+
+def test_exhaustive_ranking_needs_no_pilot_and_builds_one_base(monkeypatch):
+    import taimahjong.ev as ev_module
+
+    seeds = []
+    original = ev_module._production_worlds
+
+    def recording(*args, **kwargs):
+        seeds.append(args[5])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ev_module, "_production_worlds", recording)
+    ev_rank(
+        parse_tiles("123456789m11234p567s"),
+        (), (0,) * 34, turns=2, sims=8, seed=23, exhaustive=True,
+    )
+
+    assert seeds == [23]

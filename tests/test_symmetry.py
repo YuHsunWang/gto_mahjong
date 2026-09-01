@@ -27,7 +27,7 @@ from taimahjong.ev import (
     _production_seats,
     _sample_production_world,
 )
-from taimahjong.rollout import resolve_terminal
+from taimahjong.rollout import resolve_terminal_distribution
 from taimahjong.scoring import WinContext
 
 
@@ -58,11 +58,17 @@ def _exchangeable_trials(
     *,
     seeded_tenpai: bool = True,
     calibrated: bool = True,
-) -> tuple[list[int], dict[int, int], int]:
+) -> tuple[list[float], dict[int, float], int]:
     """Play ``trials`` exchangeable hands and return payments and wins by seat.
 
     ``seeded_tenpai`` and ``calibrated`` switch off one opponent-model layer
     each, so a failure can be attributed rather than merely observed.
+
+    Each hand contributes its conditional mean payment and its expected wins
+    by seat, because the priced RON claims are integrated out rather than
+    sampled.  Both quantities have the same expectation as the sampled ones
+    the probe used to collect, so the tolerances below still mean what they
+    meant when they were written -- they are simply measured with less noise.
     """
     calibration = Calibration.from_path("data/calibration.json")
     opponents = (OpponentView([], []), OpponentView([], []), OpponentView([], []))
@@ -74,8 +80,8 @@ def _exchangeable_trials(
     quantiles = None if seeded_tenpai else (1.0, 1.0, 1.0)
 
     rng = random.Random(SEED)
-    payments: list[int] = []
-    wins: dict[int, int] = {seat: 0 for seat in range(4)}
+    payments: list[float] = []
+    wins: dict[int, float] = {seat: 0.0 for seat in range(4)}
     for _ in range(trials):
         hand = tuple(_draw_pool_tiles([4] * 34, 17, rng))
         world = _sample_production_world(
@@ -85,7 +91,7 @@ def _exchangeable_trials(
         discard = _production_discard_policy(
             hand, tuple(4 - hand[tile] for tile in range(34)), 0,
         )
-        terminal = resolve_terminal(
+        mixture = resolve_terminal_distribution(
             world.players, world.wall, acting, (acting + 1) % 4, discard,
             _production_discard_policy, random.Random(rng.randrange(2**64)),
             dealer_streak=streak,
@@ -96,14 +102,16 @@ def _exchangeable_trials(
             ),
             visible=(0,) * 34,
         )
-        payments.append(terminal.deltas[acting])
-        if terminal.winner is not None:
+        payments.append(mixture.expected_deltas[acting])
+        for probability, terminal in mixture.outcomes:
+            if terminal.winner is None:
+                continue
             for winner in terminal.ron_winners or (terminal.winner,):
-                wins[winner] += 1
+                wins[winner] += probability
     return payments, wins, acting
 
 
-def _summary(payments: list[int]) -> str:
+def _summary(payments: list[float]) -> str:
     mean = statistics.mean(payments)
     stdev = statistics.stdev(payments)
     return f"mean={mean:+.3f} (se={stdev / len(payments) ** 0.5:.3f}, n={len(payments)})"
@@ -121,7 +129,9 @@ def test_acting_seat_is_not_paid_differently_from_an_exchangeable_opponent():
             "acting seat is not exchangeable with its opponents.\n"
             f"  production      : {_summary(payments)}\n"
             f"  both layers off : {_summary(control)}\n"
-            f"  wins by seat    : {dict(sorted(wins.items()))} (acting={acting})\n"
+            "  wins by seat    : "
+            + str({seat: round(count, 1) for seat, count in sorted(wins.items())})
+            + f" (acting={acting})\n"
             "The control isolates the terminal/settlement/aggregation layer. If "
             "it sits near zero while production does not, the bias lives in the "
             "opponent model: the seeded-tenpai prior (ev.py _sample_production_"
@@ -138,7 +148,7 @@ def test_every_seat_wins_about_as_often_in_an_exchangeable_game():
 
     share = wins[acting] / average_opponent
     assert share >= MIN_ACTOR_WIN_SHARE, (
-        f"acting seat won {wins[acting]} times against an opponent average of "
+        f"acting seat won {wins[acting]:.1f} times against an opponent average of "
         f"{average_opponent:.1f} (share {share:.2f}). Opponents can win by the "
         "calibrated-ron channel without holding a winning hand, while the "
         "acting seat's ron must be physically real."

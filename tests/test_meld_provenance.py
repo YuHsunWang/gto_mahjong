@@ -77,9 +77,12 @@ def test_bare_triples_keep_public_scoring_danger_and_ev_results():
     )
     bare_ev = ev_rank(hand, [bare_opponent], ev_visible, **ev_kwargs)
     rich_ev = ev_rank(hand, [rich_opponent], ev_visible, **ev_kwargs)
+    # A snapshot of which candidates survive screening, not a claim about
+    # which discard is best: the screening pilot draws its own worlds, so a
+    # two-trial budget decides this set from a sample the entries never use.
     assert [(entry.discard, entry.net_ev) for entry in bare_ev] == [
-        (9, 8.0),
         (0, 4.0),
+        (1, 3.0),
         (27, 0.0),
         (27, 0.0),
     ]

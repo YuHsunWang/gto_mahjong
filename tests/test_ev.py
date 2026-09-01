@@ -523,11 +523,14 @@ def test_crn_reuses_the_same_wall_order_for_every_candidate(monkeypatch):
         choices.setdefault(discard, []).append(
             None if not wall else rng.randrange(len(wall))
         )
-        return rollout.TerminalResult(
-            "draw", None, None, None, (0, 0, 0, 0), 0,
-        )
+        return rollout.TerminalMixture(((
+            1.0,
+            rollout.TerminalResult("draw", None, None, None, (0, 0, 0, 0), 0),
+        ),))
 
-    monkeypatch.setattr(rollout, "resolve_terminal", fake_terminal)
+    monkeypatch.setattr(
+        rollout, "resolve_terminal_distribution", fake_terminal,
+    )
     ev_rank(
         state.players[state.acting_seat].hand,
         (),
@@ -563,11 +566,14 @@ def test_fold_and_push_with_same_discard_have_separate_terminal_cache(monkeypatc
         deltas = [0, 0, 0, 0]
         deltas[acting_seat] = payment
         deltas[(acting_seat + 1) % 4] = -payment
-        return rollout.TerminalResult(
-            "draw", None, None, None, tuple(deltas), 0,
-        )
+        return rollout.TerminalMixture(((
+            1.0,
+            rollout.TerminalResult("draw", None, None, None, tuple(deltas), 0),
+        ),))
 
-    monkeypatch.setattr(rollout, "resolve_terminal", fake_terminal)
+    monkeypatch.setattr(
+        rollout, "resolve_terminal_distribution", fake_terminal,
+    )
     ranked = ev_rank(
         POST_DRAW, [], (0,) * 34,
         turns=1, sims=2, seed=19, exhaustive=True,

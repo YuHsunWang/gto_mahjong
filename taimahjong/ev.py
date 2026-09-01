@@ -45,7 +45,7 @@ from .ukeire import discard_analysis
 if TYPE_CHECKING:
     from .rollout import ContinuationDiscardPolicy
     from .rollout import DiscardPolicy as TerminalDiscardPolicy
-    from .rollout import TerminalResult
+    from .rollout import TerminalMixture
     from .selfplay import Player
 
 
@@ -70,6 +70,11 @@ BASE_OPPONENT_HAZARD = 0.03
 FOLD_HAZARD_CUTOFF = 0.60
 DRAW_VALUE = 0.0
 SCREENING_EFFECT_MARGIN = 0.10
+# The screening pilot draws its own worlds, offset from the reported sample's
+# seed by this stride.  A trial that helped eliminate a candidate must not also
+# help price the survivor: reusing it makes the reported interval a
+# post-selection one, whose coverage sits well below its nominal level.
+PILOT_SEED_STRIDE = 0x9E3779B97F4A7C15
 # Measured, not heuristic: see docs/hidden-world-strata.md.  A pool this size
 # or smaller puts a floor of sd(cluster means)/sqrt(pool) under the reported
 # error that added trials cannot cross.  800 covers every shipped budget; above
@@ -128,7 +133,9 @@ class EVRankEntry:
     is_fold: bool = False
     label: str | None = None
     sample_count: int = 0
-    win_count: int = 0
+    # Expected number of winning trials under the per-world terminal
+    # distributions; integral only when no RON claim was priced.
+    win_count: float = 0.0
     value_sum: float = 0.0
     value_sum_squares: float = 0.0
     standard_error: float | None = None
@@ -1001,8 +1008,7 @@ def _sample_production_world(
 
 
 def _per_opponent_losses(
-    terminals: tuple[TerminalResult, ...],
-    payments: tuple[float, ...],
+    terminals: tuple["TerminalMixture", ...],
     acting_seat: int,
     seat_to_opponent: tuple[int | None, ...],
     opponent_count: int,
@@ -1015,41 +1021,54 @@ def _per_opponent_losses(
     a supplied opponent view.  Callers that supply fewer than three opponents
     leave phantom seats unmapped; their wins stay in ``risk_ev`` and are
     deliberately not attributed to anyone.
+
+    The split runs over each world's outcome distribution rather than its mean
+    payment: one world can now both win and deal in, and only the deal-in
+    branch belongs to an opponent.
     """
     if not opponent_count or not terminals:
         return ()
     losses = [0.0] * opponent_count
-    for terminal, payment in zip(terminals, payments):
-        if payment >= 0.0:
-            continue
-        winners = terminal.ron_winners or (
-            () if terminal.winner is None else (terminal.winner,)
-        )
-        mapped = [
-            seat_to_opponent[seat]
-            for seat in winners
-            if seat != acting_seat and seat_to_opponent[seat] is not None
-        ]
-        if not mapped:
-            continue
-        # A losing terminal never has the acting seat among its winners, so the
-        # whole magnitude belongs to the opponents that did win it.
-        share = -payment / len(mapped)
-        for index in mapped:
-            losses[index] += share
+    for mixture in terminals:
+        for probability, terminal in mixture.outcomes:
+            payment = float(terminal.deltas[acting_seat])
+            if payment >= 0.0:
+                continue
+            winners = terminal.ron_winners or (
+                () if terminal.winner is None else (terminal.winner,)
+            )
+            mapped = [
+                seat_to_opponent[seat]
+                for seat in winners
+                if seat != acting_seat and seat_to_opponent[seat] is not None
+            ]
+            if not mapped:
+                continue
+            # A losing terminal never has the acting seat among its winners, so
+            # the whole magnitude belongs to the opponents that did win it.
+            share = -payment * probability / len(mapped)
+            for index in mapped:
+                losses[index] += share
     return tuple(total / len(terminals) for total in losses)
 
 
 def _rollout_entry(
     discard: int,
-    terminals: tuple[TerminalResult, ...],
+    terminals: tuple["TerminalMixture", ...],
     acting_seat: int,
     opponent_count: int = 0,
     hidden_strata: tuple[int, ...] = (),
     seat_to_opponent: tuple[int | None, ...] = (None, None, None, None),
 ) -> EVRankEntry:
+    """Summarise one candidate from its per-world terminal distributions.
+
+    Each world contributes its conditional mean payment, not a sampled one, so
+    the sample this entry reports is already Rao-Blackwellised over the priced
+    RON claims.  Every count that used to be an integer over sampled terminals
+    (wins, draws) is now the expected count under those distributions.
+    """
     payments = tuple(
-        float(terminal.deltas[acting_seat]) for terminal in terminals
+        mixture.expected_deltas[acting_seat] for mixture in terminals
     )
     moments = (
         ClusteredSampleMoments.from_clustered_values(payments, hidden_strata)
@@ -1058,34 +1077,46 @@ def _rollout_entry(
     )
     interval = moments.ci95
     low, high = (None, None) if interval is None else interval
-    actor_wins = tuple(
-        terminal
-        for terminal in terminals
-        if terminal.kind in ("self_tsumo", "self_ron")
+    win_probability = sum(
+        mixture.probability("self_tsumo", "self_ron") for mixture in terminals
     )
-    attack_ev = sum(max(0.0, payment) for payment in payments) / moments.n
-    risk_ev = sum(max(0.0, -payment) for payment in payments) / moments.n
-    p_win = len(actor_wins) / moments.n
+    win_value = sum(
+        mixture.expected_value_units("self_tsumo", "self_ron")
+        for mixture in terminals
+    )
+    # Attack and risk split each world's own outcome distribution rather than
+    # its mean payment, because one world can both win and deal in.
+    attack_ev = sum(
+        probability * max(0.0, float(terminal.deltas[acting_seat]))
+        for mixture in terminals
+        for probability, terminal in mixture.outcomes
+    ) / moments.n
+    risk_ev = sum(
+        probability * max(0.0, -float(terminal.deltas[acting_seat]))
+        for mixture in terminals
+        for probability, terminal in mixture.outcomes
+    ) / moments.n
+    p_win = win_probability / moments.n
     return EVRankEntry(
         discard=discard,
         p_win=p_win,
         mean_win_value=(
-            None
-            if not actor_wins
-            else sum(result.value_units for result in actor_wins) / len(actor_wins)
+            None if not win_probability else win_value / win_probability
         ),
         # Diagnostics derived from these same coherent payments; net_ev itself
         # is never composed from them.
         attack_ev=attack_ev,
         opponent_losses=_per_opponent_losses(
-            terminals, payments, acting_seat, seat_to_opponent, opponent_count,
+            terminals, acting_seat, seat_to_opponent, opponent_count,
         ),
         risk_ev=risk_ev,
         net_ev=moments.mean,
         survival_adjusted_p_win=p_win,
-        p_draw=sum(result.kind == "draw" for result in terminals) / moments.n,
+        p_draw=sum(
+            mixture.probability("draw") for mixture in terminals
+        ) / moments.n,
         sample_count=moments.n,
-        win_count=len(actor_wins),
+        win_count=win_probability,
         value_sum=moments.total,
         value_sum_squares=moments.sum_squares,
         standard_error=moments.standard_error,
@@ -1273,7 +1304,7 @@ def evaluate_pass(
     """
     if sims < 1 or turns < 0:
         raise ValueError("sims must be positive and turns non-negative")
-    from .rollout import resolve_terminal
+    from .rollout import resolve_terminal_distribution
 
     hand = validate_counts(counts16)
     seen = validate_counts(visible)
@@ -1287,7 +1318,7 @@ def evaluate_pass(
         base_seed, sims, calibration_active,
     )
     terminals = [
-        resolve_terminal(
+        resolve_terminal_distribution(
             world.players,
             world.wall,
             acting,
@@ -1343,13 +1374,22 @@ def ev_rank(
 ) -> list[EVRankEntry]:
     """Rank discards by mean signed actor payment from terminal rollouts.
 
-    Every candidate sample is one call to :func:`resolve_terminal`, hence one
-    coherent game with one mutually exclusive terminal. Candidates share trial
-    worlds and random streams (CRN). Push candidates use ``discard_policy`` for
-    every seat; the separately labeled fold entry replaces only the acting
-    seat's continuation with deterministic defense. ``discard_policy`` remains
-    injectable because corpus agreement with the oracle certifies rollout
-    machinery only, not the realism of the default production opponent model.
+    Every candidate sample is one call to
+    :func:`resolve_terminal_distribution`, hence one coherent game whose
+    terminal distribution is conditioned on that world: a priced RON claim
+    contributes its probability rather than a coin toss, so the sample already
+    carries ``E[X | H, U]``. Candidates share trial worlds and random streams
+    (CRN). Push candidates use ``discard_policy`` for every seat; the
+    separately labeled fold entry replaces only the acting seat's continuation
+    with deterministic defense. ``discard_policy`` remains injectable because
+    corpus agreement with the oracle certifies rollout machinery only, not the
+    realism of the default production opponent model.
+
+    When candidates are screened rather than all evaluated, the screening pilot
+    draws its own worlds. No trial both eliminates a candidate and prices a
+    survivor, so a reported interval is not a post-selection one; the choice of
+    which candidates survive still comes from a noisy estimate, and the point
+    estimate of the winner still carries the usual selection bias.
 
     Supplying ``rollout_players`` and ``rollout_wall`` injects a fully known
     state for machinery validation. Short injected walls (up to four tiles)
@@ -1358,7 +1398,7 @@ def ev_rank(
     """
     if top_k < 1 or sims < 1 or turns < 0:
         raise ValueError("top_k and sims must be positive and turns non-negative")
-    from .rollout import resolve_terminal
+    from .rollout import resolve_terminal_distribution
 
     if (rollout_players is None) != (rollout_wall is None):
         raise ValueError("rollout_players and rollout_wall must be supplied together")
@@ -1390,69 +1430,90 @@ def ev_rank(
     policy = _production_discard_policy if discard_policy is None else discard_policy
     calibration_active = calibration is not None and rollout_players is None
 
-    worlds: list[_TrialWorld] = []
-    if rollout_players is not None and rollout_wall is not None:
-        injected_players = tuple(rollout_players)
-        if len(injected_players) != 4:
-            raise ValueError("rollout_players must contain exactly four players")
-        resolved_acting = 0 if acting_seat is None else acting_seat
-        resolved_next = (
-            (resolved_acting + 1) % 4 if next_seat is None else next_seat
-        )
-        resolved_streak = 0 if dealer_streak is None else dealer_streak
-        # Injected states are seat-addressed machinery fixtures with no caller
-        # opponent views, so no seat maps to a per-opponent loss slot.
-        seat_to_opponent = (None, None, None, None)
-        wall = tuple(rollout_wall)
-        orders = (
-            tuple(permutations(wall))
-            if len(wall) <= 4
-            else ()
-        )
-        if orders:
-            offset = base_seed % len(orders)
-            for trial in range(sims):
-                worlds.append(_TrialWorld(
-                    injected_players,
-                    wall,
-                    wall_order=orders[(offset + trial) % len(orders)],
-                ))
-        else:
-            rng = random.Random(base_seed)
-            worlds = [
-                _TrialWorld(
-                    injected_players,
-                    wall,
-                    terminal_seed=rng.randrange(2**64),
-                )
-                for _ in range(sims)
-            ]
-    else:
-        (
-            worlds,
-            resolved_acting,
-            resolved_next,
-            resolved_streak,
-            seat_to_opponent,
-        ) = _production_worlds(
+    def build_trial_worlds(
+        world_seed: int,
+    ) -> tuple[list[_TrialWorld], int, int, int, tuple[int | None, ...]]:
+        """One independent CRN base of ``sims`` worlds under ``world_seed``.
+
+        Every candidate evaluated against the returned list shares its hidden
+        hands and wall streams; two lists built from different seeds share
+        nothing, which is what lets the pilot screen without touching the
+        sample that gets reported.
+        """
+        built: list[_TrialWorld] = []
+        if rollout_players is not None and rollout_wall is not None:
+            injected_players = tuple(rollout_players)
+            if len(injected_players) != 4:
+                raise ValueError("rollout_players must contain exactly four players")
+            injected_acting = 0 if acting_seat is None else acting_seat
+            injected_next = (
+                (injected_acting + 1) % 4 if next_seat is None else next_seat
+            )
+            injected_streak = 0 if dealer_streak is None else dealer_streak
+            wall = tuple(rollout_wall)
+            orders = (
+                tuple(permutations(wall))
+                if len(wall) <= 4
+                else ()
+            )
+            if orders:
+                offset = world_seed % len(orders)
+                for trial in range(sims):
+                    built.append(_TrialWorld(
+                        injected_players,
+                        wall,
+                        wall_order=orders[(offset + trial) % len(orders)],
+                    ))
+            else:
+                rng = random.Random(world_seed)
+                built = [
+                    _TrialWorld(
+                        injected_players,
+                        wall,
+                        terminal_seed=rng.randrange(2**64),
+                    )
+                    for _ in range(sims)
+                ]
+            # Injected states are seat-addressed machinery fixtures with no
+            # caller opponent views, so no seat maps to a per-opponent loss slot.
+            return (
+                built,
+                injected_acting,
+                injected_next,
+                injected_streak,
+                (None, None, None, None),
+            )
+        return _production_worlds(
             hand, seen, views, turns, context_template,
-            base_seed, sims, calibration_active,
+            world_seed, sims, calibration_active,
         )
 
+    (
+        worlds,
+        resolved_acting,
+        resolved_next,
+        resolved_streak,
+        seat_to_opponent,
+    ) = build_trial_worlds(base_seed)
+
     # Push and fold are different continuation policies.  Keep their terminal
-    # samples separate even when they share the same opening discard.
-    terminal_cache: dict[tuple[str, int], list[TerminalResult]] = {}
+    # samples separate even when they share the same opening discard, and keep
+    # each CRN base's terminals separate from the other's.
+    terminal_cache: dict[tuple[str, str, int], list["TerminalMixture"]] = {}
     def evaluate(
         analysis,
         budget: int,
         *,
         policy_key: str = "push",
         acting_discard_policy: ContinuationDiscardPolicy | None = None,
+        phase: str = "reported",
+        phase_worlds: list[_TrialWorld] | None = None,
     ) -> EVRankEntry:
+        base = worlds if phase_worlds is None else phase_worlds
         terminals = terminal_cache.setdefault(
-            (policy_key, analysis.discard), [],
+            (phase, policy_key, analysis.discard), [],
         )
-        for world in worlds[len(terminals):budget]:
+        for world in base[len(terminals):budget]:
             calibrated_ron = (
                 _calibrated_ron(
                     calibration,
@@ -1467,7 +1528,7 @@ def ev_rank(
                 if world.wall_order is not None
                 else random.Random(world.terminal_seed)
             )
-            terminals.append(resolve_terminal(
+            terminals.append(resolve_terminal_distribution(
                 world.players,
                 world.wall,
                 resolved_acting,
@@ -1484,7 +1545,7 @@ def ev_rank(
             ))
         hidden_strata = tuple(
             world.hidden_stratum
-            for world in worlds[:budget]
+            for world in base[:budget]
             if world.hidden_stratum is not None
         )
         return _rollout_entry(
@@ -1510,8 +1571,17 @@ def ev_rank(
         ]
     else:
         pilot_sims = min(sims, 24)
+        pilot_worlds = build_trial_worlds(base_seed ^ PILOT_SEED_STRIDE)[0]
         pilots = [
-            (analysis, evaluate(analysis, pilot_sims))
+            (
+                analysis,
+                evaluate(
+                    analysis,
+                    pilot_sims,
+                    phase="pilot",
+                    phase_worlds=pilot_worlds,
+                ),
+            )
             for analysis, _ in ranked_danger
         ]
 
@@ -1546,11 +1616,10 @@ def ev_rank(
                 for item in pilots
                 if item[0].discard == fold_discard
             ))
-        entries = (
-            [entry for _, entry in screened]
-            if pilot_sims == sims
-            else [evaluate(analysis, sims) for analysis, _ in screened]
-        )
+        # Survivors are re-priced on the reported base even when the pilot
+        # spent the same budget: the pilot's own numbers are selection-tainted
+        # and never reach an entry.
+        entries = [evaluate(analysis, sims) for analysis, _ in screened]
 
     fold_analysis = next(
         analysis

@@ -17,11 +17,17 @@ from taimahjong.reference_ev import (
     representative_reference_cases,
     standard_small_wall_state,
 )
-from taimahjong.rollout import resolve_terminal
+from taimahjong.rollout import (
+    CalibratedRonClaim,
+    _winner_distribution,
+    resolve_terminal,
+    resolve_terminal_distribution,
+)
 from taimahjong.selfplay import Player
 from taimahjong.tiles import parse_tiles
 
 
+FIRST_CHARACTER = 0  # 1m, the opening discard in the priced-claim tests
 TRIALS_PER_CANDIDATE = 2_048
 STANDARD_ERROR_MULTIPLIER = 4.0
 CONVERGENCE_CANDIDATES = (
@@ -277,3 +283,113 @@ def test_rollout_converges_to_exact_oracle_and_covers_reachable_kinds():
     assert all_observed == OUTCOME_KINDS
     assert observed_actor_deal_in
     assert observed_opponent_ron_off_opponent
+
+
+def _claiming_players():
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand = list(parse_tiles("123456m123p123s333z66z"))
+    return players
+
+
+def test_priced_ron_splits_the_world_instead_of_tossing_a_coin():
+    # An empty wall leaves exactly two terminals: the priced claim, or the draw
+    # it fails to make.  With one claim at even odds the mixture must be the
+    # payment itself halved -- no sampling anywhere.
+    mixture = resolve_terminal_distribution(
+        _claiming_players(),
+        (),
+        0,
+        1,
+        FIRST_CHARACTER,
+        _policy_discard,
+        Random(1),
+        calibrated_ron=lambda _players, _discarder, _tile: (
+            CalibratedRonClaim(1, 0.5, 8),
+        ),
+    )
+
+    assert mixture.total_probability == pytest.approx(1.0)
+    assert mixture.probability("opponent_ron") == pytest.approx(0.5)
+    assert mixture.probability("draw") == pytest.approx(0.5)
+    assert mixture.expected_deltas == pytest.approx((-4.0, 4.0, 0.0, 0.0))
+    assert sum(mixture.expected_deltas) == pytest.approx(0.0)
+
+
+def test_priced_ron_mass_survives_across_several_discards():
+    # Two seats priced at even odds on the opening discard: under 'nearest'
+    # only the upstream one can win, so the surviving mass is a quarter and it
+    # is the draw that collects it.
+    mixture = resolve_terminal_distribution(
+        _claiming_players(),
+        (),
+        0,
+        1,
+        FIRST_CHARACTER,
+        _policy_discard,
+        Random(1),
+        calibrated_ron=lambda _players, _discarder, _tile: (
+            CalibratedRonClaim(1, 0.5, 8),
+            CalibratedRonClaim(2, 0.5, 8),
+        ),
+    )
+
+    assert mixture.probability("draw") == pytest.approx(0.25)
+    assert mixture.probability("opponent_ron") == pytest.approx(0.75)
+    winners = {
+        terminal.ron_winners: probability
+        for probability, terminal in mixture.outcomes
+        if terminal.ron_winners
+    }
+    assert winners[(1,)] == pytest.approx(0.5)
+    assert winners[(2,)] == pytest.approx(0.25)
+
+
+def test_resolve_terminal_refuses_to_collapse_a_genuine_mixture():
+    with pytest.raises(ValueError, match="coin toss"):
+        resolve_terminal(
+            _claiming_players(),
+            (),
+            0,
+            1,
+            FIRST_CHARACTER,
+            _policy_discard,
+            Random(1),
+            calibrated_ron=lambda _players, _discarder, _tile: (
+                CalibratedRonClaim(1, 0.5, 8),
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "probabilities",
+    [
+        {1: 0.5, 2: 0.5, 3: 0.5},
+        {1: 0.2, 2: 0.9, 3: 0.0},
+        {1: 0.0, 2: 0.0, 3: 0.0},
+        {1: 1.0, 2: 0.4, 3: 0.7},
+        {2: 0.3},
+    ],
+)
+def test_nearest_fast_path_matches_the_general_enumeration(probabilities):
+    fast = _winner_distribution(probabilities, 0, DEFAULT_RULES)
+    slow = {}
+    for pattern in range(8):
+        probability = 1.0
+        claimed = set()
+        for index, seat in enumerate((1, 2, 3)):
+            seat_probability = probabilities.get(seat, 0.0)
+            if pattern >> index & 1:
+                probability *= seat_probability
+                claimed.add(seat)
+            else:
+                probability *= 1.0 - seat_probability
+        if not probability:
+            continue
+        winners = next(
+            ((seat,) for seat in (1, 2, 3) if seat in claimed), (),
+        )
+        slow[winners] = slow.get(winners, 0.0) + probability
+
+    assert fast.keys() == slow.keys()
+    for winners, probability in fast.items():
+        assert probability == pytest.approx(slow[winners])

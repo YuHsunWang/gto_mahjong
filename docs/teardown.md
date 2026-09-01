@@ -133,6 +133,10 @@ log-loss 贏 5.79%。訊號是真的但很弱。而且 PAV 為了維持單調性
 門檻 `BIAS_TOLERANCE`、`MIN_ACTOR_WIN_SHARE`、`TRIALS` 從寫下到轉綠沒被改過一個字——
 **是模型追上了門檻，不是門檻讓路。**
 
+> 2026-09-01 更新：校準通道還在，兩邊也仍然對稱，但**不再擲硬幣**。榮和機率改以條件
+> 期望直接進入報酬（`taimahjong/rollout.py` 的 `resolve_terminal_distribution`），
+> 一次 trial 產出的是終局的分布而不是一個抽樣結果。上表的數字是這項改動之前量的。
+
 ---
 
 ## 04 三把尺，各自能證明什麼

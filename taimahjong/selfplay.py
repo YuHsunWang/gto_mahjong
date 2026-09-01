@@ -490,6 +490,26 @@ def _dealer_leg_premium(
     return scheme.tai_units * (DEALER_TAI + STREAK_TAI_PER_WIN * dealer_streak)
 
 
+@lru_cache(maxsize=200_000)
+def _cached_score_hand(
+    winning_hand: tuple[int, ...],
+    melds: tuple,
+    context: WinContext,
+    kongs: tuple,
+):
+    """Memoised :func:`score_hand` for settlement.
+
+    Integrating out the RON claims prices a settlement at every discard rather
+    than once per trial, and the bounded hidden-world pool makes the same
+    (hand, tile) pairs recur across trials.  ``score_hand`` is a pure function
+    of these four arguments, so the cache changes cost only.
+
+    ``WinContext.rules`` is ``compare=False`` and therefore outside the key;
+    every caller here leaves it unset.
+    """
+    return score_hand(winning_hand, melds, context, kongs=kongs)
+
+
 def _settlement(
     outcome: str,
     winner: int | None,
@@ -518,9 +538,9 @@ def _settlement(
         return (0, 0, 0, 0), 0
     assert winner is not None and winning_hand is not None and winning_tile is not None
     dealer_won = winner == DEALER_SEAT
-    value = score_hand(
+    value = _cached_score_hand(
         winning_hand,
-        players[winner].melds,
+        tuple(players[winner].melds),
         WinContext(
             winning_tile=winning_tile,
             self_draw=outcome == "tsumo",
@@ -530,7 +550,7 @@ def _settlement(
             kong_bloom=kong_bloom,
             robbed_kong=robbed_kong,
         ),
-        kongs=tuple(players[winner].kongs),
+        tuple(players[winner].kongs),
     ).value_in(scheme)
     premium = _dealer_leg_premium(outcome, winner, discarder, dealer_streak, scheme)
     deltas = [0, 0, 0, 0]

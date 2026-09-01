@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import product
 from random import Random
 from typing import Callable, Sequence
 
@@ -32,6 +33,7 @@ OUTCOME_KINDS = frozenset({
     "opponent_tsumo",
     "draw",
 })
+MIXTURE_TOLERANCE = 1e-9
 
 
 @dataclass(frozen=True)
@@ -85,6 +87,84 @@ class TerminalResult:
         assert sum(self.kind == candidate for candidate in OUTCOME_KINDS) == 1
         assert len(self.deltas) == 4
         assert sum(self.deltas) == 0
+
+
+@dataclass(frozen=True)
+class TerminalMixture:
+    """The conditional terminal distribution of one sampled world.
+
+    A trial samples the hidden hands and the wall order; it does not sample
+    whether a priced RON claim fires.  Keeping those claims as probabilities
+    makes the trial contribute ``E[X | H, U]`` instead of ``X`` itself, which
+    by the total-variance decomposition can only lower the estimator's
+    variance -- and it keeps the claim consistent with the very hands the
+    trial drew, which an independent coin toss did not.
+
+    ``outcomes`` pairs each mutually exclusive terminal with its probability
+    under that fixed world.  A world with no priced claim yields exactly one
+    outcome of probability one, so the uncalibrated path is unchanged.
+    """
+
+    outcomes: tuple[tuple[float, TerminalResult], ...]
+
+    def __post_init__(self) -> None:
+        if not self.outcomes:
+            raise ValueError("a terminal mixture must carry at least one outcome")
+        if any(probability < 0.0 for probability, _ in self.outcomes):
+            raise ValueError("terminal mixture probabilities must be non-negative")
+        assert abs(self.total_probability - 1.0) <= MIXTURE_TOLERANCE
+
+    @property
+    def total_probability(self) -> float:
+        return sum(probability for probability, _ in self.outcomes)
+
+    @property
+    def expected_deltas(self) -> tuple[float, float, float, float]:
+        """Probability-weighted seat payments; still exactly zero-sum."""
+        totals = [0.0, 0.0, 0.0, 0.0]
+        for probability, terminal in self.outcomes:
+            for seat, delta in enumerate(terminal.deltas):
+                totals[seat] += probability * delta
+        return (totals[0], totals[1], totals[2], totals[3])
+
+    def probability(self, *kinds: str) -> float:
+        """Total probability of the named outcome kinds."""
+        unknown = set(kinds) - OUTCOME_KINDS
+        if unknown:
+            raise ValueError(f"unknown terminal kinds: {sorted(unknown)}")
+        return sum(
+            probability
+            for probability, terminal in self.outcomes
+            if terminal.kind in kinds
+        )
+
+    def expected_value_units(self, *kinds: str) -> float:
+        """Probability-weighted hand value over the named kinds.
+
+        Weighted by probability, not renormalized: dividing by
+        :meth:`probability` gives the conditional mean value of those kinds.
+        """
+        unknown = set(kinds) - OUTCOME_KINDS
+        if unknown:
+            raise ValueError(f"unknown terminal kinds: {sorted(unknown)}")
+        return sum(
+            probability * terminal.value_units
+            for probability, terminal in self.outcomes
+            if terminal.kind in kinds
+        )
+
+    @property
+    def sole(self) -> TerminalResult:
+        """The one certain terminal, for callers that price no claim."""
+        if len(self.outcomes) != 1:
+            raise ValueError(
+                "terminal mixture holds several outcomes; collapsing it here "
+                "would reintroduce the coin toss it replaced"
+            )
+        probability, terminal = self.outcomes[0]
+        if abs(probability - 1.0) > MIXTURE_TOLERANCE:
+            raise ValueError("sole terminal must carry probability one")
+        return terminal
 
 
 def _copy_players(players: Sequence[Player]) -> list[Player]:
@@ -180,17 +260,19 @@ def _ron_terminal(
     )
 
 
-def _resolved_ron_terminal(
+def _calibrated_claim_probabilities(
     players: list[Player],
     discarder: int,
     winning_tile: int,
     acting_seat: int,
-    dealer_streak: int,
-    scheme: ScoringScheme,
-    rules: RulesConfig,
     calibrated_ron: CalibratedRon,
-    rng: Random,
-) -> TerminalResult | None:
+) -> tuple[dict[int, float], dict[int, CalibratedRonClaim]]:
+    """Per-seat RON probabilities for one discard, plus the claims behind them.
+
+    The acting seat is the one seat whose claim may be physical rather than
+    priced: when the callback does not price it, the hand it actually holds
+    decides, which is a probability of one or zero.
+    """
     physical_actor_claim = False
     if discarder != acting_seat:
         hand = players[acting_seat].hand
@@ -209,27 +291,75 @@ def _resolved_ron_terminal(
     }
     if discarder in estimates:
         raise ValueError("calibrated RON claims must exclude the discarder")
-    sampled = {
-        seat
-        for seat, claim in sorted(estimates.items())
-        if rng.random() < claim.probability
+    probabilities = {
+        seat: claim.probability for seat, claim in estimates.items()
     }
-    winners = resolve_ron_claims(
-        discarder,
-        lambda seat: (
-            (
-                seat in sampled
-                if seat in estimates
-                else physical_actor_claim
-            )
-            if seat == acting_seat
-            else seat in sampled
-        ),
-        rules,
-    )
-    if not winners:
-        return None
+    if acting_seat != discarder and acting_seat not in estimates:
+        probabilities[acting_seat] = 1.0 if physical_actor_claim else 0.0
+    return probabilities, estimates
 
+
+def _winner_distribution(
+    probabilities: dict[int, float],
+    discarder: int,
+    rules: RulesConfig,
+) -> dict[tuple[int, ...], float]:
+    """Exact distribution over RON winner sets for one discard.
+
+    Each seat's claim is an independent Bernoulli, so enumerating the eight
+    success patterns of the three non-discarding seats and pushing each one
+    through :func:`resolve_ron_claims` reproduces the house rule exactly
+    instead of restating it.  The result is grouped by winner set before the
+    caller pays for any settlement: under ``nearest`` the eight patterns
+    collapse onto at most four distinct winner sets.
+
+    The empty tuple carries the probability that nobody claims, which is the
+    mass the trial continues with.
+    """
+    seats = tuple((discarder + offset) % 4 for offset in range(1, 4))
+    distribution: dict[tuple[int, ...], float] = {}
+    if rules.multi_ron == "nearest":
+        # The eight patterns collapse to "the first seat that claims", so walk
+        # the priority order once instead.  ``test_rollout`` pins this against
+        # the general enumeration below.
+        survival = 1.0
+        for seat in seats:
+            probability = probabilities.get(seat, 0.0)
+            share = survival * probability
+            if share:
+                distribution[(seat,)] = share
+            survival *= 1.0 - probability
+        if survival:
+            distribution[()] = survival
+        return distribution
+    for pattern in product((False, True), repeat=3):
+        probability = 1.0
+        for seat, claimed in zip(seats, pattern):
+            seat_probability = probabilities.get(seat, 0.0)
+            probability *= seat_probability if claimed else 1.0 - seat_probability
+        if not probability:
+            continue
+        claimed_seats = frozenset(
+            seat for seat, claimed in zip(seats, pattern) if claimed
+        )
+        winners = resolve_ron_claims(
+            discarder, claimed_seats.__contains__, rules,
+        )
+        distribution[winners] = distribution.get(winners, 0.0) + probability
+    return distribution
+
+
+def _calibrated_ron_terminal(
+    players: list[Player],
+    winners: tuple[int, ...],
+    estimates: dict[int, CalibratedRonClaim],
+    discarder: int,
+    winning_tile: int,
+    acting_seat: int,
+    dealer_streak: int,
+    scheme: ScoringScheme,
+) -> TerminalResult:
+    """Settle one already-decided calibrated RON winner set."""
     deltas = [0, 0, 0, 0]
     values: list[int] = []
     for winner in winners:
@@ -281,7 +411,7 @@ def _resolved_ron_terminal(
     )
 
 
-def resolve_terminal(
+def resolve_terminal_distribution(
     players: Sequence[Player],
     wall: Sequence[int],
     acting_seat: int,
@@ -296,8 +426,15 @@ def resolve_terminal(
     calibrated_ron: CalibratedRon | None = None,
     acting_discard_policy: ContinuationDiscardPolicy | None = None,
     visible: Sequence[int] | None = None,
-) -> TerminalResult:
-    """Sample one wall order and return its one coherent terminal payment.
+) -> TerminalMixture:
+    """Sample one wall order and return its whole terminal distribution.
+
+    The wall order and the hidden hands come from ``rng``; the priced RON
+    claims do not.  Instead the trial carries a surviving-mass weight: at every
+    discard the claim distribution takes its share of that mass and the rest of
+    the trial continues with what is left, so one world yields ``E[X | H, U]``
+    exactly rather than one Bernoulli draw from it.  Without a priced claim the
+    mass never splits and the mixture holds one certain terminal.
 
     An acting-seat continuation starts from the caller's validated public
     counts, then adds the opening discard and every surviving rollout discard
@@ -321,44 +458,65 @@ def resolve_terminal(
         else None
     )
     trial_players = _copy_players(players)
+    records_river = calibrated_ron is not None or acting_discard_policy is not None
+    outcomes: list[tuple[float, TerminalResult]] = []
+    survival = 1.0
+
+    def claim_ron(current: int, tile: int) -> bool:
+        """Take the RON branches of one discard; True once no mass survives."""
+        nonlocal survival
+        if calibrated_ron is None:
+            claims = _ron_claims(trial_players, current, tile, rules)
+            if not claims:
+                return False
+            outcomes.append((
+                survival,
+                _ron_terminal(
+                    trial_players,
+                    claims,
+                    current,
+                    tile,
+                    acting_seat,
+                    dealer_streak,
+                    scheme,
+                ),
+            ))
+            survival = 0.0
+            return True
+
+        probabilities, estimates = _calibrated_claim_probabilities(
+            trial_players, current, tile, acting_seat, calibrated_ron,
+        )
+        distribution = _winner_distribution(probabilities, current, rules)
+        for winners, probability in distribution.items():
+            if not winners:
+                continue
+            outcomes.append((
+                survival * probability,
+                _calibrated_ron_terminal(
+                    trial_players,
+                    winners,
+                    estimates,
+                    current,
+                    tile,
+                    acting_seat,
+                    dealer_streak,
+                    scheme,
+                ),
+            ))
+        survival *= distribution.get((), 0.0)
+        return not survival
+
     if discard is not None:
         if not trial_players[acting_seat].hand[discard]:
             raise ValueError("discard must be present in the acting hand")
 
         trial_players[acting_seat].hand[discard] -= 1
-        if calibrated_ron is not None:
-            immediate_terminal = _resolved_ron_terminal(
-                trial_players,
-                acting_seat,
-                discard,
-                acting_seat,
-                dealer_streak,
-                scheme,
-                rules,
-                calibrated_ron,
-                rng,
-            )
-            if immediate_terminal is not None:
-                return immediate_terminal
+        if claim_ron(acting_seat, discard):
+            return TerminalMixture(tuple(outcomes))
+        if records_river:
             trial_players[acting_seat].river.append(RiverEntry(discard))
             trial_players[acting_seat].discards += 1
-        else:
-            immediate = _ron_claims(
-                trial_players, acting_seat, discard, rules,
-            )
-            if immediate:
-                return _ron_terminal(
-                    trial_players,
-                    immediate,
-                    acting_seat,
-                    discard,
-                    acting_seat,
-                    dealer_streak,
-                    scheme,
-                )
-            if acting_discard_policy is not None:
-                trial_players[acting_seat].river.append(RiverEntry(discard))
-                trial_players[acting_seat].discards += 1
         if running_visible is not None:
             running_visible[discard] += 1
 
@@ -392,14 +550,18 @@ def resolve_terminal(
                 dealer_streak,
                 scheme,
             )
-            return _terminal(
-                "self_tsumo" if current == acting_seat else "opponent_tsumo",
-                current,
-                None,
-                tile,
-                deltas,
-                value,
-            )
+            outcomes.append((
+                survival,
+                _terminal(
+                    "self_tsumo" if current == acting_seat else "opponent_tsumo",
+                    current,
+                    None,
+                    tile,
+                    deltas,
+                    value,
+                ),
+            ))
+            return TerminalMixture(tuple(outcomes))
 
         discarded = (
             acting_discard_policy(
@@ -416,43 +578,57 @@ def resolve_terminal(
         if discarded not in range(34) or not player.hand[discarded]:
             raise ValueError("discard policy returned a tile absent from the hand")
         player.hand[discarded] -= 1
-        if calibrated_ron is not None:
-            ron_terminal = _resolved_ron_terminal(
-                trial_players,
-                current,
-                discarded,
-                acting_seat,
-                dealer_streak,
-                scheme,
-                rules,
-                calibrated_ron,
-                rng,
-            )
-            if ron_terminal is not None:
-                return ron_terminal
+        if claim_ron(current, discarded):
+            return TerminalMixture(tuple(outcomes))
+        if records_river:
             origin = "tsumogiri" if discarded == tile else "tedashi"
             player.river.append(RiverEntry(discarded, origin))
             player.discards += 1
-        else:
-            claims = _ron_claims(
-                trial_players, current, discarded, rules,
-            )
-            if claims:
-                return _ron_terminal(
-                    trial_players,
-                    claims,
-                    current,
-                    discarded,
-                    acting_seat,
-                    dealer_streak,
-                    scheme,
-                )
-            if acting_discard_policy is not None:
-                origin = "tsumogiri" if discarded == tile else "tedashi"
-                player.river.append(RiverEntry(discarded, origin))
-                player.discards += 1
         if running_visible is not None:
             running_visible[discarded] += 1
         current = (current + 1) % 4
 
-    return _terminal("draw", None, None, None, (0, 0, 0, 0), 0)
+    outcomes.append((
+        survival, _terminal("draw", None, None, None, (0, 0, 0, 0), 0),
+    ))
+    return TerminalMixture(tuple(outcomes))
+
+
+def resolve_terminal(
+    players: Sequence[Player],
+    wall: Sequence[int],
+    acting_seat: int,
+    next_seat: int,
+    discard: int | None,
+    discard_policy: DiscardPolicy,
+    rng: Random,
+    *,
+    dealer_streak: int = 0,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    rules: RulesConfig = DEFAULT_RULES,
+    calibrated_ron: CalibratedRon | None = None,
+    acting_discard_policy: ContinuationDiscardPolicy | None = None,
+    visible: Sequence[int] | None = None,
+) -> TerminalResult:
+    """One coherent terminal payment, for worlds that leave nothing uncertain.
+
+    Kept for fixtures and for callers whose claims are all certain.  It raises
+    on a genuine mixture rather than collapsing it, because collapsing would
+    reintroduce exactly the coin toss that
+    :func:`resolve_terminal_distribution` removed.
+    """
+    return resolve_terminal_distribution(
+        players,
+        wall,
+        acting_seat,
+        next_seat,
+        discard,
+        discard_policy,
+        rng,
+        dealer_streak=dealer_streak,
+        scheme=scheme,
+        rules=rules,
+        calibrated_ron=calibrated_ron,
+        acting_discard_policy=acting_discard_policy,
+        visible=visible,
+    ).sole
