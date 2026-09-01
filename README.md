@@ -8,6 +8,9 @@
 
 **一局台灣十六張麻將，每一次切牌都用蒙地卡羅終局 rollout 打分，並在模型分不出高下時直說。**
 
+想了解估計式、終局 payment、共用亂數與信賴區間，可直接閱讀可離線開啟的
+[麻將模擬數學推導 HTML](docs/simulation-math.html)。
+
 ![整場實戰：切牌後即時 net EV 回饋](docs/screenshots/trainer-feedback.png)
 
 上圖是打完一手之後的畫面。引擎不只說「你切錯了」，它說的是：這手比模型的首選差 0.44 net EV；
