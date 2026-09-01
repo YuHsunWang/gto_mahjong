@@ -8,13 +8,13 @@ path = "data/calibration.json"
 optional = false
 format = "json"
 owner = "scripts/generate_calibration.py"
-regeneration_command = "python scripts/generate_calibration.py --games 2000 --seed-start 40001 --workers 4 --verify-games 12 --out data/calibration.json"
+regeneration_command = "python scripts/generate_calibration.py --games 8000 --seed-start 50001 --workers 4 --verify-games 12 --out data/calibration.json"
 primary_key = "tenpai: melds|turn_bucket|run_bucket; deal_in: danger bucket; fold: policy"
-schema = ["version", "metadata", "counts.games", "counts.tenpai", "counts.deal_in", "counts.fold", "tables.tenpai", "tables.deal_in", "tables.fold", "quality"]
-size_bytes = 16341
+schema = ["version", "metadata", "counts.games", "counts.tenpai", "counts.deal_in", "counts.fold", "tables.tenpai", "tables.deal_in", "tables.fold", "quality", "metadata.promotion"]
+size_bytes = 18690
 update_frequency = "manual promotion; no schedule"
 reproducible_from_recorded_seed = false
-known_gap = "Seeds, sample sizes, and producer commit are recorded, but generation consumed the previous data/calibration.json identified only by a SHA-256; those input bytes were overwritten and are not preserved."
+known_gap = "DEV-119 promoted these bytes from data/calibration-independent.json rather than generating them in place, so metadata.promotion, not metadata.generation, records how the file arrived. The generating self-play ran at commit 2743669 and no longer consumes a previous table, but the engine has since moved to 68f8fd3, so rerunning the recorded command at HEAD produces a different table."
 
 [[datasets]]
 id = "independent_calibration_audit"
@@ -23,11 +23,26 @@ path = "data/calibration-independent.json"
 optional = false
 format = "json"
 owner = "scripts/generate_calibration.py"
-regeneration_command = "python scripts/generate_calibration.py --games 8000 --seed-start 50001 --workers 4 --verify-games 12 --independent-policy --out data/calibration-independent.json"
+regeneration_command = "python scripts/generate_calibration.py --games 8000 --seed-start 50001 --workers 4 --verify-games 12 --audit --out data/calibration-independent.json"
 primary_key = "calibration cells as production_calibration; audit sections keyed by comparison and tail band"
 schema = ["version", "metadata", "counts", "tables", "quality", "audit.shipped_table", "audit.candidate_table", "audit.tail"]
 size_bytes = 28733
 update_frequency = "one-off audit candidate; no schedule"
+reproducible_from_recorded_seed = false
+known_gap = "The committed bytes were produced by the pre-DEV-119 --independent-policy flag, whose behaviour the --audit flag now carries, and its audit block scores the pre-promotion shipped table. Rerunning the recorded command compares against the promoted table instead, so the audit block will not match."
+
+[[datasets]]
+id = "opponent_shanten_distribution"
+layer = "curated_reference"
+path = "data/opponent-shanten.json"
+optional = false
+format = "json"
+owner = "scripts/generate_opponent_shanten.py"
+regeneration_command = "python scripts/generate_opponent_shanten.py --games 4000 --seed-start 60001 --workers 4 --verify-games 12 --out data/opponent-shanten.json"
+primary_key = "melds|turn_bucket|run_bucket, with the pooled back-off cells melds|turn|*, *|turn|* and *|*|*"
+schema = ["version", "metadata", "counts", "tables", "quality"]
+size_bytes = 17077
+update_frequency = "manual; regenerate when the self-play policies or the shanten engine change"
 reproducible_from_recorded_seed = true
 
 [[datasets]]
@@ -116,6 +131,21 @@ size_bytes = 8728
 update_frequency = "one-off audit report"
 reproducible_from_recorded_seed = false
 known_gap = "The JSON regeneration command is recorded, but no formatter or exact command regenerates the Markdown report; its stated 5,000 bootstrap replicates also differ from the JSON's 2,000."
+
+[[datasets]]
+id = "opponent_shanten_report"
+layer = "report_artifact"
+path = "docs/opponent-shanten.md"
+optional = false
+format = "markdown tables"
+owner = "unknown"
+regeneration_command = "unknown"
+primary_key = "measurement + shanten level"
+schema = ["sampled shanten histogram before/after", "fitted marginal", "holdout total variation", "per-cell distributions", "benchmark top/net/attack/risk", "lone-tile shape comparison"]
+size_bytes = 9042
+update_frequency = "one-off study for DEV-120"
+reproducible_from_recorded_seed = false
+known_gap = "The document records the generator command, seeds, and sample budgets, but the before/after sampling probes and the benchmark comparison were run ad hoc and no command regenerates the Markdown."
 
 [[datasets]]
 id = "ev_reference_report"

@@ -292,13 +292,18 @@ python3 -m taimahjong --quiz-batch 5 --seed 1
 
 `taimahjong.selfplay` 讓四個機器人對打幾千局，把每次切牌的狀態、有沒有放槍等資料
 記下來，整理成幾張機率表（例如「危險分數越高、實際放槍率越高」的對照表）。危險度
-本來只是相對高低，經過這一步才變成可以看的百分比。校準資料存在 `data/calibration.json`，
-可以自己重跑加料：
+本來只是相對高低，經過這一步才變成可以看的百分比。校準資料存在 `data/calibration.json`，由 `scripts/generate_calibration.py`
+整份重建。產生表的 bot **不讀上一版的表**，所以新表不繼承舊表的偏好：
 
 ```bash
-python3 -m taimahjong --selfplay --games 250 --seed 10001 --out data/calibration.json
+python3 scripts/generate_calibration.py --games 8000 --seed-start 50001 \
+    --workers 4 --verify-games 12 --out data/calibration.json
 python3 -m taimahjong --selfplay-report data/calibration.json
 ```
+
+`python3 -m taimahjong --selfplay --out <path>` 是另一條探索用的路徑，它把計數**附加**
+到指定檔案上。不要拿它去接 `data/calibration.json`：那條路徑用的是舊的七格分箱，
+而正式表已經是八格（尾端在 16 分開），接上去會被擋下來。
 
 這張表把每次切牌對每位對手的 `danger_score` 映射成榮和機率，production rollout 會在
 當下及後續每次切牌使用它。再強調一次：只有這個 RON／放銃機率 lookup 對「這些機器人」
@@ -314,7 +319,7 @@ python3 -m taimahjong --selfplay-report data/calibration.json
 | --- | --- | --- |
 | **已建模且精確計算** | 給定一個已抽樣的四家世界後，檢查普通牌胡型，依選定家規計台並做四家零和結算；每次 trial 只會產生 `self_tsumo`、`self_ron`、`opponent_ron`、`opponent_tsumo`、`draw` 之一，`net_ev` 精確等於 acting seat 的 terminal payments 樣本平均。 | 「精確」只指該抽樣世界內的規則、結算與 aggregation，不代表終局機率或真人打法精確。流局 payment 目前固定為 0。 |
 | **以 heuristic 近似** | 依公開資訊估對手聽牌、抽樣隱藏手牌，並用牌效出牌與固定防守 policy 推進後續牌局；牌牆與終局頻率用 fixed-seed Monte Carlo 估計。 | 對手不會做完整策略調整；隱藏世界分布與 policy 都是模型假設，有限樣本仍有誤差。 |
-| **由 calibration table 校準** | RON／放銃機率由 `danger_score` 的 per-opponent lookup 提供，套用於當下與後續各次切牌。資料來自內建 bot self-play 的 bot ecology。 | 不是人類牌譜校準；校準事件若與抽到的暗手衝突，會重建一個可胡的實體手牌來估值。缺少可用的 calibration table 時改用 heuristic fallback 並回報。 |
+| **由 calibration table 校準** | RON／放銃機率由 `danger_score` 的 per-opponent lookup 提供，套用於當下與後續各次切牌。非聽牌對手的向聽數則抽自 `data/opponent-shanten.json`（同一份 self-play 觀測到的分布，見 `docs/opponent-shanten.md`），不再是從未見牌池均勻亂抽。兩份資料都來自內建 bot self-play 的 bot ecology。 | 不是人類牌譜校準；校準事件若與抽到的暗手衝突，會重建一個可胡的實體手牌來估值。缺少可用的 calibration table 時改用 heuristic fallback 並回報。 |
 | **未建模** | EV rollout 中未來的吃、碰、槓／補牌與花牌、特殊牌型、完整過水決策，以及各家完整 best response。 | 這些事件不在 terminal rollout 的狀態轉移中；流局也沒有聽牌／未聽罰付。 |
 
 **Calibration domain**：只有 RON／放銃機率 lookup 經過校準，且校準來源是內建 bot self-play 的
