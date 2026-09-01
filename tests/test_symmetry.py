@@ -8,6 +8,14 @@ same number of times. Under those conditions the four seats are exchangeable,
 so a correct model must pay the acting seat zero on average and let each seat
 win equally often.
 
+``_exchangeable_hand`` is what keeps that premise true, and it has to be kept
+in step with ``_sample_production_world`` by hand. It was a bare uniform pool
+draw until DEV-120 gave non-tenpai opponents an observed shanten instead of a
+uniform fill; against that sampler a uniform draw is about one full shanten
+behind (4.4%/20.2% on 1- and 2-shanten for an empty public state, against
+0.1%/3.2% for a uniform sixteen tiles), and the probe reported a -1.031 mean
+payment for a model that had not become any less symmetric.
+
 The engine currently fails this. That is the point of the file — see the
 handbook's measurement discipline: a failing test is a motive, not a threshold
 to tune away. Do not relax ``BIAS_TOLERANCE`` to make it pass.
@@ -15,13 +23,18 @@ to tune away. Do not relax ``BIAS_TOLERANCE`` to make it pass.
 
 import random
 import statistics
+from contextlib import contextmanager
 
 import pytest
 
 from taimahjong.calibration import Calibration
 from taimahjong.danger import OpponentView
+import taimahjong.ev as ev
+from taimahjong.danger import tenpai_score
 from taimahjong.ev import (
     _calibrated_ron,
+    _construct_shanten_hand,
+    _construct_tenpai_hand,
     _draw_pool_tiles,
     _production_discard_policy,
     _production_seats,
@@ -53,16 +66,69 @@ BIAS_TOLERANCE = 0.5
 MIN_ACTOR_WIN_SHARE = 0.70
 
 
+@contextmanager
+def _shanten_model(enabled: bool):
+    """Switch the observed-shanten layer off for both seats at once."""
+    saved = ev._default_opponent_shanten
+    if not enabled:
+        ev._default_opponent_shanten = lambda: None
+    try:
+        yield
+    finally:
+        ev._default_opponent_shanten = saved
+
+
+def _exchangeable_hand(
+    rng: random.Random,
+    *,
+    seeded_tenpai: bool,
+) -> tuple[int, ...]:
+    """Draw the acting seat's hand exactly as the sampler draws an opponent's.
+
+    Mirrors ``_sample_production_world``'s branch order for an empty public
+    state: try tenpai, else an observed shanten, else the uniform pool. The
+    opponents hold sixteen concealed tiles, so this draws sixteen and adds the
+    tile the actor has just drawn, leaving it at seventeen and about to
+    discard -- the same seventeen-against-sixteen the probe always used.
+    """
+    empty = OpponentView([], [])
+    remaining = [4] * 34
+    target_tenpai = seeded_tenpai and rng.random() < tenpai_score(empty, 0).score
+    hand = (
+        _construct_tenpai_hand(remaining, 16, 0, rng)
+        if target_tenpai
+        else None
+    )
+    if hand is None and not target_tenpai:
+        # Resolved through the module, not the name imported above, so
+        # _shanten_model switches this side off as well.
+        model = ev._default_opponent_shanten()
+        if model is not None:
+            target = model.sample(empty, 0, rng.random())
+            if target is not None:
+                hand = _construct_shanten_hand(remaining, 16, 0, target, rng)
+    if hand is None:
+        hand = _draw_pool_tiles(remaining, 16, rng)
+    else:
+        for tile, count in enumerate(hand):
+            remaining[tile] -= count
+    drawn = _draw_pool_tiles(remaining, 1, rng)
+    return tuple(hand[tile] + drawn[tile] for tile in range(34))
+
+
 def _exchangeable_trials(
     trials: int,
     *,
     seeded_tenpai: bool = True,
     calibrated: bool = True,
+    shanten_model: bool = True,
 ) -> tuple[list[float], dict[int, float], int]:
     """Play ``trials`` exchangeable hands and return payments and wins by seat.
 
-    ``seeded_tenpai`` and ``calibrated`` switch off one opponent-model layer
-    each, so a failure can be attributed rather than merely observed.
+    ``seeded_tenpai``, ``calibrated`` and ``shanten_model`` switch off one
+    opponent-model layer each, so a failure can be attributed rather than
+    merely observed. Each switch applies to the acting seat's hand as well,
+    or turning a layer off would itself break exchangeability.
 
     Each hand contributes its conditional mean payment and its expected wins
     by seat, because the priced RON claims are integrated out rather than
@@ -82,32 +148,33 @@ def _exchangeable_trials(
     rng = random.Random(SEED)
     payments: list[float] = []
     wins: dict[int, float] = {seat: 0.0 for seat in range(4)}
-    for _ in range(trials):
-        hand = tuple(_draw_pool_tiles([4] * 34, 17, rng))
-        world = _sample_production_world(
-            hand, (0,) * 34, opponents, TURNS, context,
-            rng.randrange(2**64), quantiles, calibrated,
-        )
-        discard = _production_discard_policy(
-            hand, tuple(4 - hand[tile] for tile in range(34)), 0,
-        )
-        mixture = resolve_terminal_distribution(
-            world.players, world.wall, acting, (acting + 1) % 4, discard,
-            _production_discard_policy, random.Random(rng.randrange(2**64)),
-            dealer_streak=streak,
-            calibrated_ron=(
-                _calibrated_ron(calibration, acting, world.ron_value_hands)
-                if calibrated
-                else None
-            ),
-            visible=(0,) * 34,
-        )
-        payments.append(mixture.expected_deltas[acting])
-        for probability, terminal in mixture.outcomes:
-            if terminal.winner is None:
-                continue
-            for winner in terminal.ron_winners or (terminal.winner,):
-                wins[winner] += probability
+    with _shanten_model(shanten_model):
+        for _ in range(trials):
+            hand = _exchangeable_hand(rng, seeded_tenpai=seeded_tenpai)
+            world = _sample_production_world(
+                hand, (0,) * 34, opponents, TURNS, context,
+                rng.randrange(2**64), quantiles, calibrated,
+            )
+            discard = _production_discard_policy(
+                hand, tuple(4 - hand[tile] for tile in range(34)), 0,
+            )
+            mixture = resolve_terminal_distribution(
+                world.players, world.wall, acting, (acting + 1) % 4, discard,
+                _production_discard_policy, random.Random(rng.randrange(2**64)),
+                dealer_streak=streak,
+                calibrated_ron=(
+                    _calibrated_ron(calibration, acting, world.ron_value_hands)
+                    if calibrated
+                    else None
+                ),
+                visible=(0,) * 34,
+            )
+            payments.append(mixture.expected_deltas[acting])
+            for probability, terminal in mixture.outcomes:
+                if terminal.winner is None:
+                    continue
+                for winner in terminal.ron_winners or (terminal.winner,):
+                    wins[winner] += probability
     return payments, wins, acting
 
 
@@ -123,20 +190,24 @@ def test_acting_seat_is_not_paid_differently_from_an_exchangeable_opponent():
 
     if abs(mean) > BIAS_TOLERANCE:
         control, _, _ = _exchangeable_trials(
-            CONTROL_TRIALS, seeded_tenpai=False, calibrated=False,
+            CONTROL_TRIALS,
+            seeded_tenpai=False,
+            calibrated=False,
+            shanten_model=False,
         )
         pytest.fail(
             "acting seat is not exchangeable with its opponents.\n"
             f"  production      : {_summary(payments)}\n"
-            f"  both layers off : {_summary(control)}\n"
+            f"  all layers off  : {_summary(control)}\n"
             "  wins by seat    : "
             + str({seat: round(count, 1) for seat, count in sorted(wins.items())})
             + f" (acting={acting})\n"
             "The control isolates the terminal/settlement/aggregation layer. If "
             "it sits near zero while production does not, the bias lives in the "
-            "opponent model: the seeded-tenpai prior (ev.py _sample_production_"
-            "world) and the calibrated-ron channel (ev.py _calibrated_ron), "
-            "which give opponents winning chances the acting seat cannot get."
+            "opponent model: the seeded-tenpai prior and the observed-shanten "
+            "fill (both in ev.py _sample_production_world) and the "
+            "calibrated-ron channel (ev.py _calibrated_ron), which give "
+            "opponents winning chances the acting seat cannot get."
         )
 
 

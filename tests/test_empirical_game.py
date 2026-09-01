@@ -263,17 +263,26 @@ def corpus_game():
 def test_the_production_profile_is_shown_not_to_be_an_equilibrium(corpus_game):
     """The headline result.
 
-    Recorded 2026-08-25 on the role-indexed game at 26 cases x 400 worlds:
-    regret +0.259 tai, 95% CI [+0.100, +0.555] resampling cases, best deviation
-    role 0 -- the actor -- to safety.  The interval clearing zero is the whole
-    claim; the point estimate alone survived every budget while the equilibrium
-    it implied did not.  Naming the *actor* rather than a seat is what the role
-    rebuild bought: under seat indexing the same deviation was reported for
-    seat 0, which is the actor in only half the corpus.
+    Re-measured 2026-09-02 on the role-indexed game at 26 cases x 100 worlds:
+    regret +0.153 tai, 95% CI [+0.075, +0.423] resampling cases, best deviation
+    role 3 to safety.  The interval clearing zero is the whole claim; the point
+    estimate alone survived every budget while the equilibrium it implied did
+    not.  Naming a *role* rather than a seat is what the role rebuild bought:
+    under seat indexing the deviation was reported for seat 0, which is the
+    actor in only half the corpus.
+
+    Recorded 2026-08-25, before DEV-120: regret +0.259 tai, 95% CI
+    [+0.100, +0.555], best deviation role 0 -- the actor -- to safety.  DEV-120
+    replaced the uniform fill for non-tenpai opponents with the shanten
+    distribution self-play observed, which moved 1- and 2-shanten opponents
+    from 2.0% of sampled hands to 65.7%.  Which role gains most by folding is
+    exactly the kind of thing a better opponent model is expected to move, so
+    the role is re-baselined here rather than loosened away: it stays asserted,
+    and the next time role attribution shifts this will say so again.
     """
     result = corpus_game.regret_interval(("efficiency",) * 4)
     assert result.resolved and result.low > 0.0, result
-    assert (result.role, result.reply) == (0, "safety"), result
+    assert (result.role, result.reply) == (3, "safety"), result
 
 
 @pytest.mark.slow

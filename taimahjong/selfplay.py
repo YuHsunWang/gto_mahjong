@@ -795,7 +795,12 @@ def play_game(
         origin = "tsumogiri" if drawn_tile == tile else "tedashi"
         player.hand[tile] -= 1
         turn = player.discards + 1
-        true_tenpai = _cached_shanten(tuple(player.hand), _declared(player)) == 0
+        # One shanten call answers both questions.  DEV-120 needs the whole
+        # number, not just whether it is zero: the production world sampler
+        # has no source for the 1- and 2-shanten opponents it should be
+        # drawing, and this is where that distribution is observable.
+        true_shanten = _cached_shanten(tuple(player.hand), _declared(player))
+        true_tenpai = true_shanten == 0
         dangers = {
             index: _danger_for(index, tile, player.hand, players)
             for index in range(4)
@@ -814,6 +819,7 @@ def play_game(
             "declared": player.declared,
             "fold_policy_active": fold_active,
             "true_tenpai": true_tenpai,
+            "true_shanten": true_shanten,
             "dealt_in": False,
             "danger_score": max(dangers.values()),
             "danger_by_opponent": dangers,

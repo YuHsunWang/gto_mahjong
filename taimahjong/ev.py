@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from itertools import permutations
 from math import ceil, comb
+from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
 from .calibration import Calibration
@@ -31,6 +32,7 @@ from .danger import (
     tenpai_score,
 )
 from .moments import ClusteredSampleMoments, SampleMoments
+from .opponent_shanten import OpponentShanten
 from .scoring import BASE_UNITS, DEFAULT_SCHEME, ScoringScheme, WinContext, score_hand
 from .shanten import _shanten_unchecked, shanten
 from .simulate import (
@@ -842,6 +844,75 @@ def _construct_tenpai_hand(
     return None
 
 
+@lru_cache(maxsize=1)
+def _default_opponent_shanten() -> OpponentShanten | None:
+    """Load the observed shanten distribution once; absence is not fatal."""
+    path = Path(__file__).resolve().parent.parent / "data" / "opponent-shanten.json"
+    return OpponentShanten.from_path(path) if path.exists() else None
+
+
+def _worsen_by_one(
+    hand: list[int],
+    pool: list[int],
+    melds_declared: int,
+    rng: random.Random,
+) -> bool:
+    """Swap one tile for a pool tile so shanten rises by exactly one."""
+    current = _production_shanten(tuple(hand), melds_declared)
+    held = [tile for tile, count in enumerate(hand) if count]
+    rng.shuffle(held)
+    # Both obvious orderings bias the shape of the result: trying isolated
+    # tiles first leaves complete sets plus lone tiles, trying connected ones
+    # first leaves hands more connected than real ones at the same distance.
+    # Shuffle the whole pool instead and take the first swap that lands, so
+    # the shape is decided by which swaps exist rather than by a preference.
+    incoming = [tile for tile, count in enumerate(pool) if count]
+    rng.shuffle(incoming)
+    for out in held:
+        for into in incoming:
+            if into == out:
+                continue
+            hand[out] -= 1
+            hand[into] += 1
+            if _production_shanten(tuple(hand), melds_declared) == current + 1:
+                pool[out] += 1
+                pool[into] -= 1
+                return True
+            hand[out] += 1
+            hand[into] -= 1
+    return False
+
+
+def _construct_shanten_hand(
+    remaining: list[int],
+    concealed: int,
+    melds_declared: int,
+    target: int,
+    rng: random.Random,
+) -> list[int] | None:
+    """Build a legal hand at exactly `target` shanten, or None.
+
+    Rejection sampling cannot reach the middle of the distribution: uniform
+    draws from the unseen pool land on 3-shanten and worse almost every time,
+    which is the whole of DEV-120.  So the hand is built at tenpai and walked
+    outward one verified step at a time.
+    """
+    if target <= 0:
+        return _construct_tenpai_hand(remaining, concealed, melds_declared, rng)
+    hand = _construct_tenpai_hand(remaining, concealed, melds_declared, rng)
+    if hand is None:
+        return None
+    pool = [count - hand[tile] for tile, count in enumerate(remaining)]
+    if any(count < 0 for count in pool):
+        return None
+    for _ in range(target):
+        if not _worsen_by_one(hand, pool, melds_declared, rng):
+            return None
+    if _production_shanten(tuple(hand), melds_declared) != target:
+        return None
+    return hand
+
+
 def _ron_value_hand(
     hand: list[int],
     available: list[int],
@@ -905,6 +976,7 @@ def _sample_production_world(
     world_seed: int,
     tenpai_quantiles: tuple[float, ...] | None = None,
     calibrated_ron_values: bool = False,
+    shanten_quantiles: tuple[float, ...] | None = None,
 ) -> _TrialWorld:
     from .selfplay import Player
 
@@ -944,7 +1016,6 @@ def _sample_production_world(
             if tenpai_quantiles is None
             else tenpai_quantiles[opponent_ordinal]
         )
-        opponent_ordinal += 1
         target_tenpai = tenpai_draw < tenpai_score(
             public_state, len(public_state.river),
         ).score
@@ -955,12 +1026,34 @@ def _sample_production_world(
             if target_tenpai
             else None
         )
+        if sampled is None and not target_tenpai:
+            # DEV-120: a hand that fails the tenpai draw used to be filled by
+            # drawing uniformly from the unseen pool, which lands on 3-shanten
+            # and worse nearly every time.  Draw the distance from what
+            # self-play actually observed at this public state instead, and
+            # fall through to the uniform draw only when no observation backs
+            # a target or the hand cannot be built at it.
+            model = _default_opponent_shanten()
+            if model is not None:
+                shanten_draw = (
+                    rng.random()
+                    if shanten_quantiles is None
+                    else shanten_quantiles[opponent_ordinal]
+                )
+                target = model.sample(
+                    public_state, len(public_state.river), shanten_draw,
+                )
+                if target is not None:
+                    sampled = _construct_shanten_hand(
+                        remaining, concealed, len(player.melds), target, rng,
+                    )
         if sampled is None:
             sampled = _draw_pool_tiles(remaining, concealed, rng)
         else:
             for tile, count in enumerate(sampled):
                 remaining[tile] -= count
         player.hand[:] = sampled
+        opponent_ordinal += 1
     ron_value_hands = (None, None, None, None)
     if calibrated_ron_values:
         value_hands = []
@@ -1242,6 +1335,17 @@ def _production_worlds(
         ]
         rng.shuffle(quantiles)
         opponent_quantiles.append(quantiles)
+    # The shanten pick that fills a non-tenpai hand (DEV-120) is stratified
+    # the same way and drawn independently, so the bounded hidden-world layer
+    # represents the observed distribution as well as the tenpai rate.
+    opponent_shanten_quantiles = []
+    for _ in range(3):
+        quantiles = [
+            (stratum + rng.random()) / hidden_count
+            for stratum in range(hidden_count)
+        ]
+        rng.shuffle(quantiles)
+        opponent_shanten_quantiles.append(quantiles)
     hidden_worlds = [
         replace(
             _sample_production_world(
@@ -1256,6 +1360,10 @@ def _production_worlds(
                     for quantiles in opponent_quantiles
                 ),
                 calibration_active,
+                tuple(
+                    quantiles[stratum]
+                    for quantiles in opponent_shanten_quantiles
+                ),
             ),
             hidden_stratum=stratum,
         )
