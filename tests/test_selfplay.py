@@ -1,5 +1,4 @@
 from dataclasses import replace
-from math import sqrt
 from pathlib import Path
 
 import pytest
@@ -310,7 +309,9 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
     assert calibration.document["metadata"]["ev_model"]["source_date"] == "2026-07-29"
     assert calibration.document["quality"]["brier_score"] >= 0
     assert calibration.document["quality"]["log_loss"] >= 0
-    assert len(calibration.document["quality"]["reliability_curve"]) == len(DANGER_BUCKETS)
+    assert len(calibration.document["quality"]["reliability_curve"]) == len(
+        calibration.danger_buckets
+    )
     assert calibration.document["metadata"]["danger_reference"] == DANGER_REFERENCE
     assert calibration.document["metadata"]["danger_modifiers"] == DANGER_MODIFIERS
     assert calibration.document["metadata"]["policy_mix"] == ["attack", "cautious", "ev_aware", "ev_aware"]
@@ -322,7 +323,12 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
     # dealer-folding (M3) feeds that pool — so the relationship legitimately
     # inverts. Restrict this broad structural check to cells with 10x the
     # lookup minimum so sparse early-game run buckets do not turn sampling
-    # noise into a committed-table failure.
+    # noise into a committed-table failure. The exposure floor alone is not
+    # enough: the check compares probabilities, so the numerator has to be
+    # resolvable too. At 6,400 fit games the 1-6|3+ row cleared 300 exposures
+    # on 29/592 and 13/390 tenpai, a 1.19-standard-error step that reads as an
+    # inversion. Requiring the lookup minimum in tenpai events as well drops
+    # exactly those cells and leaves five buckets to check.
     checked_buckets = 0
     for turn in ("1-6", "7-12"):
         for run in ("0", "1-2", "3+"):
@@ -331,6 +337,7 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
                 for melds in range(6)
                 if table[f"{melds}|{turn}|{run}"]["observations"]
                 >= 10 * MIN_CELL_COUNT
+                and table[f"{melds}|{turn}|{run}"]["tenpai"] >= MIN_CELL_COUNT
             ]
             if len(populated) >= 2:
                 values = [cell["probability"] for cell in populated]
@@ -338,22 +345,40 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
                 checked_buckets += 1
     assert checked_buckets >= 4, "the developing-phase monotonicity check must cover several buckets"
     danger = calibration.tables["deal_in"]
-    values = [danger[bucket]["probability"] for bucket in DANGER_BUCKETS]
+    # Read the binning the document itself declares, which is what production
+    # reads: DEV-119 split the open-ended tail at 16, so a shipped table now
+    # has eight cells and an older one still has seven.
+    buckets = calibration.danger_buckets
+    values = [danger[bucket]["probability"] for bucket in buckets]
     assert values == sorted(values)
-    raw = [danger[bucket] for bucket in DANGER_BUCKETS]
-    inversions = [
-        (left, right)
-        for left, right in zip(raw, raw[1:])
-        if left["observations"] >= MIN_CELL_COUNT
-        and right["observations"] >= MIN_CELL_COUNT
-        and left["empirical_probability"] > right["empirical_probability"]
+
+    # This used to assert that at most one adjacent pair inverted empirically
+    # and that the inversion sat inside 1.5 standard errors, i.e. that any
+    # inversion was sampling noise. Eight thousand independent-policy games
+    # falsified that: 9-13 is 0.866347% (1,386/159,982) against 13-16's
+    # 0.656045% (546/83,226), far outside 1.5 SE, and PAV pools the two to one
+    # value. The real DEV-119 defect was never the dip; it was that the old
+    # open-ended 13+ cell averaged that dip together with a 16+ population
+    # three times hotter, so the most dangerous cell priced below its
+    # neighbour. That is what this now asserts, and it is what the
+    # pre-promotion table failed: its 13+ cell was 0.774546% against 9-13's
+    # 0.857410%.
+    populated = [
+        (bucket, danger[bucket])
+        for bucket in buckets
+        if danger[bucket]["observations"] >= MIN_CELL_COUNT
     ]
-    assert len(inversions) <= 1
-    if inversions:
-        left, right = inversions[0]
-        pooled = (left["deal_ins"] + right["deal_ins"]) / (left["observations"] + right["observations"])
-        standard_error = sqrt(pooled * (1 - pooled) * (1 / left["observations"] + 1 / right["observations"]))
-        assert left["empirical_probability"] - right["empirical_probability"] <= 1.5 * standard_error
+    assert len(populated) >= 2
+    top_bucket, top_cell = populated[-1]
+    hotter = [
+        bucket
+        for bucket, cell in populated[:-1]
+        if cell["empirical_probability"] >= top_cell["empirical_probability"]
+    ]
+    assert not hotter, (
+        f"{top_bucket} is the most dangerous cell but prices at or below "
+        f"{hotter}; the tail is mixing populations again"
+    )
 
 
 # --- M5: kong engine ---

@@ -41,8 +41,12 @@ CALIBRATION_INPUT = Path(__file__).resolve().parents[1] / "data" / "calibration.
 TAIL_BOOTSTRAP_REPLICATES = 2000
 TAIL_BOOTSTRAP_SEED = 20260806
 TAIL_DIAGNOSTIC_EDGES = (9.0, 11.0, 13.0, 16.0, 20.0)
-INDEPENDENT_DANGER_EDGES = DANGER_EDGES + (16.0,)
-INDEPENDENT_DANGER_BUCKETS = DANGER_BUCKETS[:-1] + ("13-16", "16+")
+# DEV-119 promoted the split tail to the shipped binning: the open-ended 13+
+# cell mixed a 0.659442% 13-16 population with a 1.586684% 16-20 one.  The
+# pre-split calibration.DANGER_EDGES stays imported because legacy documents
+# without metadata.danger_binning are still read under it.
+STANDARD_DANGER_EDGES = DANGER_EDGES + (16.0,)
+STANDARD_DANGER_BUCKETS = DANGER_BUCKETS[:-1] + ("13-16", "16+")
 
 
 def _deal_in_trials(game) -> tuple[tuple[float, bool], ...]:
@@ -513,9 +517,20 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=Path("data/calibration.json"))
     parser.add_argument("--benchmark-only", action="store_true")
     parser.add_argument(
-        "--independent-policy",
+        "--consume-calibration",
         action="store_true",
-        help="disable calibration consumption in ev_aware self-play",
+        help=(
+            "reproduce a legacy feedback build: let ev_aware self-play read "
+            "data/calibration.json, and fit under the pre-split binning"
+        ),
+    )
+    parser.add_argument(
+        "--audit",
+        action="store_true",
+        help=(
+            "also score the shipped table on this run's trials and emit tail "
+            "diagnostics; requires data/calibration.json to exist"
+        ),
     )
     args = parser.parse_args()
     if args.games < 1:
@@ -525,14 +540,18 @@ def main() -> None:
     if not 0 <= args.verify_games <= args.games:
         raise ValueError("--verify-games must be between 0 and --games")
 
-    consume_calibration = not args.independent_policy
-    danger_edges = (
-        INDEPENDENT_DANGER_EDGES if args.independent_policy else DANGER_EDGES
-    )
+    consume_calibration = args.consume_calibration
+    independent_policy = not consume_calibration
+    if args.audit and consume_calibration:
+        # The audit scores the shipped table against this run on a shared
+        # holdout.  A feedback build reads that same shipped table while it
+        # plays, so the comparison would not be between independent arms.
+        raise ValueError("--audit cannot be combined with --consume-calibration")
+    danger_edges = DANGER_EDGES if consume_calibration else STANDARD_DANGER_EDGES
     danger_buckets = (
-        INDEPENDENT_DANGER_BUCKETS if args.independent_policy else DANGER_BUCKETS
+        DANGER_BUCKETS if consume_calibration else STANDARD_DANGER_BUCKETS
     )
-    policy_probe = _independent_policy_probe() if args.independent_policy else None
+    policy_probe = _independent_policy_probe() if independent_policy else None
     if policy_probe:
         print(
             "independent_policy_probe=passed "
@@ -549,7 +568,7 @@ def main() -> None:
         for index, seed in enumerate(seeds)
         if index % HOLDOUT_MODULUS == HOLDOUT_REMAINDER
     }
-    retained_trial_seeds = set(seeds) if args.independent_policy else holdout
+    retained_trial_seeds = set(seeds) if args.audit else holdout
     previous_calibration = _previous_calibration_record(consume_calibration)
     started = perf_counter()
     results = _generate(
@@ -561,13 +580,12 @@ def main() -> None:
         danger_buckets,
     )
     elapsed = perf_counter() - started
-    if args.independent_policy:
-        print(f"generated={args.games} workers={args.workers} policy=independent")
-    else:
-        print(
-            f"generated={args.games} workers={args.workers} elapsed_seconds={elapsed:.3f} "
-            f"seconds_per_game={elapsed / args.games:.6f}"
-        )
+    print(
+        f"generated={args.games} workers={args.workers} "
+        f"policy={'feedback' if consume_calibration else 'independent'} "
+        f"elapsed_seconds={elapsed:.3f} "
+        f"seconds_per_game={elapsed / args.games:.6f}"
+    )
     if args.benchmark_only:
         return
 
@@ -576,7 +594,7 @@ def main() -> None:
         verify_seeds = seeds[: args.verify_games]
         verify_retained = (
             set(verify_seeds)
-            if args.independent_policy
+            if args.audit
             else holdout.intersection(verify_seeds)
         )
         serial = _generate(
@@ -644,11 +662,11 @@ def main() -> None:
         "policy_mix": list(POLICIES),
         "calibration_feedback": previous_calibration,
         "independent_policy": {
-            "enabled": args.independent_policy,
+            "enabled": independent_policy,
             "instrument": (
                 "same ev_aware top-5-plus-safest candidates and attack term; "
                 "calibration-derived deal-in risk term disabled"
-                if args.independent_policy else None
+                if independent_policy else None
             ),
             "probe": policy_probe,
         },
@@ -663,8 +681,7 @@ def main() -> None:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "workers": args.workers,
             "max_workers": MAX_WORKERS,
-            "wall_clock_seconds": None if args.independent_policy else elapsed,
-            "timing_suppressed_for_contended_host": args.independent_policy,
+            "wall_clock_seconds": elapsed,
             "worker_count_determinism_verified": determinism,
             "determinism_check_games": args.verify_games,
         },
@@ -675,9 +692,9 @@ def main() -> None:
         danger_buckets=danger_buckets,
     )
     document["quality"] = quality
-    if args.independent_policy:
+    if args.audit:
         if not CALIBRATION_INPUT.exists():
-            raise FileNotFoundError("shipped calibration is required for independent evaluation")
+            raise FileNotFoundError("shipped calibration is required for the audit comparison")
         all_trials = [
             trial
             for _, _, trials in results

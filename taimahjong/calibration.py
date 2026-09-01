@@ -233,13 +233,27 @@ def load_table(path: str | Path) -> dict:
 
 def write_merged_table(path: str | Path, new_counts: dict, metadata: dict | None = None) -> dict:
     destination = Path(path)
+    incoming = tuple(new_counts.get("deal_in", {}))
     if destination.exists():
         old = load_table(destination)
         if old.get("metadata", {}).get("danger_reference") != DANGER_REFERENCE:
             raise ValueError("existing calibration uses incompatible danger-reference semantics; rebuild from scratch")
-        counts = merge_counts(old["counts"], new_counts)
+        binning = old.get("metadata", {}).get("danger_binning", {})
+        buckets = tuple(binning.get("buckets", DANGER_BUCKETS))
+        # Merging under a fixed bucket list would drop every cell the
+        # destination declares and this batch does not name, so a split-tail
+        # table silently loses 13-16 and 16+ to an append built on the older
+        # seven-bin edges.  Refuse instead of writing a mangled table.
+        if incoming and set(incoming) != set(buckets):
+            raise ValueError(
+                "existing calibration uses a different danger binning "
+                f"({sorted(buckets)}) than these counts ({sorted(incoming)}); "
+                "rebuild with scripts/generate_calibration.py instead of appending"
+            )
+        counts = merge_counts(old["counts"], new_counts, danger_buckets=buckets)
         merged_metadata = dict(old.get("metadata", {}))
     else:
+        buckets = incoming or DANGER_BUCKETS
         counts = new_counts
         merged_metadata = {}
     if metadata:
@@ -251,7 +265,7 @@ def write_merged_table(path: str | Path, new_counts: dict, metadata: dict | None
         merged_metadata["seeds"] = old_seeds
     merged_metadata.update({"danger_reference": DANGER_REFERENCE, "danger_modifiers": DANGER_MODIFIERS})
     merged_metadata["games"] = counts["games"]
-    document = table_document(counts, merged_metadata)
+    document = table_document(counts, merged_metadata, danger_buckets=buckets)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("w", encoding="utf-8") as stream:
         json.dump(document, stream, indent=2, sort_keys=True)
