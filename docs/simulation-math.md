@@ -9,7 +9,7 @@ terminal EV, and the uncertainty attached to each discard candidate.
 This started as an external revision document (`simulationmath`, reviewed
 2026-09-01) and was brought into the repository so that it can be corrected
 alongside the code it describes. The review raised eight defects, filed as
-DEV-149 through DEV-156. Three are resolved in the text below:
+DEV-149 through DEV-156. All eight are resolved in the text below:
 
 - **DEV-155** — §1 claimed the settlement rules were hard-coded. They are not;
   only the single-player discard rule fails to read them. §1 and §3 are
@@ -21,11 +21,19 @@ DEV-149 through DEV-156. Three are resolved in the text below:
 - **DEV-149** — §6's control variate specified a `μ_C` that does not match the
   four-player distribution. Ruled 2026-09-01: redefine `C`, and make the
   control variate and §2's importance weighting mutually exclusive.
+- **DEV-150** — §6 now records the O(1/n) bias from same-sample `β̂` and chooses
+  split-sample estimation of `β̂` for the equal-weight control-variate path.
+- **DEV-151** — §7 uses the self-normalized delta-method variance when §2's
+  weighting is on and restricts the equal-weight bounds accordingly.
+- **DEV-152** — §4.3's pooled event means now include the continuation value
+  and sum exactly to net EV.
+- **DEV-153** — §8 takes the sample-splitting route through every elimination
+  round and reserves an independent batch for the final estimate and MCB.
+- **DEV-154** — §2 estimates stratum weights and variances under the weighted
+  posterior measure and reports effective sample size per stratum.
 
-Still open against this document: DEV-150 (§6's unbiasedness claim),
-DEV-151 (§7's equal-weight standard error), DEV-152 (§4.2's decomposition),
-DEV-153 (§8.1 against §8.2), DEV-154 (§2's stratum weights), DEV-157 (§3's
-discard rule, an implementation ticket).
+Still open against this document: DEV-157 (§3's discard rule, an
+implementation ticket).
 
 ## 0. What changed against the previous revision
 
@@ -122,41 +130,46 @@ alone.
 
 ### Stratified sampling
 
-Most `H` samples have nobody waiting; they contribute nothing to deal-in risk
-and still cost budget. Stratify on the opponents' minimum shanten `k` into
-`S₀,S₁,…`, estimate the stratum weights `π_k` from a pilot, and allocate:
+Stratify on the opponents' minimum shanten `k` into `S₀,S₁,…`. The mechanisms
+are ordered: propose worlds under `q`, weight them to the posterior
+`π(H | ℐ)`, then stratify under that weighted measure. For a pilot sample,
+estimate the posterior stratum weights and weighted within-stratum means and
+variances as:
 
 ```
+π̂_k = Σ_{i∈S_k} wᵢ ⁄ Σᵢ wᵢ
+x̄_k = Σ_{i∈S_k} wᵢ xᵢ ⁄ Σ_{i∈S_k} wᵢ
+s_k² = [Σ_{i∈S_k} wᵢ ⁄ ((Σ_{i∈S_k} wᵢ)²−Σ_{i∈S_k} wᵢ²)]
+       · Σ_{i∈S_k} wᵢ (xᵢ−x̄_k)²
 x̄_str = Σ_k π_k x̄_k
 Var(x̄_str) = Σ_k π_k² s_k² ⁄ n_k
 Neyman:  n_k ∝ π_k · s_k
 ```
 
-Dealing in is a low-frequency, high-magnitude event, so the variance
-concentrates in `k=0` and Neyman allocation moves samples there by itself.
+Here `π_k` in the allocation formulas is the pilot estimate `π̂_k`. When all
+weights are equal, these quantities reduce to plain stratum count proportions
+and ordinary within-stratum means and variances. Report effective sample size
+for every stratum, because weight collapse usually concentrates in one
+stratum, and keep the global value as a summary:
 
-> **Open (DEV-154).** `π_k` must be the stratum probability under the
-> *posterior*. A pilot that samples under uniform `q` estimates it under `q`,
-> and the river information changes the relative stratum weights
-> substantially. `world.hidden_stratum` exists in `taimahjong/ev.py`; the
-> weighting does not, so nothing is wrong yet. This has to be settled before
-> §2 is implemented.
->
-> **The premise moved on 2026-09-01.** DEV-120 replaced the uniform fill for
-> non-tenpai opponents with an observed shanten distribution, and that
-> changes the occupancy of these very strata. Over 400 sampled worlds with
-> three undeclared opponents at turn 8, `k = min shanten`:
->
-> | | k=0 | k=1 | k=2 | k=3 | k=4 | k=5 |
-> |---|--:|--:|--:|--:|--:|--:|
-> | uniform fill | 43.5% | 0.2% | 4.5% | 20.0% | 26.5% | 5.2% |
-> | observed fill | 43.0% | 44.8% | 11.5% | 0.8% | 0.0% | 0.0% |
->
-> The sentence above about most samples having nobody waiting no longer
-> describes the sampler: 88% of worlds now hold somebody at 1-shanten or
-> better. Any pilot estimate of `π_k` taken before that change is void, and
-> the argument that Neyman allocation has a lot to gain because the variance
-> sits in `k=0` needs re-deriving from this distribution.
+```
+N_eff,k = (Σ_{i∈S_k} wᵢ)² ⁄ Σ_{i∈S_k} wᵢ²
+```
+
+DEV-120 replaced the uniform fill for non-tenpai opponents with an observed
+shanten distribution, changing the occupancy of these very strata. Over 400
+sampled worlds with three undeclared opponents at turn 8, `k = min shanten`:
+
+| | k=0 | k=1 | k=2 | k=3 | k=4 | k=5 |
+|---|--:|--:|--:|--:|--:|--:|
+| uniform fill | 43.5% | 0.2% | 4.5% | 20.0% | 26.5% | 5.2% |
+| observed fill | 43.0% | 44.8% | 11.5% | 0.8% | 0.0% | 0.0% |
+
+The earlier claim that most samples have nobody waiting no longer describes
+the sampler: 88% of worlds now hold somebody at 1-shanten or better. Any
+pilot estimate of `π_k` taken before that change is void. The claim that the
+variance sits in `k=0`, and therefore that Neyman allocation has a lot to
+gain, must be re-derived from the new weighted distribution.
 
 ## 3. Single-player self-draw simulation
 
@@ -275,9 +288,6 @@ continuation value of an exhaustive draw or a dealer win is recorded as zero.
 An exhaustive draw also adds the no-tenpai penalty `F` and is no longer an
 all-zero vector.
 
-> **Open (DEV-152).** Once `V` is added the event decomposition of §4.3 no
-> longer sums back to net EV.
-
 ### 4.3 Decompose by terminal event, replacing Attack/Risk
 
 The previous `max(0,X)` / `max(0,−X)` split is algebraically correct but
@@ -288,9 +298,14 @@ dilutes the differences between them. Decompose by event instead:
 
 ```
 p̂(z) = (1/N) Σᵢ P(Z = z | Hᵢ,Uᵢ)
-m̂(z) = E[ Δ_q | Z = z ]
+m̂(z) = Σᵢ P(z|i)·(Δ_q + ΔV_q)(z,i) ⁄ Σᵢ P(z|i)
 ĉ(z) = p̂(z) · m̂(z),   with Σ_z ĉ(z) = x̄
 ```
+
+Here `ΔV_q = V_q(σ') − V_q(σ₀)`. The identity `Σ_z ĉ(z) = x̄` holds exactly
+only with this pooled definition: the same event probabilities pool both the
+settlement delta and continuation value across trials. Separately estimated
+marginal conditional means will not sum back to net EV.
 
 The output columns become "deal-in rate × mean loss" and "self-draw rate ×
 mean gain", quantities a player can read directly, and they still add up to
@@ -405,18 +420,38 @@ wrong one shifts the estimator by `β(μ_C^true − μ_C^used)`, and that shift 
 not shrink with `N`. So: **when §2's weighting is on, the control variate is
 off.**
 
-> **Open (DEV-150).** The previous revision's closing claim that the three
-> techniques stack without affecting unbiasedness is wrong even on the
-> equal-weight path, because `β̂` is estimated from the same sample.
+Estimating `β̂` and applying it on the same sample correlates `β̂` with
+`C−μ_C`. That control-variate estimator is consistent but biased, with bias
+`O(1/n)`. §2's self-normalized importance-sampling estimator is likewise
+consistent but biased, with bias `O(1/n)`; the variance-reduction techniques
+therefore do not stack while preserving unbiasedness.
+
+The repository takes the split-sample route for `β̂`: estimate `β̂` on the
+first half of the equal-weight sample and apply it to the second half. The
+estimating and applying sample indices must be disjoint. This is chosen over
+a jackknife because it is simpler to state and directly testable.
 
 ## 7. Standard errors and intervals
 
-Sample variance and standard error:
+On the equal-weight path, sample variance and standard error are:
 
 ```
 s² = [1/(N−1)] Σᵢ (Xᵢ−x̄)²
 SE(x̄) = s ⁄ √N
 ```
+
+When §2's weighting is on, use the self-normalized delta-method variance:
+
+```
+V̂ar(x̄) = Σᵢ wᵢ² (xᵢ−x̄)² ⁄ (Σᵢ wᵢ)²
+SE(x̄) = √V̂ar(x̄)
+```
+
+When all weights are equal, this is the equal-weight plug-in variance; applying
+the usual `N ⁄ (N−1)` finite-sample correction gives `s² ⁄ N` and therefore
+`SE(x̄) = s ⁄ √N`. `N_eff` is a reported diagnostic of weight concentration,
+not a correction to this variance and not a replacement for `N` in the
+variance formula.
 
 The payment distribution is discrete, extremely peaked (mostly zeros) and
 heavy-tailed (a self-draw and a deal-in differ by several times over), so the
@@ -428,21 +463,17 @@ t interval:            x̄ ± t_{ν,0.975} · SE(x̄)
 Empirical Bernstein:   |x̄ − μ| ≤ s√( 2 ln(3/δ) ⁄ N ) + 3R ln(3/δ) ⁄ (N−1)
 ```
 
-`R` is the width of the payment range. The second does not rely on a normal
-approximation and is safer in small samples with heavy tails, at the cost of a
-wider interval.
+`R` is the width of the payment range. The Empirical Bernstein bound is
+restricted to the equal-weight path; it does not carry over to weighted
+samples as written. On that path it does not rely on a normal approximation
+and is safer in small samples with heavy tails, at the cost of a wider
+interval.
 
 Two diagnostics must be reported with every candidate, or `N` misleads:
 
-- Effective sample size `N_eff` (§2's post-weighting value).
+- Effective sample size `N_eff` (§2's post-weighting diagnostic).
 - The proportion of non-zero settlements. If `N = 10000` but only 400 hands
   settled non-zero, those 400 carry essentially all the variance.
-
-> **Open (DEV-151).** The formulas above are the equal-weight ones. Whenever
-> §2's self-normalized estimator is in use, substituting `ν = N_eff − 1` into
-> the t quantile changes only the degrees of freedom while the variance
-> itself stays wrong. The self-normalized delta-method variance is
-> `V̂ar(x̄) = Σᵢ wᵢ² (xᵢ − x̄)² / (Σᵢ wᵢ)²`.
 
 ## 8. Comparing candidates and sequential elimination
 
@@ -458,13 +489,21 @@ of a set of noisy estimates. Two workable routes:
   the final average; the winner is re-estimated on a fresh independent batch.
   Simplest to implement.
 - **Anytime-valid intervals.** A confidence sequence keeps coverage at any
-  stopping time, so pilot samples can be reused:
+  stopping time, so pilot samples can be reused for interval coverage:
 
 ```
 x̄_N ± √( 2 s²_N · ln( ln(2N)/δ ) ⁄ N ) + O( R·ln(ln(2N)/δ) ⁄ N )
 ```
 
-> **Open (DEV-153).** This section contradicts §8.2's successive halving.
+A confidence sequence fixes coverage under optional stopping. It does not fix
+the upward selection bias in the winner's point estimate, which remains the
+maximum of a set of noisy estimates when pilot samples enter that estimate.
+
+The repository takes sample splitting because it is the simplest route to
+implement and makes the independence boundary directly testable. Pilot and
+elimination samples do not enter the final point estimate or MCB intervals.
+The anytime-valid route remains an alternative for coverage, not a remedy for
+winner-selection bias.
 
 ### 8.2 Multiple comparisons
 
@@ -477,9 +516,12 @@ intervals instead, per candidate `a`:
 ```
 
 `w` is the width needed for simultaneous coverage. A candidate whose interval
-contains 0 may still be the best. Allocate budget by successive halving:
-eliminate the bottom half each round, `⌈log₂K⌉` rounds, with defensive
-candidates held out of elimination.
+contains 0 may still be the best. Allocate budget by sample-split successive
+halving: each of the `⌈log₂K⌉` rounds eliminates the bottom half using only
+that round's fresh samples, with defensive candidates held out of elimination.
+After elimination, draw a new independent batch for the final reported point
+estimate and MCB intervals. No accumulated elimination sample enters that
+batch, preserving the simultaneous-coverage construction from adaptive reuse.
 
 ### 8.3 Region of practical equivalence
 
