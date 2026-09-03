@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Callable
 
+from .scoring import ScoreResult, ScoringScheme, WinContext, score_hand
 from .shanten import shanten
 from .tiles import validate_counts
 from .ukeire import ukeire
@@ -46,6 +47,7 @@ DiscardPolicy = Callable[
     [tuple[int, ...], tuple[int, ...], tuple[int, ...], int],
     int,
 ]
+TaiEstimator = Callable[[tuple[int, ...], int], int]
 
 
 def _validate_positive_int(value: int, name: str) -> None:
@@ -63,12 +65,18 @@ def _greedy_discard(
     current: tuple[int, ...],
     remaining_counts: tuple[int, ...],
     melds_declared: int,
+    scheme: ScoringScheme | None = None,
+    tai_estimator: TaiEstimator | None = None,
 ) -> tuple[int, int]:
-    """Return the M2 first choice using the trial's current unseen copies.
+    """Return the M2 first choice, optionally weighting winning tiles by value.
 
     The remaining-count tuple is part of the cache key.  It preserves the
     common-random-number draw stream while preventing a later policy decision
     from treating an earlier own discard as drawable again.
+
+    Value weighting is exact only for a concealed post-discard tenpai hand.
+    Declared hands remain unweighted because this function knows only the
+    number of melds, while scoring requires their actual tiles.
     """
     candidates: list[tuple[int, tuple[int, ...]]] = []
     best_shanten = 11
@@ -95,7 +103,23 @@ def _greedy_discard(
             next_hand = list(after)
             next_hand[draw] += 1
             if _cached_shanten(tuple(next_hand), melds_declared) < best_shanten:
-                total += copies
+                value = 1
+                if scheme is not None:
+                    result = ScoreResult((), 0)
+                    if best_shanten == 0 and melds_declared == 0:
+                        completed = tuple(next_hand)
+                        if tai_estimator is None:
+                            # This is a single-player self-draw simulation with no
+                            # seat context. Constant 自摸/門清 tai cannot change the
+                            # arg max; score_hand supplies the shape-dependent tai.
+                            result = score_hand(
+                                completed,
+                                context=WinContext(winning_tile=draw, self_draw=True),
+                            )
+                        else:
+                            result = ScoreResult((), tai_estimator(completed, draw))
+                    value = result.value_in(scheme)
+                total += copies * value
         if total > best_total or (total == best_total and (best_tile == -1 or tile < best_tile)):
             best_tile = tile
             best_total = total
@@ -128,6 +152,7 @@ def _rollout(
     sims: int = 5000,
     seed: int | None = None,
     discard_policy: DiscardPolicy | None = None,
+    scheme: ScoringScheme | None = None,
 ) -> _RolloutResult:
     """Run the single shared greedy rollout used by both public summaries."""
     _validate_positive_int(turns, "turns")
@@ -170,7 +195,7 @@ def _rollout(
 
             if discard_policy is None:
                 discard, after_shanten = _greedy_discard(
-                    current, tuple(remaining_counts), melds_declared,
+                    current, tuple(remaining_counts), melds_declared, scheme,
                 )
             else:
                 discard = discard_policy(
@@ -203,13 +228,16 @@ def win_probability(
     visible: tuple[int, ...] | list[int] | None = None,
     sims: int = 5000,
     seed: int | None = None,
+    scheme: ScoringScheme | None = None,
 ) -> SimResult:
     """Estimate cumulative tenpai and self-draw win chances over ``turns`` draws.
 
     A starting tenpai hand is counted in the turn-one tenpai total, so the
     returned curves have exactly one entry for each simulated draw.
     """
-    rollout = _rollout(counts, turns, melds_declared, visible, sims, seed)
+    rollout = _rollout(
+        counts, turns, melds_declared, visible, sims, seed, scheme=scheme,
+    )
     tenpai_counts = [
         sum(bool(first) and first <= turn for first in rollout.first_tenpai_turns)
         for turn in range(1, turns + 1)
@@ -237,13 +265,16 @@ def winning_trials(
     visible: tuple[int, ...] | list[int] | None = None,
     sims: int = 5000,
     seed: int | None = None,
+    scheme: ScoringScheme | None = None,
 ) -> tuple[WinningTrial, ...]:
     """Return final winning hands and draw turns for deterministic trials.
 
     This is a view of the exact shared rollout used by
     :func:`win_probability`; a discarded tile is not returned to the wall.
     """
-    return _rollout(counts, turns, melds_declared, visible, sims, seed).wins
+    return _rollout(
+        counts, turns, melds_declared, visible, sims, seed, scheme=scheme,
+    ).wins
 
 
 def policy_trials(
@@ -254,6 +285,7 @@ def policy_trials(
     sims: int = 5000,
     seed: int | None = None,
     discard_policy: DiscardPolicy | None = None,
+    scheme: ScoringScheme | None = None,
 ) -> tuple[TrialTrace, ...]:
     """Return every trial trace under one deterministic policy.
 
@@ -261,5 +293,5 @@ def policy_trials(
     draw streams (CRN); only the policy's discards differ.
     """
     return _rollout(
-        counts, turns, melds_declared, visible, sims, seed, discard_policy,
+        counts, turns, melds_declared, visible, sims, seed, discard_policy, scheme,
     ).trials

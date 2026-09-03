@@ -187,25 +187,31 @@ tenpai"; only the cumulative proportions are unbiased.
 
 ### Discard rule: value-weighted acceptance
 
-The current rule maximizes the physical count of accepted tiles and ignores
-tai entirely. Weight each accepted tile by the hand value it leads to:
+The single-player simulator weights each accepted tile by the hand value it
+leads to when that value can be scored exactly:
 
 ```
 score(d) = Σₜ rₜ · 𝟙[s(h − e_d + eₜ) < s(h − e_d)] · (B + T̂(h − e_d + eₜ) · P)
 d* = arg max_d score(d)
 ```
 
-`s(·)` is shanten and `T̂(·)` estimates the tai of that shape. As `P → 0` this
-degenerates to pure ukeire maximization, which is the current behaviour.
+`s(·)` is shanten. The implementation uses exact-at-tenpai `T̂`: after a
+discard, `T̂ = 0` unless the hand is concealed and at shanten 0. Each accepted
+tile in that case completes the hand, so `score_hand` supplies its exact tai
+under a self-draw `WinContext`; no shape estimator is introduced. Everywhere
+else every accepted tile receives the same `scheme.value(0)` multiplier, so
+the ordering and lowest-tile tie-break degenerate exactly to pure ukeire.
 
-This is the one place §1's parameters are not yet plumbed through, and it is a
-single-function change: replace `copies` with `copies * scheme.value(T̂(...))`
-in `simulate._greedy_discard`.
+This rule does not shape 3--4 shanten hands toward patterns such as 混一色 or
+碰碰胡. It also remains unweighted when `melds_declared > 0`: the simulator has
+only the number of melds here, not their tiles, and therefore cannot score
+碰碰胡, 全求人, or 門清 correctly. Callers that pass no scheme remain bit-identical
+to the original unweighted policy; this round only the CLI opts in.
 
 > **Implementation note.** `_greedy_discard` is `lru_cache`d on
-> `(current, remaining_counts, melds_declared)`. Once the scheme weights the
-> score, **the scheme must enter the cache key**, or switching between the
-> `3-1` and `5-2` presets returns the previous preset's answer.
+> `(current, remaining_counts, melds_declared, scheme, tai_estimator)`. The
+> scheme is therefore part of the cache key, so switching between the `3-1`
+> and `5-2` presets cannot return the previous preset's answer.
 
 ### A simultaneous band for the curve
 
@@ -584,8 +590,8 @@ following are model biases that more samples will not remove:
 
 ### Where each section lands in the code
 
-- `taimahjong/simulate.py` — §3's B/P-weighted discard rule (DEV-157); the
-  DKW band.
+- `taimahjong/simulate.py` — §3's exact-at-tenpai B/P-weighted discard rule
+  (**done, DEV-157**); the DKW band.
 - `taimahjong/ev.py` — §4.1's conditional expectation (**done, `68f8fd3`**);
   §4.3's event decomposition replacing the Attack/Risk columns.
 - `taimahjong/rollout.py` — §2's importance weights and stratification; §5's
