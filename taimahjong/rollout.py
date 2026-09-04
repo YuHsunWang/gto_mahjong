@@ -564,14 +564,10 @@ def resolve_terminal_distribution(
             return TerminalMixture(tuple(outcomes))
 
         # A migi declaration locks the hand to tsumogiri: the declared player
-        # may only discard the tile just drawn.  Only the acting seat is
-        # locked here.  Declared opponents are locked in the same way at the
-        # table, but the reference corpus seeds its threat seats as declared,
-        # so locking them too moves that baseline; see DEV-179, which also
-        # has to teach the reference oracle the same rule.
+        # may only discard the tile just drawn.
         discarded = (
             tile
-            if current == acting_seat and player.declared
+            if player.declared
             else (
                 acting_discard_policy(
                     tuple(player.hand),

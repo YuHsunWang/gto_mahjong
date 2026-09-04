@@ -96,6 +96,7 @@ def test_oracle_multi_ron_policy_changes_terminal_and_conserves_payments():
 def test_reference_corpus_is_stratified_and_branch_dominant():
     cases = representative_reference_cases()
     probabilistic_cases = 0
+    observed_kinds = set()
 
     assert len(cases) == 26
     assert {case.strata.actor_role for case in cases} == {"dealer", "nondealer"}
@@ -129,14 +130,6 @@ def test_reference_corpus_is_stratified_and_branch_dominant():
             evaluations,
             key=lambda result: (result.actor_ev, -result.discard),
         )
-        expected_kind = {
-            "draw": "draw",
-            "deal-in": "opponent_ron",
-            "actor-tsumo": "self_tsumo",
-            "self-ron": "self_ron",
-            "opponent-ron": "opponent_ron",
-            "opponent-tsumo": "opponent_tsumo",
-        }[case.strata.branch_character]
         kind_probabilities = {
             kind: sum(
                 outcome.probability
@@ -145,11 +138,21 @@ def test_reference_corpus_is_stratified_and_branch_dominant():
             )
             for kind in {outcome.outcome.kind for outcome in exact_best.outcomes}
         }
+        expected_kind = {
+            "draw": "draw",
+            "deal-in": "opponent_ron",
+            "actor-tsumo": "self_tsumo",
+            "self-ron": "self_ron",
+            "opponent-ron": "opponent_ron",
+            "opponent-tsumo": "opponent_tsumo",
+        }[case.strata.branch_character]
+        observed_kinds.update(kind_probabilities)
         expected_probability = kind_probabilities[expected_kind]
         assert expected_probability == max(kind_probabilities.values())
         assert list(kind_probabilities.values()).count(expected_probability) == 1
         probabilistic_cases += len(kind_probabilities) > 1
 
+    assert observed_kinds == OUTCOME_KINDS
     assert probabilistic_cases >= 8
 
 

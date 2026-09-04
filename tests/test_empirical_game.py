@@ -263,13 +263,25 @@ def corpus_game():
 def test_the_production_profile_is_shown_not_to_be_an_equilibrium(corpus_game):
     """The headline result.
 
-    Re-measured 2026-09-02 on the role-indexed game at 26 cases x 100 worlds:
-    regret +0.153 tai, 95% CI [+0.075, +0.423] resampling cases, best deviation
-    role 3 to safety.  The interval clearing zero is the whole claim; the point
-    estimate alone survived every budget while the equilibrium it implied did
-    not.  Naming a *role* rather than a seat is what the role rebuild bought:
-    under seat indexing the deviation was reported for seat 0, which is the
-    actor in only half the corpus.
+    Re-measured 2026-09-05 on the role-indexed game at 26 cases x 100 worlds:
+    regret +0.611 tai, 95% CI [+0.152, +1.251] resampling cases, best deviation
+    role 0 -- the actor -- to safety.  The interval clearing zero is the whole
+    claim; the point estimate alone survived every budget while the equilibrium
+    it implied did not.  Naming a *role* rather than a seat is what the role
+    rebuild bought: under seat indexing the deviation was reported for seat 0,
+    which is the actor in only half the corpus.
+
+    DEV-179 moved the role back from 3 to 0 and roughly quadrupled the point
+    estimate.  Attribution was measured, not guessed, by running this same
+    budget on three trees: at 88cf44b (role 3, +0.153); with only the
+    tsumogiri lock applied and the corpus untouched (role 0, +0.558); and with
+    the re-seeded corpus on top (role 0, +0.611).  The role flip is therefore
+    entirely the lock's doing, and the lock accounts for 89% of the movement in
+    the point estimate.  This is the expected direction: a declared opponent
+    that may only tsumogiri cannot fold, so the frozen seats stop competing for
+    the safety gain and the actor becomes the role that profits most by taking
+    it.  The old +0.153 was calibrated while rollout.py let declared opponents
+    keep reshaping a hand the rules freeze, which is the defect DEV-179 fixed.
 
     Recorded 2026-08-25, before DEV-120: regret +0.259 tai, 95% CI
     [+0.100, +0.555], best deviation role 0 -- the actor -- to safety.  DEV-120
@@ -282,7 +294,7 @@ def test_the_production_profile_is_shown_not_to_be_an_equilibrium(corpus_game):
     """
     result = corpus_game.regret_interval(("efficiency",) * 4)
     assert result.resolved and result.low > 0.0, result
-    assert (result.role, result.reply) == (3, "safety"), result
+    assert (result.role, result.reply) == (0, "safety"), result
 
 
 @pytest.mark.slow

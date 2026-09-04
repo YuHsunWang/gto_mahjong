@@ -187,7 +187,12 @@ def sample_worlds(
         ):
             continue
         worlds.append(ReferenceState(
-            tuple(ReferencePlayer(hand) for hand in hands),
+            tuple(
+                ReferencePlayer(
+                    tuple(player.hand), declared_at=player.declared_at,
+                )
+                for player in trial.players
+            ),
             tuple(trial.wall[:observation.wall_size]),
             acting_seat=observation.acting_seat,
             next_seat=observation.next_seat,
@@ -315,8 +320,12 @@ def _analyse_opening(
                     )
                 continue
 
-            chosen = _production_discard_policy(
-                drawn_hand, tuple(next_remaining), 0,
+            chosen = (
+                tile
+                if state.players[seat].declared_at is not None
+                else _production_discard_policy(
+                    drawn_hand, tuple(next_remaining), 0,
+                )
             )
             _continue_after_discard(
                 current,

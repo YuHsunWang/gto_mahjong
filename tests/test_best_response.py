@@ -120,7 +120,36 @@ def test_a_tenpai_actor_that_tsumos_has_nothing_left_on_the_table():
 
 @pytest.mark.slow
 def test_corpus_exploitability_at_a_reportable_budget():
-    """The headline measurement, at a budget worth quoting."""
+    """The headline measurement, at a budget worth quoting.
+
+    DEV-179 moved this band.  Locking declared opponents to tsumogiri is the
+    correct table rule, and it roughly doubled measured exploitability: the
+    corpus mean went 0.620 -> 1.204 tai, past the old 1.2 ceiling.  The ceiling
+    is raised to 1.5 rather than the measurement being explained away, because
+    the old ceiling was calibrated while rollout.py still let declared
+    opponents reshape a frozen hand.
+
+    The rise was attributed per case, not assumed.  Splitting the 26 cases by
+    how many opponents have declared, before -> with the lock applied and the
+    corpus untouched:
+
+        declared  n   before   locked   ratio
+               0  11   0.0000   0.0000     --
+               1   5   0.4139   0.6217   1.50x
+               2   5   1.3590   2.4081   1.77x
+               3   5   1.4487   2.8867   1.99x
+
+    Every case without a declared opponent is exactly zero on both sides, and
+    the ratio climbs monotonically with declared exposure.  So all measured
+    exploitability in this corpus comes from how production plays against a
+    declared opponent, and the lock enlarged a gap that already existed rather
+    than creating one.  Closing that gap is DEV-184; this test only has to
+    keep pinning the order of magnitude, and DEV-184 should pull the ceiling
+    back down when it lands.
+
+    Recorded 2026-08-24: 0.556 and 0.898 tai.  Re-measured 2026-09-05: 1.204
+    and 1.762.
+    """
     constrained = [
         exploitability(case, sims=60, seed=1, mode="opening")
         for case in CASES
@@ -135,7 +164,7 @@ def test_corpus_exploitability_at_a_reportable_budget():
         assert loose.exploitability >= tight.exploitability - 1e-9
     mean_constrained = sum(r.exploitability for r in constrained) / len(constrained)
     mean_free = sum(r.exploitability for r in free) / len(free)
-    # Recorded 2026-08-24: 0.556 and 0.898 tai.  The band is wide because this
-    # pins the order of magnitude, not the point estimate.
-    assert 0.2 <= mean_constrained <= 1.2
+    # The band is wide because this pins the order of magnitude, not the point
+    # estimate; see the docstring for why the ceiling moved in DEV-179.
+    assert 0.2 <= mean_constrained <= 1.5
     assert mean_constrained <= mean_free <= 2.0

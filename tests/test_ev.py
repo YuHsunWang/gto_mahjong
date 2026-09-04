@@ -451,6 +451,32 @@ def test_declared_context_reaches_ev_rollout_scores_migi_and_locks_tsumogiri(mon
     )
 
 
+def test_declared_opponent_locks_tsumogiri_in_terminal_rollout(monkeypatch):
+    """A declared opponent cannot reshape its frozen hand with tedashi."""
+    import taimahjong.rollout as rollout
+
+    def hand(start: int) -> list[int]:
+        counts = [0] * 34
+        for tile in range(start, start + 4):
+            counts[tile] = 4
+        return counts
+
+    players = [
+        Player("attack", hand(0)),
+        Player("attack", hand(4), declared_at=0),
+        Player("attack", hand(8)),
+        Player("attack", hand(12)),
+    ]
+    monkeypatch.setattr(rollout, "_cached_shanten", lambda *_: 0)
+
+    def tedashi_policy(*_args):
+        pytest.fail("a declared opponent must tsumogiri instead of using policy")
+
+    resolve_terminal(
+        players, (16,), 0, 1, 0, tedashi_policy, Random(3),
+    )
+
+
 @pytest.mark.parametrize(
     ("out_of_hands", "revealed_holdings", "expected_turns"),
     [
