@@ -12,7 +12,7 @@ import random
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from itertools import permutations
-from math import ceil, comb
+from math import comb, floor
 from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
@@ -241,7 +241,7 @@ def remaining_draws(
     if wall_remaining is not None:
         if not isinstance(wall_remaining, int) or isinstance(wall_remaining, bool) or wall_remaining < 0:
             raise ValueError("wall_remaining must be a non-negative integer")
-        return ceil(wall_remaining / 4)
+        return floor(wall_remaining / 4)
     if accounting is None:
         tiles = TileAccounting()
     elif isinstance(accounting, TileAccounting):
@@ -253,7 +253,7 @@ def remaining_draws(
     if any(hand[tile] + tiles.visible[tile] > 4 for tile in range(34)):
         raise ValueError("hand and observable tiles cannot contain more than four copies of a tile kind")
     live_wall = 136 - 16 - sum(hand) - 3 * 16 - sum(tiles.out_of_hands)
-    return max(0, ceil(live_wall / 4))
+    return max(0, floor(live_wall / 4))
 
 
 def opponent_hazards(
@@ -989,6 +989,7 @@ def _sample_production_world(
         "attack",
         list(hand),
         melds=list(actor_melds),
+        declared_at=0 if context.migi_declared else None,
         dealer_streak=dealer_streak if acting_seat == 0 else 0,
         kongs=list(actor_kongs),
     )

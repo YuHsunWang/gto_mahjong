@@ -26,7 +26,7 @@ from taimahjong.reference_ev import (
 )
 from taimahjong.rollout import CalibratedRonClaim, resolve_terminal
 from taimahjong.scoring import EARTHLY_TAI, HEAVENLY_TAI, WinContext, score_hand
-from taimahjong.selfplay import Player
+from taimahjong.selfplay import Player, _settlement
 from taimahjong.tiles import parse_tiles
 
 
@@ -384,18 +384,78 @@ def test_winning_trial_values_are_scored_as_self_draws():
 
 
 def test_remaining_draws_uses_live_wall_and_four_seats():
-    # 26 -> 14: the 48 tiles in three hidden opponent hands are not drawable.
-    assert remaining_draws(POST_DRAW, (0,) * 34) == 14  # ceil((136 - 16 - 17 - 48) / 4)
-    assert remaining_draws(POST_DRAW, parse_tiles("9999m")) == 13  # four public tiles also left the wall
+    # 55 -> 13: the 48 tiles in three hidden opponent hands are not drawable.
+    assert remaining_draws(POST_DRAW, (0,) * 34) == 13  # floor((136 - 16 - 17 - 48) / 4)
+    assert remaining_draws(POST_DRAW, parse_tiles("9999m")) == 12  # four public tiles also left the wall
+
+
+@pytest.mark.parametrize("live_wall", [55, 7])
+def test_automatic_horizon_stays_in_live_wall_and_preserves_actor_turn_order(live_wall):
+    """Post-discard play starts downstream, so the actor gets floor(live/4) draws.
+
+    The dead wall is reserved: a production world may not pad an incomplete
+    table round with it just to give the actor one more draw.
+    """
+    seen = [0] * 34
+    if live_wall < 55:
+        needed_out_of_hands = 55 - live_wall
+        for tile, available in enumerate(4 - count for count in POST_DRAW):
+            taken = min(available, needed_out_of_hands)
+            seen[tile] = taken
+            needed_out_of_hands -= taken
+            if not needed_out_of_hands:
+                break
+        assert needed_out_of_hands == 0
+    turns = remaining_draws(POST_DRAW, tuple(seen), wall_remaining=live_wall)
+    world = ev._sample_production_world(
+        POST_DRAW, tuple(seen), (), turns, None, 20260904,
+    )
+
+    assert len(world.wall) <= live_wall
+    # The next seat draws first; seat 1, 2, 3, then the actor at seat 0.
+    assert sum(index % 4 == 3 for index in range(len(world.wall))) == turns
+
+
+def test_declared_context_reaches_ev_rollout_scores_migi_and_locks_tsumogiri(monkeypatch):
+    """A migi hand keeps its 8-tai declaration value and may only tsumogiri."""
+    import taimahjong.rollout as rollout
+
+    context = WinContext(winning_tile=_tile("3z"), migi_declared=True)
+    world = ev._sample_production_world(
+        POST_DRAW, (0,) * 34, (), 1, context, 20260904,
+    )
+    actor = 1
+    assert world.players[actor].declared_at == 0
+
+    _, value = _settlement(
+        "tsumo", actor, None, list(world.players), POST_DRAW, _tile("3z"), 0,
+    )
+    undeclared = score_hand(
+        POST_DRAW, (), WinContext(_tile("3z"), self_draw=True),
+    ).value_units
+    assert value == undeclared + 8
+
+    # The rollout reaches the actor after three downstream draws.  If it asks
+    # a declared actor's continuation policy to choose, it could tedashi from
+    # the concealed hand, which is illegal after a migi declaration.
+    monkeypatch.setattr(rollout, "_cached_shanten", lambda *_: 0)
+    def concealed_discard(*_args):
+        pytest.fail("a declared actor must tsumogiri instead of using policy")
+
+    resolve_terminal(
+        world.players, (0, 1, 2, 3), actor, (actor + 1) % 4, _tile("3z"),
+        lambda hand, *_: next(tile for tile, count in enumerate(hand) if count),
+        Random(3), acting_discard_policy=concealed_discard, visible=(0,) * 34,
+    )
 
 
 @pytest.mark.parametrize(
     ("out_of_hands", "revealed_holdings", "expected_turns"),
     [
-        ("9m", "", 14),
-        ("9m", "111p", 14),  # the same opponent tiles merely become an open pon
-        ("9m9p", "111p777s", 14),  # multiple opponents' chi/pon holdings
-        ("9m9p12z", "111p777s8888m", 13),  # several melds plus a revealed kong
+        ("9m", "", 13),
+        ("9m", "111p", 13),  # the same opponent tiles merely become an open pon
+        ("9m9p", "111p777s", 13),  # multiple opponents' chi/pon holdings
+        ("9m9p12z", "111p777s8888m", 12),  # several melds plus a revealed kong
     ],
 )
 def test_live_wall_accounting_separates_discards_from_revealed_holdings(
