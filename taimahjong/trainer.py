@@ -24,7 +24,7 @@ from .analysis import AnalysisContext, DEFAULT_ANALYSIS_CONTEXT
 from .calibration import Calibration
 from .config import DEFAULT_RULES, RulesConfig, resolve_ron_claims
 from .danger import DeclaredKong, DeclaredMeld, KongLike, MeldLike, kong_tiles, meld_tiles
-from .ev import WinValueContext, declaration_ev, evaluate_discard, evaluate_pass, ev_rank
+from .ev import FLOWERLESS_DEAD_WALL_TILES, WinValueContext, declaration_ev, evaluate_discard, evaluate_pass, ev_rank
 from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
 from .scoring import DEFAULT_SCHEME, ScoringScheme
 from .selfplay import (
@@ -808,7 +808,7 @@ def play_trainer(
     for _ in range(16):
         for player in players:
             player.hand[tiles.pop()] += 1
-    dead = [tiles.pop() for _ in range(16)]  # noqa: F841 - dead wall, kept out of play
+    dead = [tiles.pop() for _ in range(FLOWERLESS_DEAD_WALL_TILES)]  # noqa: F841 - dead wall, kept out of play
     wall = tiles
     current = 0
     needs_draw = True

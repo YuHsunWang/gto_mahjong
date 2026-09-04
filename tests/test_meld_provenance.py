@@ -219,7 +219,8 @@ def _payload_melds(payload: dict):
     ("seed", "owner", "tiles", "called_tile", "source", "discard_number"),
     [
         (1, 3, [14, 14, 14], 14, 1, 1),
-        (2, 2, [15, 16, 17], 17, 1, 3),
+        # Seed 22 restores the chi after the flowerless dead-wall deal shift.
+        (22, 1, [15, 16, 17], 17, 0, 3),
     ],
     ids=("pon", "chi"),
 )
@@ -256,11 +257,17 @@ def test_selfplay_call_provenance_reaches_the_position_payload(
 
 
 def test_big_open_kong_records_source_while_added_and_concealed_kongs_do_not():
-    game = play_game(32, ("attack",) * 4, kong_policy="all")
+    # Only a big open kong is called off another seat's discard, so only it can
+    # name a source; an added or concealed kong comes from the owner's own hand
+    # and must record nothing.  Seed 211 is the one seed in 1..2000 that deals a
+    # game with exactly one big open kong plus one added kong under this policy —
+    # if the deal ever moves again, rescan for that pair rather than relaxing
+    # the assertions below.
+    game = play_game(211, ("attack",) * 4, kong_policy="all")
     big_open, added = game.kongs
     assert isinstance(big_open, DeclaredKong)
-    assert kong_tiles(big_open) == (32, False)
-    assert tuple(big_open) == (32, False)
+    assert kong_tiles(big_open) == (8, False)
+    assert tuple(big_open) == (8, False)
     assert big_open.called_from_seat == 2
     assert big_open.called_from_discard_number == 3
     assert any(

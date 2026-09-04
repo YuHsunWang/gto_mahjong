@@ -82,6 +82,9 @@ PILOT_SEED_STRIDE = 0x9E3779B97F4A7C15
 # error that added trials cannot cross.  800 covers every shipped budget; above
 # it the pool clusters as before, bounding cost at the API's 5,000 ceiling.
 PRODUCTION_HIDDEN_WORLD_STRATA = 800
+# Flowerless Taiwanese mahjong retains 7 dun rather than the 8-dun
+# with-flower dead wall.
+FLOWERLESS_DEAD_WALL_TILES = 14
 
 
 @dataclass(frozen=True)
@@ -232,7 +235,7 @@ def remaining_draws(
     """Approximate this seat's remaining draws from the live-wall tile count.
 
     An explicit live-wall count is authoritative.  Otherwise Taiwanese
-    mahjong reserves a 16-tile dead wall; this seat's concealed hand and the
+    flowerless game reserves a 7-dun (14-tile) dead wall; this seat's concealed hand and the
     three opponents' fixed 48-tile holdings are already deducted, so only
     ``TileAccounting.out_of_hands`` is additionally removed. Revealed melds
     stay inside those holdings and do not shorten the wall a second time.
@@ -252,7 +255,7 @@ def remaining_draws(
         tiles = TileAccounting(accounting)
     if any(hand[tile] + tiles.visible[tile] > 4 for tile in range(34)):
         raise ValueError("hand and observable tiles cannot contain more than four copies of a tile kind")
-    live_wall = 136 - 16 - sum(hand) - 3 * 16 - sum(tiles.out_of_hands)
+    live_wall = 136 - FLOWERLESS_DEAD_WALL_TILES - sum(hand) - 3 * 16 - sum(tiles.out_of_hands)
     return max(0, floor(live_wall / 4))
 
 

@@ -48,7 +48,12 @@ def test_fixed_seed_is_deterministic_and_conserves_tiles():
 
 
 def test_smoke_batch_has_each_terminal_path_and_valid_wins():
-    games = play_games(50, 20260717)
+    # A batch is only a smoke test if it actually reaches every terminal path
+    # and at least one migi declaration; both together are rare (about 3% of
+    # 50-game batches), so this seed differs from the one the point-accounting
+    # test uses.  If the deal moves again, rescan for a seed satisfying both
+    # rather than dropping either half of the assertion.
+    games = play_games(50, 20260754)
     outcomes = {game.outcome for game in games}
     assert {"ron", "tsumo", "draw"} <= outcomes
     assert any(event["declared"] for game in games for event in game.events)

@@ -11,6 +11,7 @@ import taimahjong.ev as ev
 from taimahjong.ev import (
     DRAW_VALUE,
     FOLD_HAZARD_CUTOFF,
+    FLOWERLESS_DEAD_WALL_TILES,
     declaration_ev,
     estimate_win_value,
     ev_rank,
@@ -384,9 +385,10 @@ def test_winning_trial_values_are_scored_as_self_draws():
 
 
 def test_remaining_draws_uses_live_wall_and_four_seats():
-    # 55 -> 13: the 48 tiles in three hidden opponent hands are not drawable.
-    assert remaining_draws(POST_DRAW, (0,) * 34) == 13  # floor((136 - 16 - 17 - 48) / 4)
-    assert remaining_draws(POST_DRAW, parse_tiles("9999m")) == 12  # four public tiles also left the wall
+    # Flowerless Taiwanese mahjong reserves 7 dun (14 tiles), leaving 57 -> 14;
+    # the 48 tiles in three hidden opponent hands are not drawable.
+    assert remaining_draws(POST_DRAW, (0,) * 34) == 14  # floor((136 - 14 - 17 - 48) / 4)
+    assert remaining_draws(POST_DRAW, parse_tiles("9999m")) == 13  # four public tiles also left the wall
 
 
 @pytest.mark.parametrize("live_wall", [55, 7])
@@ -452,10 +454,10 @@ def test_declared_context_reaches_ev_rollout_scores_migi_and_locks_tsumogiri(mon
 @pytest.mark.parametrize(
     ("out_of_hands", "revealed_holdings", "expected_turns"),
     [
-        ("9m", "", 13),
-        ("9m", "111p", 13),  # the same opponent tiles merely become an open pon
+        ("9m", "", 14),
+        ("9m", "111p", 14),  # the same opponent tiles merely become an open pon
         ("9m9p", "111p777s", 13),  # multiple opponents' chi/pon holdings
-        ("9m9p12z", "111p777s8888m", 12),  # several melds plus a revealed kong
+        ("9m9p12z", "111p777s8888m", 13),  # several melds plus a revealed kong
     ],
 )
 def test_live_wall_accounting_separates_discards_from_revealed_holdings(
@@ -473,7 +475,7 @@ def test_explicit_wall_and_derived_accounting_return_the_same_turns():
         parse_tiles("9m9p12z"),
         parse_tiles("111p777s8888m"),
     )
-    derived_live_wall = 136 - 16 - sum(POST_DRAW) - 3 * 16 - 4
+    derived_live_wall = 136 - FLOWERLESS_DEAD_WALL_TILES - sum(POST_DRAW) - 3 * 16 - 4
     assert remaining_draws(POST_DRAW, accounting) == remaining_draws(
         POST_DRAW, accounting, wall_remaining=derived_live_wall,
     )

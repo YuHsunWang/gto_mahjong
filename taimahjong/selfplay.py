@@ -34,7 +34,7 @@ from .danger import (
     meld_tiles,
     tenpai_score,
 )
-from .ev import BASELINE_TENPAI_RATE, DECLARED_FACTOR, opponent_value_estimate
+from .ev import BASELINE_TENPAI_RATE, DECLARED_FACTOR, FLOWERLESS_DEAD_WALL_TILES, opponent_value_estimate
 from .scoring import BASE_UNITS, DEFAULT_SCHEME, DEALER_TAI, STREAK_TAI_PER_WIN, ScoringScheme, WinContext, score_hand
 from .shanten import shanten
 from .ukeire import DiscardAnalysis
@@ -705,7 +705,7 @@ def play_game(
     for _ in range(16):
         for player in players:
             player.hand[tiles.pop()] += 1
-    dead = [tiles.pop() for _ in range(16)]
+    dead = [tiles.pop() for _ in range(FLOWERLESS_DEAD_WALL_TILES)]
     wall = tiles
     events: list[dict] = []
     kong_log: list[tuple[int, int, bool]] = []  # (seat, tile, concealed) per declared kong

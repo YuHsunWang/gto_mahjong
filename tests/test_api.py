@@ -293,7 +293,7 @@ def test_ev_rank_auto_turns_include_hidden_opponent_hands(client):
     assert response.status_code == 200
     # floor, not ceil: the actor has already drawn and discarded, so play
     # resumes downstream and the actor gets one fewer draw than the table.
-    assert response.json()["turns"] == 13  # floor((136 - 16 dead - 17 own - 48 opponents) / 4)
+    assert response.json()["turns"] == 14  # floor((136 - 14 dead - 17 own - 48 opponents) / 4)
 
 
 def test_ev_rank_open_meld_does_not_shorten_the_live_wall(client):
@@ -305,7 +305,9 @@ def test_ev_rank_open_meld_does_not_shorten_the_live_wall(client):
     closed = client.post("/api/ev/rank", json=base)
     opened = client.post("/api/ev/rank", json={**base, "melds": "111p"})
     assert closed.status_code == opened.status_code == 200
-    assert closed.json()["turns"] == opened.json()["turns"] == 13
+    # The flowerless 14-tile dead wall leaves two more live-wall tiles; an
+    # open meld remains inside its owner's fixed 16-tile holding.
+    assert closed.json()["turns"] == opened.json()["turns"] == 14
 
 
 def test_ev_rank_prefers_explicit_wall_remaining(client):
