@@ -19,12 +19,12 @@
 但目前不能把輸出稱為「GTO 最佳解」，也不能說兩種底台模式已在所有收益、損失與教學流程一致套用。最重要的問題是：
 
 1. **CONFIRMED / P0 — 底 5／台 2 沒有端到端傳遞。** 核心 `ScoringScheme` 算式正確，但算台 API、算台／分析 UI、CLI、trainer 實際結算與自動決策仍使用底 3／台 1；同一局甚至可以逐步切換評分 scheme，造成 scorecard 混合單位。
-2. **CONFIRMED / P0 — 自摸模擬的貪婪策略不累積自家先前棄牌。** 牌池不會把棄牌放回，但後續進張比較仍一直使用初始 `seen`，會高估已棄出的同種牌並可能改變後續切牌。
+2. **CONFIRMED / P0 — 自摸模擬的貪婪策略不累積自家先前棄牌。** 牌池不會把棄牌放回，但後續進張比較仍一直使用初始 `seen`，會高估已棄出的同種牌並可能改變後續打牌。
 3. **CONFIRMED / P0 — 對手公開副露在自動估算剩餘摸牌數時被重複扣除。** `remaining_draws` 已固定扣掉三家各 16 張，又把其副露算進 `visible` 再扣一次。
 4. **CONFIRMED / P0 — 教學路徑沒有使用 committed calibration。** Stateless EV API 有載入校準表，但 quiz、endgame、trainer 的 discard/call/kong 評分未傳入 calibration；首頁「機率以機器人自我對局校準」的涵蓋範圍因此過廣。
 5. **CONFIRMED / P0 — 「GTO」宣稱不成立。** 實作是固定規則／greedy／proxy EV bot 產生資料，再以危險分數查表；沒有策略空間、混合策略、best response、regret、Nash/均衡求解或 exploitability 評估。
 
-此外，EV 只模擬自己的自摸，不模擬榮和、他家自摸造成的支付、未來棄牌放槍與狀態更新；`fold` 是用最安全候選的單次風險建立的偽列，不是一個可執行的防守策略。這些限制在部分文件有坦白，但 UI 與「最佳解」文字仍給出過強的確定性。
+此外，EV 只模擬自己的自摸，不模擬胡牌、他家自摸造成的支付、未來棄牌放槍與狀態更新；`fold` 是用最安全候選的單次風險建立的偽列，不是一個可執行的防守策略。這些限制在部分文件有坦白，但 UI 與「最佳解」文字仍給出過強的確定性。
 
 ## 0.3 實際驗證紀錄
 
@@ -234,7 +234,7 @@ net EV(candidate)
 
 ### 模型缺口
 
-- **CONFIRMED / P0**：attack simulation 只含自摸；不含自己榮和。
+- **CONFIRMED / P0**：attack simulation 只含自摸；不含自己胡牌。
 - **CONFIRMED / P1**：對手先胡只以固定 per-turn survival hazard 折減自己的攻擊，沒有扣除對手自摸支付；hazard 在整段 future 不更新（`ev.py:96-132`）。
 - **CONFIRMED / P1**：只扣當下候選 discard 的放槍損失，沒有 rollout 後續每次 discard 的放槍。
 - **CONFIRMED / P1**：`DRAW_VALUE=0`，沒有流局聽牌支付或牌局價值。
@@ -302,7 +302,7 @@ net EV(candidate)
 
 - **CONFIRMED**：pure efficiency 明確教「先減向聽、再看進張」，並顯示有效牌與剩餘張數。
 - **CONFIRMED**：quiz feedback 拆成 attack、risk、net EV，且顯示 chosen vs best、EV loss、marginal verdict。
-- **CONFIRMED**：trainer 覆蓋切牌、吃碰、暗／加槓、完整 outcome；endgame 依 late wall + pressure 篩題。
+- **CONFIRMED**：trainer 覆蓋打牌、吃碰、暗／加槓、完整 outcome；endgame 依 late wall + pressure 篩題。
 - **CONFIRMED**：首頁有明示「bot calibration 非真人」與「進攻 EV 僅計自摸」（`main.js:122-126`），這是重要的 honest scope。
 
 主要問題：

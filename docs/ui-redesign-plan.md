@@ -68,12 +68,12 @@ For viewports narrower than 720 px, replace only the *presentation* of the ranke
 
 1. A fixed header: rank, cut tile, `淨EV`, and its chosen/best status.
 2. A primary comparison strip, always visible: `淨EV`, `95% CI`, and `P(自摸)`.
-3. A compact “more metrics” disclosure in each card: `存活P(和)`, `P(流局)`, `E[和牌值]`, and `E[放銃]`, with the same decimal formatting as today.
+3. A compact “more metrics” disclosure in each card: `存活P(和)`, `P(流局)`, `E[和牌值]`, and `E[放槍]`, with the same decimal formatting as today.
 4. An “expand all metrics” control above the list, plus the existing fold policy, top-two uncertainty, and explanation below the ranked entries.
 
 This is better than a horizontally scrolling eight-column table on a phone because the analysis comparison starts with the decision and its uncertainty, while the rest remains one tap away in the same ranked row. It does **not** hide or round data. Use repeated labels, tabular numerals, and aligned metric cells so players can compare two expanded cards without mental remapping.
 
-Essential at first glance: `切牌`, `淨EV`, `95% CI`, and `P(自摸)`. Progressive disclosure: `存活P(和)`, `P(流局)`, `E[和牌值]`, and `E[放銃]`. The distinction is a screen-density decision, not a claim that secondary metrics are unimportant: `E[放銃]` and survival probability are particularly relevant to defensive choices, and all eight are presently emitted by the renderer (`server/static/js/feedback.js:41-54`). At 720 px and above, retain the semantic eight-column `<table>` for scan-across comparison. Avoid a permanent “mobile table” toggle: automatic cards below 720 px and tables at/above 720 px make the analysis mode predictable. Decision 3 asks the owner to confirm that default.
+Essential at first glance: `打牌`, `淨EV`, `95% CI`, and `P(自摸)`. Progressive disclosure: `存活P(和)`, `P(流局)`, `E[和牌值]`, and `E[放槍]`. The distinction is a screen-density decision, not a claim that secondary metrics are unimportant: `E[放槍]` and survival probability are particularly relevant to defensive choices, and all eight are presently emitted by the renderer (`server/static/js/feedback.js:41-54`). At 720 px and above, retain the semantic eight-column `<table>` for scan-across comparison. Avoid a permanent “mobile table” toggle: automatic cards below 720 px and tables at/above 720 px make the analysis mode predictable. Decision 3 asks the owner to confirm that default.
 
 ## 4. Phase 0 — screenshot baseline before any UI change
 

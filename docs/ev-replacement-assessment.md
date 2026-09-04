@@ -37,7 +37,7 @@ net EV ≈ survival-discounted P(自摸) × hand value
 
 Oracle 則模型化**完整 outcome space**：self tsumo、self ron by target、opponent ron、opponent tsumo、draw，四家支付在兩 scheme 皆守恆。
 
-因此缺口是**已知的模型不完整**（審查 Phase 3.5、MJ-006 早已點名：缺自己榮和、缺他家自摸支付、缺未來棄牌放槍、`DRAW_VALUE=0`），oracle 只是把這些缺項量化成**排序後果**——在完整支付下 attack-only 的排序會被顛覆。
+因此缺口是**已知的模型不完整**（審查 Phase 3.5、MJ-006 早已點名：缺自己胡牌、缺他家自摸支付、缺未來棄牌放槍、`DRAW_VALUE=0`），oracle 只是把這些缺項量化成**排序後果**——在完整支付下 attack-only 的排序會被顛覆。
 
 ## 4. 必須誠實的限制（不得過度解讀）
 

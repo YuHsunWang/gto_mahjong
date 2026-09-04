@@ -6,11 +6,11 @@
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**一局台灣十六張麻將，每一次切牌都用蒙地卡羅終局 rollout 打分，並在模型分不出高下時直說。**
+**一局台灣十六張麻將，每一次打牌都用蒙地卡羅終局 rollout 打分，並在模型分不出高下時直說。**
 
-![整場實戰：切牌後即時 net EV 回饋](docs/screenshots/trainer-feedback.png)
+![整場實戰：打牌後即時 net EV 回饋](docs/screenshots/trainer-feedback.png)
 
-上圖是打完一手之後的畫面。引擎不只說「你切錯了」，它說的是：這手比模型的首選差 0.44 net EV；
+上圖是打完一手之後的畫面。引擎不只說「你打錯了」，它說的是：這手比模型的首選差 0.44 net EV；
 順帶一提，九筒和七筒之間 paired 差為 +0.04、描述區間 `[-0.53, +0.61]` 跨過 0，**在目前的模擬
 預算下模型分不出這兩張誰好**。會主動報告自己分不出來的排名，是這個專案最花力氣的部分。
 
@@ -22,7 +22,7 @@ bitset，再用 memoized suit-profile composition 取代跨花色的笛卡兒積
 50,000 個生成的胡牌／差一張的牌型（涵蓋所有副露數與兩種手牌長度），加上所有每種牌不超過 3 張的
 合法單花色 shape 窮舉比對（[`tests/test_shanten_optimized.py`](tests/test_shanten_optimized.py)）。
 
-**2. EV 是共用亂數的終局模擬，不是公式拼裝。** 所有候選切牌共用同一批抽樣的隱藏世界與亂數流
+**2. EV 是共用亂數的終局模擬，不是公式拼裝。** 所有候選打牌共用同一批抽樣的隱藏世界與亂數流
 （common random numbers），每次 trial 只落在一個互斥終局上，再依家規做四家零和結算；搭配信賴
 界線候選篩選與取樣誤差估計，排名分不開時就標記為 unresolved 而不是硬排
 （[`taimahjong/ev.py`](taimahjong/ev.py) → [`taimahjong/rollout.py`](taimahjong/rollout.py)）。
@@ -39,7 +39,7 @@ top-1 一致率 100%、排名倒轉率 0%，而且在預設取樣預算下誤差
 ## 老實說它不是什麼
 
 只處理 34 種普通牌（萬、筒、條、字），不做花牌，也不算特殊牌型。EV rollout 會模擬自己與對手的
-自摸、榮和及流局；其中榮和機率的 lookup table 來自內建機器人自我對局，隱藏手牌與各家後續策略
+自摸、胡牌及流局；其中胡牌機率的 lookup table 來自內建機器人自我對局，隱藏手牌與各家後續策略
 則含 heuristic 假設。這些都不是對真人牌局的校準，缺少 lookup table 時還會明示改用 heuristic
 fallback。因此它適合拿來練判斷、練手感，但別把數字當成真人牌桌上的精準勝率或精準 EV。
 完整的四類拆解在下面的[方法論卡](#方法論卡)。
@@ -105,7 +105,7 @@ flowchart TB
         UKEIRE["ukeire.py<br/>進張"]
         DANGER["danger.py<br/>危險度特徵"]
         SCORING["scoring.py<br/>台數與結算規則"]
-        CALIB["calibration.py<br/>放銃機率 lookup"]
+        CALIB["calibration.py<br/>放槍機率 lookup"]
     end
 
     subgraph validate["正確性把關"]
@@ -148,21 +148,21 @@ flowchart TB
 「向聽數」就是你離聽牌還差幾張有效牌，差 0 就是聽牌了。「進張」就是能讓你更接近
 胡牌的那些牌。給它一手 16 張的牌，它會列出每一種進張、還有那種牌總共還剩幾張沒
 出現（算法很簡單：`4 −（手上有幾張）−（別處看到幾張）`）。給它一手 17 張的牌
-（摸完還沒切），它會幫你把每一種切牌排名：先看切完向聽誰小，一樣再比進張誰多。
+（摸完還沒切），它會幫你把每一種打牌排名：先看切完向聽誰小，一樣再比進張誰多。
 
 如果你已經吃碰亮牌，用 `--melds` 告訴它，每一組會少算 3 張暗牌。用 `--visible`
 可以把「你在別處看到的牌」也一起考慮進去。
 
 ```bash
 python3 -m taimahjong "123m123p123s1112223z" --ukeire     # 列進張
-python3 -m taimahjong "123m123p123s11122233z" --analyze   # 切牌排名
+python3 -m taimahjong "123m123p123s11122233z" --analyze   # 打牌排名
 ```
 
 ### 胡牌率模擬
 
 用「發很多次牌」的方法（蒙地卡羅模擬）估你大概多久會胡。
 
-它對著 136 張牌隨機發很多局，每局抽了就不放回，抽到不能胡的牌就照 heuristic 牌效切牌繼續
+它對著 136 張牌隨機發很多局，每局抽了就不放回，抽到不能胡的牌就照 heuristic 牌效打牌繼續
 打，最後告訴你：每摸一巡之後，累積的聽牌率和自摸胡牌率各是多少。這個獨立的
 `--simulate` 模式只算你自己摸牌自摸，不管對手怎麼打、不管放槍；它不是下文
 `--ev` 使用的四家終局 rollout。
@@ -197,7 +197,7 @@ python3 -m taimahjong "123m123p123s1112223z" --simulate --turns 10 --sims 5000 -
 python3 -m taimahjong "123m123p123s11122233z" --danger --opp-river "456m789p" --tile "3z"
 ```
 
-它會照切牌順序印出來，另外多一欄 `Danger`，但**不會**把效率和危險混成一個分數，讓
+它會照打牌順序印出來，另外多一欄 `Danger`，但**不會**把效率和危險混成一個分數，讓
 你自己權衡。
 
 ### 台數計分
@@ -229,8 +229,8 @@ python3 -m taimahjong "22z" --score --my-melds "123m;456p;789s;111z;555z" \
 
 把「切哪張最好」變成一個可以比較的數字。
 
-EV 就是期望值。production EV 會為每種候選切牌抽樣四家隱藏狀態與牌牆，讓四家依模型
-策略輪流摸切，直到出現一個互斥終局：自己自摸、自己榮和、對手榮和、對手自摸或流局。
+EV 就是期望值。production EV 會為每種候選打牌抽樣四家隱藏狀態與牌牆，讓四家依模型
+策略輪流摸切，直到出現一個互斥終局：自己自摸、自己胡牌、對手胡牌、對手自摸或流局。
 每次終局都按家規結算四家的正負 payment；`net_ev` 是自己 payment 的樣本平均，數字最高的
 是**本模型估計最佳**的一手。介面上的進攻 EV 與風險 EV 是同一批終局 payment 拆出的診斷量，
 不是另外估完再拼成 `net_ev`。
@@ -241,7 +241,7 @@ python3 -m taimahjong "123m123p123s11122233z" --ev --opp-river "1m2m" --opp-decl
 
 網頁上的同一份輸出長這樣：
 
-![切牌 EV 排名，含 95% CI 與無法區分標記](docs/screenshots/analyze-ev-ranking.png)
+![打牌 EV 排名，含 95% CI 與無法區分標記](docs/screenshots/analyze-ev-ranking.png)
 
 每個候選都附 95% CI 與樣本數，最上面兩個掛著 `≈` 是因為它們的 paired 差區間跨過 0——引擎的
 立場是「這兩張在目前預算下分不出來」，而不是挑一個假裝有把握。畫面上那串 `sha256:` 是這次用到
@@ -252,7 +252,7 @@ python3 -m taimahjong "123m123p123s11122233z" --ev --opp-river "1m2m" --opp-decl
 
 ### 教學測驗
 
-把牌局變成一題一題的切牌練習。
+把牌局變成一題一題的打牌練習。
 
 它從自對局裡挑出「有鑑別度」的局面（不會太簡單、最佳和次佳要差夠多台），只保留你
 這家看得到的資訊出題。你選一張，它馬上判定：最佳／不錯／小失誤／失誤，並用 EV 表
@@ -268,8 +268,8 @@ python3 -m taimahjong --quiz-batch 5 --seed 1
 
 陪你把「一整局」從頭打到尾，每一手都即時打分。
 
-輪到你切牌就暫停，你選完馬上給 EV 判定，並累計你的模型最佳率和總 EV 損失，一直打到胡／
-放槍／流局再給總結。目前這一階段你打門清（可以自摸、榮和，暫時不能吃碰），對手會
+輪到你打牌就暫停，你選完馬上給 EV 判定，並累計你的模型最佳率和總 EV 損失，一直打到胡／
+放槍／流局再給總結。目前這一階段你打門清（可以自摸、胡牌，暫時不能吃碰），對手會
 正常鳴牌。開局可以選座位和連莊數，體會坐在莊的不同相對位置——連莊會同時拉高「胡莊
 的價值」和「放槍給莊的代價」。
 
@@ -278,19 +278,19 @@ python3 -m taimahjong --quiz-batch 5 --seed 1
 不想記命令列，就用網頁。
 
 一個單頁應用（不用建置，開了就能用），把上面的功能整合成好操作的介面：整場（一局
-打到底、每步即時 EV 評分）、單手（抽一題練切牌）、殘局（牌快摸完的高壓局面，自動
-分進攻題或防守題）、教學區（手寫的基本牌效題，用純進張當場驗證）、切牌分析、算台。
+打到底、每步即時 EV 評分）、單手（抽一題練打牌）、殘局（牌快摸完的高壓局面，自動
+分進攻題或防守題）、教學區（手寫的基本牌效題，用純進張當場驗證）、打牌分析、算台。
 牌桌畫成雀魂那種十字河，回饋採分析工具風格（判定徽章、EV 差、標示模型建議、
 可展開的排名表）。作答紀錄存在瀏覽器裡，首頁畫每個模式的模型最佳率走勢。
 
 網頁上還能切換**底/台方案**（底3台1 ⇄ 底5台2）。底和台的比例會改變「先求胡」還是
-「拚大牌」的取捨，所以有時本模型估計的切牌也跟著變——切換就即時重新打分。
+「拚大牌」的取捨，所以有時本模型估計的打牌也跟著變——切換就即時重新打分。
 
 ### 底層：引擎怎麼校準
 
-放銃率表不是憑空設定，而是靠自對局在 bot domain 內校準出來的。
+放槍率表不是憑空設定，而是靠自對局在 bot domain 內校準出來的。
 
-`taimahjong.selfplay` 讓四個機器人對打幾千局，把每次切牌的狀態、有沒有放槍等資料
+`taimahjong.selfplay` 讓四個機器人對打幾千局，把每次打牌的狀態、有沒有放槍等資料
 記下來，整理成幾張機率表（例如「危險分數越高、實際放槍率越高」的對照表）。危險度
 本來只是相對高低，經過這一步才變成可以看的百分比。校準資料存在 `data/calibration.json`，由 `scripts/generate_calibration.py`
 整份重建。產生表的 bot **不讀上一版的表**，所以新表不繼承舊表的偏好：
@@ -305,24 +305,24 @@ python3 -m taimahjong --selfplay-report data/calibration.json
 到指定檔案上。不要拿它去接 `data/calibration.json`：那條路徑用的是舊的七格分箱，
 而正式表已經是八格（尾端在 16 分開），接上去會被擋下來。
 
-這張表把每次切牌對每位對手的 `danger_score` 映射成榮和機率，production rollout 會在
-當下及後續每次切牌使用它。再強調一次：只有這個 RON／放銃機率 lookup 對「這些機器人」
+這張表把每次打牌對每位對手的 `danger_score` 映射成胡牌機率，production rollout 會在
+當下及後續每次打牌使用它。再強調一次：只有這個 RON／放槍機率 lookup 對「這些機器人」
 校準；自摸與牌牆結果來自 Monte Carlo，隱藏手牌及後續策略含 heuristic 假設，更不是對真人。
 
 ### 方法論卡
 
 **Outcomes**：EV rollout 的每次 trial 恰好落在五種互斥終局之一——`self_tsumo`（自己自摸）、
-`self_ron`（自己榮和）、`opponent_ron`（對手榮和）、`opponent_tsumo`（對手自摸）、`draw`（流局）；
+`self_ron`（自己胡牌）、`opponent_ron`（對手胡牌）、`opponent_tsumo`（對手自摸）、`draw`（流局）；
 流局 payment 目前固定為 0。下表按「這個項目怎麼算出來的」把模型拆成四類。
 
 | 類別 | 本專案實際處理 | 限制 |
 | --- | --- | --- |
 | **已建模且精確計算** | 給定一個已抽樣的四家世界後，檢查普通牌胡型，依選定家規計台並做四家零和結算；每次 trial 只會產生 `self_tsumo`、`self_ron`、`opponent_ron`、`opponent_tsumo`、`draw` 之一，`net_ev` 精確等於 acting seat 的 terminal payments 樣本平均。 | 「精確」只指該抽樣世界內的規則、結算與 aggregation，不代表終局機率或真人打法精確。流局 payment 目前固定為 0。 |
 | **以 heuristic 近似** | 依公開資訊估對手聽牌、抽樣隱藏手牌，並用牌效出牌與固定防守 policy 推進後續牌局；牌牆與終局頻率用 fixed-seed Monte Carlo 估計。 | 對手不會做完整策略調整；隱藏世界分布與 policy 都是模型假設，有限樣本仍有誤差。 |
-| **由 calibration table 校準** | RON／放銃機率由 `danger_score` 的 per-opponent lookup 提供，套用於當下與後續各次切牌。非聽牌對手的向聽數則抽自 `data/opponent-shanten.json`（同一份 self-play 觀測到的分布，見 `docs/opponent-shanten.md`），不再是從未見牌池均勻亂抽。兩份資料都來自內建 bot self-play 的 bot ecology。 | 不是人類牌譜校準；校準事件若與抽到的暗手衝突，會重建一個可胡的實體手牌來估值。缺少可用的 calibration table 時改用 heuristic fallback 並回報。 |
+| **由 calibration table 校準** | RON／放槍機率由 `danger_score` 的 per-opponent lookup 提供，套用於當下與後續各次打牌。非聽牌對手的向聽數則抽自 `data/opponent-shanten.json`（同一份 self-play 觀測到的分布，見 `docs/opponent-shanten.md`），不再是從未見牌池均勻亂抽。兩份資料都來自內建 bot self-play 的 bot ecology。 | 不是人類牌譜校準；校準事件若與抽到的暗手衝突，會重建一個可胡的實體手牌來估值。缺少可用的 calibration table 時改用 heuristic fallback 並回報。 |
 | **未建模** | EV rollout 中未來的吃、碰、槓／補牌與花牌、特殊牌型、完整過水決策，以及各家完整 best response。 | 這些事件不在 terminal rollout 的狀態轉移中；流局也沒有聽牌／未聽罰付。 |
 
-**Calibration domain**：只有 RON／放銃機率 lookup 經過校準，且校準來源是內建 bot self-play 的
+**Calibration domain**：只有 RON／放槍機率 lookup 經過校準，且校準來源是內建 bot self-play 的
 bot ecology，不是人類牌譜。缺少可用的 calibration table 時，三條教學路徑一致改用 heuristic
 fallback 並在輸出中回報。
 
@@ -343,7 +343,7 @@ owner 複核。
 ## 老實話（範圍與限制）
 
 - **只做普通牌**：不含花牌、不含特殊牌型。
-- **只有 RON／放銃機率 lookup 是 bot-domain calibration**，不是真人牌局；自摸與牌牆結果
+- **只有 RON／放槍機率 lookup 是 bot-domain calibration**，不是真人牌局；自摸與牌牆結果
   是 Monte Carlo，隱藏手牌、對手出牌與防守 policy 含 heuristic 假設。
 - **危險度不保證安全**：台灣沒有永久振聽，牌河證據只是打折。
 - **家規可改**：全求人怎麼算、槓的台數、流局要不要罰（`DRAW_VALUE`）、底台方案，

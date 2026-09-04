@@ -15,7 +15,7 @@ const MODES = [
     hash: '#/trainer',
     name: '整場',
     en: 'Full hand',
-    desc: '一局打到底：切牌、鳴牌、槓的每個決策都即時 EV 評分。',
+    desc: '一局打到底：打牌、鳴牌、槓的每個決策都即時 EV 評分。',
     statsKey: 'trainer',
   },
   {
@@ -97,7 +97,7 @@ function homeScreen(root) {
 
   const tools = document.createElement('div');
   tools.className = 'tools-row';
-  [['#/analyze', '切牌分析', '任意局面 EV 排名'], ['#/score', '算台', '和牌台數計算']].forEach(([hash, name, desc]) => {
+  [['#/analyze', '打牌分析', '任意局面 EV 排名'], ['#/score', '算台', '和牌台數計算']].forEach(([hash, name, desc]) => {
     const card = document.createElement('a');
     card.className = 'card';
     card.href = hash;
@@ -116,7 +116,7 @@ function homeScreen(root) {
   box.type = 'checkbox';
   box.checked = localStorage.getItem('mj-onetap') === '1';
   box.addEventListener('change', () => localStorage.setItem('mj-onetap', box.checked ? '1' : '0'));
-  label.append(box, document.createTextNode('切牌免確認（一點即切）'));
+  label.append(box, document.createTextNode('打牌免確認（一點即切）'));
   setting.append(label);
   root.append(setting);
 

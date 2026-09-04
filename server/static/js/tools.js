@@ -1,4 +1,4 @@
-// 切牌分析 / 算台 — Streamlit-parity tools over /api/ev/rank and /api/score.
+// 打牌分析 / 算台 — Streamlit-parity tools over /api/ev/rank and /api/score.
 
 import { post, showError } from './api.js';
 import { tileEl, parseCompact } from './tiles.js';
@@ -61,7 +61,7 @@ function screenHeader(root, title) {
 }
 
 export function analyzeScreen(root) {
-  screenHeader(root, '切牌分析');
+  screenHeader(root, '打牌分析');
   const hand = textInput('123m123p123s11122233z');
   const river = textInput('');
   const melds = textInput('');
@@ -85,7 +85,7 @@ export function analyzeScreen(root) {
   form.append(advanced);
   const exhaustiveLabel = document.createElement('label');
   exhaustiveLabel.className = 'check';
-  exhaustiveLabel.append(exhaustive, document.createTextNode(' exhaustive reference：評估全部合法切牌（較慢）'));
+  exhaustiveLabel.append(exhaustive, document.createTextNode(' exhaustive reference：評估全部合法打牌（較慢）'));
   form.append(exhaustiveLabel);
   form.append(schemeToggle(() => {}));
 
@@ -120,7 +120,7 @@ export function analyzeScreen(root) {
       caption.textContent = body.opponent
         ? `方案 ${body.scheme.id} · 剩餘摸牌回合 ${body.turns} · 對手聽牌估計 ${body.opponent.tenpai_estimate.toFixed(2)} · 棄和估計 ${body.opponent.fold_estimate.toFixed(2)}`
         : `方案 ${body.scheme.id} · 剩餘摸牌回合 ${body.turns} · 未提供對手狀態`;
-      const scope = body.exhaustive ? '全部合法切牌 reference' : 'production 信賴界篩選候選集';
+      const scope = body.exhaustive ? '全部合法打牌 reference' : 'production 信賴界篩選候選集';
       caption.textContent += ` · ${scope}`;
       output.append(caption, modelScopeEl(body));
       const rankingBanner = rankingBannerEl({

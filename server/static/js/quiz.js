@@ -147,7 +147,7 @@ export function drillScreen(root, { apiBase, mode, title }) {
       board.append(feltEl(position, {
         handOptions: { marks: { cut: chosenTile } },
       }));
-      board.append(computingEl(`你切 ${faceText(chosenTile)}，計算 net EV 中…`));
+      board.append(computingEl(`你打 ${faceText(chosenTile)}，計算 net EV 中…`));
       root.append(workspace(board));
       return;
     }

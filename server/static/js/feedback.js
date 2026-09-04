@@ -72,7 +72,7 @@ export function evTableEl(entries, {
   const table = document.createElement('table');
   table.className = 'evtable';
   const head = document.createElement('tr');
-  ['切牌', '估計 net EV', '95% CI', 'P(自摸)', 'P(流局)', 'E[和牌值]', '樣本'].forEach((label) => head.append(cell(label, 'th')));
+  ['打牌', '估計 net EV', '95% CI', 'P(自摸)', 'P(流局)', 'E[和牌值]', '樣本'].forEach((label) => head.append(cell(label, 'th')));
   table.append(head);
   const resolvedRankingState = rankingState || topGap?.wording || 'clear';
   entries.filter((entry) => !entry.is_fold).forEach((entry) => {
@@ -450,7 +450,7 @@ export function reviewRailEl({
       grade.verdict,
       grade.marginal,
       grade.ev_delta,
-      choiceText || (effectiveChosen === null ? '本次選擇' : `你切 ${faceText(effectiveChosen)}`),
+      choiceText || (effectiveChosen === null ? '本次選擇' : `你打 ${faceText(effectiveChosen)}`),
       { rankingState: grade.ranking_state || 'clear', chosenInTopPair },
     ));
     if ((grade.ranking_state || 'clear') === 'clear' && grade.best?.discard !== undefined) {
@@ -487,7 +487,7 @@ export function reviewRailEl({
   } else {
     const empty = document.createElement('p');
     empty.className = 'review-empty';
-    empty.textContent = '完成切牌評分後顯示 net EV 選項格。';
+    empty.textContent = '完成打牌評分後顯示 net EV 選項格。';
     optionsPanel.append(empty);
   }
   panels.append(summaryPanel, optionsPanel);

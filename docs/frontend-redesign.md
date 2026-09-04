@@ -114,7 +114,7 @@ Visual treatment:
 
 - A full-width violet, diagonally patterned banner directly below the decision—not inside `<details>`.
 - Both candidates receive the same `≈` badge, violet outline, and “無法區分” label in the hand and option grid.
-- Suppress green “best” framing, ordinal #1/#2 emphasis, “最佳切牌,” and any score penalty/reward for choosing either top candidate.
+- Suppress green “best” framing, ordinal #1/#2 emphasis, “最佳打牌,” and any score penalty/reward for choosing either top candidate.
 - Keep the point estimates visible, labelled “estimate,” without implying the order is established.
 - The expandable evidence shows paired mean, descriptive interval, samples, and the existing post-selection interval note.
 - `marginal` with an interval wholly on one side of zero uses “差異很小” and a softer paired highlight; `clear` alone permits “模型領先選項.”

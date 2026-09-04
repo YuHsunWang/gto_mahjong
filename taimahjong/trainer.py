@@ -266,7 +266,7 @@ class TrainerOutcome:
         if self.outcome == "draw":
             return "流局"
         if self.human_won:
-            return "自摸胡牌！" if self.outcome == "tsumo" else "榮和胡牌！"
+            return "自摸胡牌！" if self.outcome == "tsumo" else "胡牌！"
         if self.robbed_kong:
             return "被搶槓…"
         if self.human_dealt_in:
