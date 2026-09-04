@@ -42,6 +42,8 @@ from .ukeire import DiscardAnalysis
 
 POLICIES = ("attack", "cautious", "ev_aware")
 KONG_POLICIES = ("none", "concealed_added", "all")
+# 「一槓一」: replenish the retained tail with one live-wall tile per kong.
+KONG_DEAD_WALL_BACKFILL_TILES = 1
 
 # M5c's deliberately cheap, deterministic replacement for per-discard Monte
 # Carlo.  Candidate attack value is relative ukeire times a shanten lookup;
@@ -252,9 +254,14 @@ def _self_draw_kong_choice(player: Player, kong_policy: str) -> tuple[int, bool]
     return None
 
 
-def _declare_kong(player: Player, tile: int, concealed: bool, dead: list[int]) -> int:
-    """Apply a kong and draw its replacement from the dead wall (no backfill from
-    the live wall — a deliberate simplification). Returns the replacement tile."""
+def _declare_kong(
+    player: Player,
+    tile: int,
+    concealed: bool,
+    dead: list[int],
+    wall: list[int] | None = None,
+) -> int:
+    """Apply a kong and draw its dead-wall replacement under 「一槓一」."""
     if concealed:
         player.hand[tile] -= 4
     else:
@@ -269,6 +276,8 @@ def _declare_kong(player: Player, tile: int, concealed: bool, dead: list[int]) -
     player.kongs.append(DeclaredKong(tile, concealed))
     replacement = dead.pop(0)
     player.hand[replacement] += 1
+    if wall:
+        dead.extend(wall.pop(0) for _ in range(KONG_DEAD_WALL_BACKFILL_TILES))
     return replacement
 
 
@@ -293,6 +302,7 @@ def _apply_big_kong(
     tile: int,
     dead: list[int],
     declared_kong: DeclaredKong | None = None,
+    wall: list[int] | None = None,
 ) -> int:
     """Declare a 大明槓 on a discard (three from hand + the discard) and draw the
     dead-wall replacement. Open, no bloom eligibility. Returns the replacement."""
@@ -303,6 +313,8 @@ def _apply_big_kong(
     player.kongs.append(kong)
     replacement = dead.pop(0)
     player.hand[replacement] += 1
+    if wall:
+        dead.extend(wall.pop(0) for _ in range(KONG_DEAD_WALL_BACKFILL_TILES))
     return replacement
 
 
@@ -769,7 +781,7 @@ def play_game(
                             kongs=tuple(players[robber].kongs), robbed_kong=True, kong_log=tuple(kong_log),
                         )
                 kong_log.append((current, kind_tile, concealed))
-                drawn_tile = _declare_kong(player, kind_tile, concealed, dead)
+                drawn_tile = _declare_kong(player, kind_tile, concealed, dead, wall)
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                     winning_hand = tuple(player.hand)
@@ -882,7 +894,7 @@ def play_game(
                 )
                 player.river.pop()  # the konged tile leaves the discarder's river
                 kong_log.append((big_caller, tile, False))
-                replacement = _apply_big_kong(players[big_caller], tile, dead, declared_kong)
+                replacement = _apply_big_kong(players[big_caller], tile, dead, declared_kong, wall)
                 any_call = True
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(players[big_caller].hand), _declared(players[big_caller])) == -1:

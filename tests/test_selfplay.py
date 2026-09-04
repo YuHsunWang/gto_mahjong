@@ -24,8 +24,11 @@ from taimahjong.calibration import (
 from taimahjong.config import DEFAULT_RULES, resolve_ron_claims
 from taimahjong.danger import OpponentView, danger_score
 from taimahjong.selfplay import (
+    KONG_DEAD_WALL_BACKFILL_TILES,
     Player,
+    _assert_conservation,
     _choose_discard,
+    _declare_kong,
     _declared,
     _robbing_winners,
     _settle_ron_winners,
@@ -394,6 +397,41 @@ def test_kong_policy_none_reproduces_baseline():
     # existing behavior or the committed calibration.
     for seed in (941, 20260717, 42, 30001):
         assert play_game(seed).summary() == play_game(seed, kong_policy="none").summary()
+
+
+def test_kong_backfills_dead_wall_and_costs_one_live_draw():
+    # 「一槓一」: every kong consumes exactly one future live-wall draw.
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand[0] = 4
+    remaining = [tile for tile in range(34) for _ in range(4)]
+    for _ in range(4):
+        remaining.remove(0)
+    dead = remaining[:14]
+    wall = remaining[14:]
+    initial_live_tiles = len(wall)
+
+    _declare_kong(players[0], 0, True, dead, wall)
+
+    assert len(wall) == initial_live_tiles - KONG_DEAD_WALL_BACKFILL_TILES * len(players[0].kongs)
+    assert len(dead) == 14
+    _assert_conservation(players, wall, dead)
+
+
+def test_kong_with_empty_live_wall_does_not_backfill_or_corrupt_tiles():
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand[0] = 4
+    remaining = [tile for tile in range(34) for _ in range(4)]
+    for _ in range(4):
+        remaining.remove(0)
+    dead = [remaining.pop()]
+    players[1].hand = [remaining.count(tile) for tile in range(34)]
+    wall: list[int] = []
+
+    _declare_kong(players[0], 0, True, dead, wall)
+
+    assert wall == []
+    assert dead == []
+    _assert_conservation(players, wall, dead)
 
 
 # Full-game invariant sweep (~22s).

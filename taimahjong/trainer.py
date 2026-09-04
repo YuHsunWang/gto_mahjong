@@ -883,7 +883,7 @@ def play_trainer(
                                 winners=robbers,
                             )
                             return
-                    drawn_tile = _declare_kong(player, option.tile, option.kind == "concealed", dead)
+                    drawn_tile = _declare_kong(player, option.tile, option.kind == "concealed", dead, wall)
                     if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                         winning_hand = tuple(player.hand)
                         deltas, _ = _settlement(
@@ -1019,7 +1019,7 @@ def play_trainer(
                 )
                 players[current].river.pop()
                 replacement = _apply_big_kong(
-                    players[human_seat], tile, dead, declared_kong,
+                    players[human_seat], tile, dead, declared_kong, wall,
                 )
                 if _cached_shanten(
                     tuple(players[human_seat].hand), _declared(players[human_seat]),
