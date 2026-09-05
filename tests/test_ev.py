@@ -26,8 +26,11 @@ from taimahjong.reference_ev import (
     standard_small_wall_state,
 )
 from taimahjong.rollout import CalibratedRonClaim, resolve_terminal
-from taimahjong.scoring import EARTHLY_TAI, HEAVENLY_TAI, WinContext, score_hand
+from taimahjong.scoring import (
+    EARTHLY_TAI, HEAVENLY_TAI, SCHEME_3_1, SCHEME_5_2, WinContext, score_hand,
+)
 from taimahjong.selfplay import Player, _settlement
+from taimahjong.simulate import TrialTrace, WinningTrial, _greedy_discard
 from taimahjong.tiles import parse_tiles
 
 
@@ -382,6 +385,50 @@ def test_winning_trial_values_are_scored_as_self_draws():
     expected_value = score_hand(tuple(completed), (), WinContext(29, self_draw=True)).value_units
     assert estimate.p_win > 0
     assert estimate.mean_value_units == expected_value
+
+
+def test_ev_simulation_threads_scheme_and_cache_keeps_scheme_specific_discard():
+    completed = list(TENPAI)
+    completed[29] += 1
+    win = WinningTrial(tuple(completed), 29, 1)
+    winning_schemes = []
+    policy_schemes = []
+
+    def fake_winning_trials(*_args, scheme=None):
+        winning_schemes.append(scheme)
+        return (win,)
+
+    def fake_policy_trials(*_args, scheme=None):
+        policy_schemes.append(scheme)
+        return (TrialTrace(0, win),)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(ev, "winning_trials", fake_winning_trials)
+    monkeypatch.setattr(ev, "policy_trials", fake_policy_trials)
+    try:
+        three_one = estimate_win_value(TENPAI, turns=1, sims=1, scheme=SCHEME_3_1)
+        five_two = estimate_win_value(TENPAI, turns=1, sims=1, scheme=SCHEME_5_2)
+        ev._discounted_win_estimate(
+            TENPAI, 1, 0, (0,) * 34, 1, 1, None, (1.0,), SCHEME_3_1,
+        )
+        ev._discounted_win_estimate(
+            TENPAI, 1, 0, (0,) * 34, 1, 1, None, (1.0,), SCHEME_5_2,
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert (three_one.net_ev, five_two.net_ev) == (6.0, 11.0)
+    assert winning_schemes == [SCHEME_3_1, SCHEME_5_2]
+    assert policy_schemes == [SCHEME_3_1, SCHEME_5_2]
+
+    current = parse_tiles("33345777m333667778s")
+    remaining = (
+        2, 4, 0, 2, 1, 3, 1, 2, 4, 4, 1, 1, 0, 3, 3, 2, 4,
+        2, 2, 0, 1, 4, 3, 0, 0, 3, 2, 4, 2, 1, 2, 3, 2, 1,
+    )
+    _greedy_discard.cache_clear()
+    assert _greedy_discard(current, remaining, 0, SCHEME_3_1) == (24, 0)
+    assert _greedy_discard(current, remaining, 0, SCHEME_5_2) == (25, 0)
 
 
 def test_remaining_draws_uses_live_wall_and_four_seats():

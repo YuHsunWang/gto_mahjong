@@ -348,7 +348,9 @@ def estimate_win_value(
     """
     if turns == 0:
         return WinValueEstimate(0.0, None, 0.0)
-    wins = winning_trials(counts16, turns, melds_declared, visible, sims, seed)
+    wins = winning_trials(
+        counts16, turns, melds_declared, visible, sims, seed, scheme=scheme,
+    )
     scored = {
         trial.trial: float(_score_value(
             trial.hand, trial.winning_tile, context_template, scheme=scheme,
@@ -388,6 +390,7 @@ def _discounted_win_estimate(
         )
     traces = policy_trials(
         counts16, turns, melds_declared, visible, sims, seed, discard_policy,
+        scheme=scheme,
     )
     wins = tuple(trace.win for trace in traces if trace.win is not None)
     scored = {

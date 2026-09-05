@@ -206,12 +206,80 @@ This rule does not shape 3--4 shanten hands toward patterns such as 混一色 or
 碰碰胡. It also remains unweighted when `melds_declared > 0`: the simulator has
 only the number of melds here, not their tiles, and therefore cannot score
 碰碰胡, 全求人, or 門清 correctly. Callers that pass no scheme remain bit-identical
-to the original unweighted policy; this round only the CLI opts in.
+to the original unweighted policy; the CLI and the two `ev.py` self-draw
+helpers opt in. Note that opting those helpers in does not change four-player
+ranking, which never reaches this function at all -- see the DEV-175 section
+below.
 
 > **Implementation note.** `_greedy_discard` is `lru_cache`d on
 > `(current, remaining_counts, melds_declared, scheme, tai_estimator)`. The
 > scheme is therefore part of the cache key, so switching between the `3-1`
 > and `5-2` presets cannot return the previous preset's answer.
+
+### 四家 ranking 根本不走這條加權路徑（DEV-175 的量測）
+
+先講最重要的一點，因為它決定了下面那個 0 該怎麼讀：**`ev_rank` 這條四家
+路徑一次都不會呼叫 `_greedy_discard`。**
+
+`_rollout` 只有在 `discard_policy is None` 時才走 `_greedy_discard`
+（`simulate.py:197`），而 `scheme` 在 `_rollout` 裡也只有那一個用途。四家
+ranking 一律供給 discard policy——`ev.py:1748` 的
+`_fold_policy(views, calibration, scheme)`——所以加權機制在那條路上整個是
+惰性的，跟副露有沒有牌張無關。四家的切牌決策由 `_fold_choice` 決定，而它
+本來就收 `scheme`。
+
+DEV-175 因此沒有讓四家 EV「開始」使用台數加權，它本來就沒有經過這條路。
+那張票所列的三個「會移動的基準」（四家 EV 數值、`test_empirical_game` 的
+headline regret、DDDD 殘局均衡）也因此不會移動；`review_validation.py` 的
+輸出在改動前後完全相同，已經證實其中一個。
+
+副露資訊缺口是這件事的附帶結論，而不是獨立事實：`melds_declared > 0` 時
+`_greedy_discard` 仍刻意退化為純 ukeire（此 helper 只有副露的數量、沒有副露
+牌張，不能正確計算碰碰胡、全求人或門清），但既然這條路上它一次都不會被
+呼叫，缺口在這裡的暴露面就是零。DEV-175 沒有擴充其 signature；這是接受的
+非對稱，而不是以假牌組估算台數。
+
+以 26 個四家 reference states 實際執行 `ev_rank`，並在
+`simulate._greedy_discard` 外包計數器，量得呼叫數為 **0**，其中
+`melds_declared > 0` 為 **0**。因此這個 production 四家終局路徑的比例是
+`0 / 0`（沒有可定義的條件比例），而該路徑由此缺口造成的總 EV 誤價是
+**精確 0.0 units**；不是抽樣信賴界或主觀估計。可重現指令如下：
+
+```bash
+python3 - <<'PY'
+import taimahjong.simulate as simulate
+from taimahjong.ev import ev_rank
+from taimahjong.reference_ev import representative_reference_cases
+from taimahjong.selfplay import Player
+
+seen = []
+original = simulate._greedy_discard
+def probe(current, remaining, melds_declared, *args, **kwargs):
+    seen.append(melds_declared)
+    return original(current, remaining, melds_declared, *args, **kwargs)
+simulate._greedy_discard = probe
+for case in representative_reference_cases():
+    state = case.state
+    players = tuple(Player("attack", list(p.hand), declared_at=p.declared_at)
+                    for p in state.players)
+    ev_rank(state.players[state.acting_seat].hand, (), (0,) * 34, turns=1,
+            sims=1, seed=case.seed, scheme=state.scheme, exhaustive=True,
+            rollout_players=players, rollout_wall=state.wall,
+            acting_seat=state.acting_seat, next_seat=state.next_seat,
+            dealer_streak=state.dealer_streak)
+print(len(seen), sum(melds > 0 for melds in seen))
+PY
+# 0 0
+```
+
+`estimate_win_value` 仍公開接受 `melds_declared`，所以直接使用那個相容性
+helper 的外部呼叫不在此量測母體中；沒有實際副露牌張時，它仍有上述未量化
+的個別手牌誤差。DEV-175 讓那個 helper 與 CLI 一致地收下 scheme，這是它實際
+的成果——不是四家 ranking 的行為改變。若未來把副露手牌接入此模擬器，必須
+同時傳入並評分實際 meld tiles，不能沿用這個 0.0 的結果。
+
+`_fold_choice` 的進攻面是否也依台數加權，是 DEV-175 票面原本真正想問的
+問題，**本節沒有回答**，也沒有量測過。
 
 ### A simultaneous band for the curve
 
