@@ -47,13 +47,17 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from fractions import Fraction
+from math import ceil
 
+from .calibration import Calibration
 from .config import DEFAULT_RULES, RulesConfig
 from .danger import OpponentView
 from .ev import (
+    _fold_choice,
     _production_discard_policy,
     _sample_production_world,
     _production_shanten,
+    ev_rank,
 )
 from .moments import SampleMoments
 from .reference_ev import (
@@ -150,6 +154,79 @@ def observation_for(case: ReferenceCase) -> ActorObservation:
         state.dealer_streak,
         state.scheme,
     )
+
+
+@dataclass(frozen=True)
+class ProductionRankChoice:
+    """Production's root choice paired with its own continuation rule."""
+
+    discard: int
+    continuation: DiscardPolicy
+    is_fold: bool
+
+
+def production_rank_policy(
+    observation: ActorObservation,
+    *,
+    sims: int,
+    seed: int,
+    calibration: Calibration | None = None,
+) -> ProductionRankChoice:
+    """Return production's root discard and that branch's continuation.
+
+    Production ranks push lines and one separately priced fold line, then
+    chooses between all of them by net EV.  Reusing only its hand-based rollout
+    rule here would remove that root fold choice and measure a policy production
+    never actually plays.  The rank is built from the actor's observation only;
+    hidden reference players and the true wall must stay outside this call.
+
+    A fold continuation needs the public count after later watched discards.
+    ``remaining`` already excludes both the actor's current hand and every tile
+    watched since the root, so four minus those two quantities reconstructs the
+    exact visible count without widening :class:`DiscardPolicy`.
+    """
+    ranked = ev_rank(
+        observation.hand,
+        observation.views,
+        observation.visible,
+        turns=max(1, ceil(observation.wall_size / 4)),
+        sims=sims,
+        seed=seed,
+        context_template=observation.context,
+        calibration=calibration,
+        scheme=observation.scheme,
+    )
+    winner = max(
+        ranked,
+        key=lambda entry: (
+            entry.net_ev,
+            -entry.discard,
+            not entry.is_fold,
+        ),
+    )
+    if not winner.is_fold:
+        return ProductionRankChoice(
+            winner.discard, _production_discard_policy, False,
+        )
+
+    def fold_continuation(
+        hand17: tuple[int, ...],
+        remaining: tuple[int, ...],
+        _melds_declared: int,
+    ) -> int:
+        visible = tuple(
+            4 - hand17[tile] - remaining[tile]
+            for tile in range(34)
+        )
+        return _fold_choice(
+            hand17,
+            visible,
+            observation.views,
+            calibration,
+            observation.scheme,
+        )
+
+    return ProductionRankChoice(winner.discard, fold_continuation, True)
 
 
 def sample_worlds(
@@ -498,8 +575,10 @@ def exploitability(
 
     By default the measured policy is production's rollout policy, restricted
     to the acting seat's information exactly as the best response is.  Passing
-    ``measured_opening``/``measured_plan`` substitutes another policy, which is
-    what lets a test feed the solved best response back in and require zero.
+    ``measured_opening`` substitutes another root choice.  An optional
+    ``measured_plan`` substitutes its covered continuation information sets,
+    which is what lets a test feed the solved best response back in and require
+    zero.  Without a plan, ``measured_policy`` supplies the continuation.
 
     ``measured_policy`` swaps the acting seat's rule for a whole other policy
     of the same shape.  Only the actor's rule changes: the opponents inside
@@ -544,8 +623,8 @@ def exploitability(
         for world in worlds
     ]
 
-    if (measured_opening is None) != (measured_plan is None):
-        raise ValueError("measured_opening and measured_plan go together")
+    if measured_opening is None and measured_plan is not None:
+        raise ValueError("measured_plan requires measured_opening")
     opening_discard = (
         measured_policy(
             observation.hand, observation.belief_remaining(), 0,
