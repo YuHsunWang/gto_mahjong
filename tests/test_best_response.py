@@ -21,10 +21,18 @@ from taimahjong.best_response import (
     _analyse_opening,
 )
 from taimahjong.config import DEFAULT_RULES
+from taimahjong.quiz import REFINE_SIMS
 from taimahjong.reference_ev import representative_reference_cases
 
 
 CASES = representative_reference_cases()
+# The rank budget is not the world budget.  Measuring "production" means
+# measuring the budget production ships: quiz.REFINE_SIMS is what a displayed
+# rank is priced at, while EV_SIMS=24 only screens candidates.  Pinned rather
+# than inherited so a change in quiz shows up here as a failure to think about,
+# not as a silently different headline.
+RANK_SIMS = 200
+assert RANK_SIMS == REFINE_SIMS, "production's displayed rank budget moved"
 DEEP_CASES = tuple(case for case in CASES if len(case.state.wall) == 4)
 # One case per wall depth keeps the push-time subset honest without paying for
 # the whole corpus; the slow test below sweeps all 26.
@@ -305,28 +313,39 @@ def test_corpus_exploitability_at_a_reportable_budget():
     pushing a root that should have folded.  That single case, not the corpus
     average, is where any further work belongs.
 
-    That 0.363 is still an upper bound rather than the gap, because in
-    ``"opening"`` mode the best response is the argmax over the legal openings
-    scored on the same worlds it is chosen on, and a max of noisy estimates is
-    biased upward.  Splitting the sample -- fit the opening on the first half of
-    120 worlds, score it on the second -- removes that selection:
+    That 0.363 was still two artefacts on top of each other.  In ``"opening"``
+    mode the best response is the argmax over the legal openings scored on the
+    same worlds it is chosen on, and a max of noisy estimates is biased upward;
+    and the rank was being priced at the world budget, 60, which is a number
+    this harness invented rather than one production ships.  Both are fixed
+    here: the opening is fitted on the first half of 120 worlds and scored on
+    the second, and the rank runs at RANK_SIMS above.
 
         declared  n   holdout   in-sample   clairvoyant
                0  11    0.0648      0.1364        0.1417
-               1   5   -0.4319      0.2361        0.3056
-               2   4    0.0000      0.0000        0.0000
-               3   6    0.3167      1.1278        1.2792
-             ALL  26    0.0174      0.3634        0.4139
+               1   5   -0.4319      0.2361        0.2961
+               2   4   -0.0250      0.1833        0.1833
+               3   6   -0.6368      1.0778        1.2292
+             ALL  26   -0.2065      0.3800        0.4287
 
-    So almost all of what survived the DEV-184 measurement fix was selection,
-    not policy: the honest corpus mean is 0.017 tai.  Per-case noise is far
-    larger than that -- the values have a standard deviation of 0.77, hence a
-    standard error of 0.15 on the mean of 26 -- so 0.017 is not distinguishable
-    from zero, and this corpus cannot demonstrate an exploitability gap at this
-    budget.  ``draw-1-shanten-nondealer-...-threat-one`` shows the scale
-    directly: its in-sample gap is exactly zero because the best response ties
-    with production and the tie is broken by tile order, yet that other tile is
-    3.17 tai worse on the held-out half.
+    Nothing measurable survives.  The honest corpus mean is -0.207 tai against a
+    standard error of 0.198 (per-case standard deviation 1.008 over 26 cases),
+    so it is not distinguishable from zero and its sign is not meaningful.  This
+    corpus cannot demonstrate an exploitability gap at this budget.
+
+    The case that opened DEV-184 is the clearest illustration.
+    ``deal-in-2-shanten-dealer-streak2-5-2-shallow-1-threat-multiple`` reported
+    6.767 tai.  At the production rank budget the rank picks tile 4, which is
+    the best opening averaged over eight independent world samples, and the
+    held-out gap is 0.133.  The 6.767 was selection bias, an unrepresentative
+    world seed, and a rank priced at a budget production never uses.
+
+    Two cases carry the negative mean, and they show why the holdout is
+    two-sided rather than a bound.  ``draw-1-shanten-nondealer-...-threat-one``
+    has an in-sample gap of exactly zero because the best response ties with
+    production and tile order breaks the tie -- yet the tile it took is 3.17 tai
+    worse on the held-out half.  ``deal-in-1-shanten-dealer-streak2-...-deep-4``
+    reads +1.750 in-sample and -3.954 held out.
 
     The in-sample band below is kept as the sentinel, not as the finding.  The
     best response can always copy production on the worlds it was fitted to, so
@@ -335,10 +354,11 @@ def test_corpus_exploitability_at_a_reportable_budget():
 
     Recorded 2026-08-24: 0.556 and 0.898 tai.  Re-measured against the ukeire
     strawman 2026-09-05: 1.204 and 1.762.  Against production's actual root
-    rank 2026-09-06: 0.363 and 0.414 in-sample, 0.017 on a held-out half.
+    rank, at production's own budget, 2026-09-06: 0.380 and 0.429 in-sample,
+    -0.207 on a held-out half.
     """
     measured = [
-        production_rank_policy(observation_for(case), sims=60, seed=1)
+        production_rank_policy(observation_for(case), sims=RANK_SIMS, seed=1)
         for case in CASES
     ]
     constrained = [
@@ -380,8 +400,8 @@ def test_corpus_exploitability_at_a_reportable_budget():
     assert mean_constrained <= mean_free <= 1.0
     # The reported gap is the held-out one, and it is two-sided: the estimator
     # is unbiased rather than non-negative, so a band around zero is the honest
-    # assertion.  0.6 is four standard errors of the corpus mean, which keeps
-    # this from flaking on a statistic whose per-case values swing by 3 tai.
+    # assertion.  0.6 is three standard errors of the corpus mean, which keeps
+    # this from flaking on a statistic whose per-case values swing by 4 tai.
     mean_holdout = sum(
         r.holdout_exploitability for r in constrained
     ) / len(constrained)
