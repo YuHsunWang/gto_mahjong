@@ -1,0 +1,300 @@
+{
+  "decomposition": {
+    "acting_seat": 1,
+    "attack_ev": 14.0,
+    "dealer_seat": 0,
+    "discard": 9,
+    "discard_name": "1p",
+    "mean_win_value_units": 4.137931034482759,
+    "negative_by_kind": [
+      {
+        "contribution": 4.325,
+        "key": "opponent_ron",
+        "mean_when_it_happens": 57.666666666666664,
+        "probability": 0.075
+      },
+      {
+        "contribution": 1.4,
+        "key": "opponent_tsumo",
+        "mean_when_it_happens": 56.0,
+        "probability": 0.025
+      }
+    ],
+    "net_ev": 8.275,
+    "p_win": 0.725,
+    "payers_when_we_win": [
+      {
+        "contribution": 11.325,
+        "key": "0",
+        "mean_when_it_happens": 45.3,
+        "probability": 0.25
+      },
+      {
+        "contribution": 1.5,
+        "key": "2",
+        "mean_when_it_happens": 4.285714285714286,
+        "probability": 0.35
+      },
+      {
+        "contribution": 1.175,
+        "key": "3",
+        "mean_when_it_happens": 4.2727272727272725,
+        "probability": 0.275
+      }
+    ],
+    "positive_by_kind": [
+      {
+        "contribution": 9.8,
+        "key": "self_ron",
+        "mean_when_it_happens": 15.076923076923077,
+        "probability": 0.65
+      },
+      {
+        "contribution": 4.2,
+        "key": "self_tsumo",
+        "mean_when_it_happens": 56.0,
+        "probability": 0.075
+      }
+    ],
+    "risk_ev": 5.725
+  },
+  "genbutsu": {
+    "rows": [
+      {
+        "danger_score": 4.0,
+        "is_genbutsu": false,
+        "tile": "1m"
+      },
+      {
+        "danger_score": 4.0,
+        "is_genbutsu": false,
+        "tile": "9m"
+      }
+    ]
+  },
+  "position": {
+    "dealer_streak": 20,
+    "declared_at": 1,
+    "hand": "1112345678999m1234p",
+    "river": "19m",
+    "turns": 3
+  },
+  "power": {
+    "max_margin": 15.2075,
+    "mean_margin": 13.0546875,
+    "mean_push_p_win": 0.7984375,
+    "min_margin": 11.4075,
+    "rows": [
+      {
+        "fold_net_ev": -6.1025,
+        "margin": 14.34,
+        "push_attack_ev": 11.3975,
+        "push_discard": "1p",
+        "push_net_ev": 8.2375,
+        "push_p_win": 0.8025,
+        "push_standard_error": 1.1927423528052647,
+        "seed": 1
+      },
+      {
+        "fold_net_ev": -5.8375,
+        "margin": 11.940000000000001,
+        "push_attack_ev": 9.4875,
+        "push_discard": "1p",
+        "push_net_ev": 6.1025,
+        "push_p_win": 0.795,
+        "push_standard_error": 1.1316443928880164,
+        "seed": 2
+      },
+      {
+        "fold_net_ev": -8.4575,
+        "margin": 13.78,
+        "push_attack_ev": 10.26,
+        "push_discard": "1p",
+        "push_net_ev": 5.3225,
+        "push_p_win": 0.8075,
+        "push_standard_error": 1.280686976667411,
+        "seed": 3
+      },
+      {
+        "fold_net_ev": -8.2275,
+        "margin": 15.2075,
+        "push_attack_ev": 11.015,
+        "push_discard": "1p",
+        "push_net_ev": 6.98,
+        "push_p_win": 0.805,
+        "push_standard_error": 1.2398506256540893,
+        "seed": 4
+      },
+      {
+        "fold_net_ev": -5.7475,
+        "margin": 12.879999999999999,
+        "push_attack_ev": 10.96,
+        "push_discard": "1p",
+        "push_net_ev": 7.1325,
+        "push_p_win": 0.7875,
+        "push_standard_error": 1.2327251874787872,
+        "seed": 5
+      },
+      {
+        "fold_net_ev": -7.0975,
+        "margin": 12.585,
+        "push_attack_ev": 9.89,
+        "push_discard": "1p",
+        "push_net_ev": 5.4875,
+        "push_p_win": 0.82,
+        "push_standard_error": 1.2184821937625065,
+        "seed": 6
+      },
+      {
+        "fold_net_ev": -7.3425,
+        "margin": 12.2975,
+        "push_attack_ev": 10.6775,
+        "push_discard": "1p",
+        "push_net_ev": 4.955,
+        "push_p_win": 0.77,
+        "push_standard_error": 1.3416108738535573,
+        "seed": 7
+      },
+      {
+        "fold_net_ev": -6.155,
+        "margin": 11.4075,
+        "push_attack_ev": 11.2875,
+        "push_discard": "1p",
+        "push_net_ev": 5.2525,
+        "push_p_win": 0.8,
+        "push_standard_error": 1.3864848394049425,
+        "seed": 8
+      }
+    ],
+    "seeds_where_fold_wins": 0,
+    "stdev_margin": 1.2869075873553844
+  },
+  "streak": {
+    "rows": [
+      {
+        "dealer_streak": 0,
+        "fold_net_ev": -1.56,
+        "fold_wins": false,
+        "push_attack_ev": 4.35,
+        "push_discard": "1p",
+        "push_net_ev": 3.175,
+        "push_p_win": 0.82
+      },
+      {
+        "dealer_streak": 1,
+        "fold_net_ev": -1.765,
+        "fold_wins": false,
+        "push_attack_ev": 4.69,
+        "push_discard": "1p",
+        "push_net_ev": 3.365,
+        "push_p_win": 0.82
+      },
+      {
+        "dealer_streak": 2,
+        "fold_net_ev": -1.97,
+        "fold_wins": false,
+        "push_attack_ev": 5.03,
+        "push_discard": "1p",
+        "push_net_ev": 3.555,
+        "push_p_win": 0.82
+      },
+      {
+        "dealer_streak": 5,
+        "fold_net_ev": -2.585,
+        "fold_wins": false,
+        "push_attack_ev": 6.05,
+        "push_discard": "1p",
+        "push_net_ev": 4.125,
+        "push_p_win": 0.82
+      },
+      {
+        "dealer_streak": 10,
+        "fold_net_ev": -3.61,
+        "fold_wins": false,
+        "push_attack_ev": 7.75,
+        "push_discard": "1p",
+        "push_net_ev": 5.075,
+        "push_p_win": 0.82
+      },
+      {
+        "dealer_streak": 20,
+        "fold_net_ev": -5.66,
+        "fold_wins": false,
+        "push_attack_ev": 11.15,
+        "push_discard": "1p",
+        "push_net_ev": 6.975,
+        "push_p_win": 0.82
+      }
+    ],
+    "streaks_where_fold_wins": 0
+  },
+  "tenpai": {
+    "rows": [
+      {
+        "discard": 1,
+        "discard_name": "2m",
+        "live_copies": 6,
+        "wait_kinds": 2,
+        "waits": [
+          "1p",
+          "4p"
+        ]
+      },
+      {
+        "discard": 4,
+        "discard_name": "5m",
+        "live_copies": 6,
+        "wait_kinds": 2,
+        "waits": [
+          "1p",
+          "4p"
+        ]
+      },
+      {
+        "discard": 7,
+        "discard_name": "8m",
+        "live_copies": 6,
+        "wait_kinds": 2,
+        "waits": [
+          "1p",
+          "4p"
+        ]
+      },
+      {
+        "discard": 9,
+        "discard_name": "1p",
+        "live_copies": 21,
+        "wait_kinds": 9,
+        "waits": [
+          "1m",
+          "2m",
+          "3m",
+          "4m",
+          "5m",
+          "6m",
+          "7m",
+          "8m",
+          "9m"
+        ]
+      },
+      {
+        "discard": 12,
+        "discard_name": "4p",
+        "live_copies": 21,
+        "wait_kinds": 9,
+        "waits": [
+          "1m",
+          "2m",
+          "3m",
+          "4m",
+          "5m",
+          "6m",
+          "7m",
+          "8m",
+          "9m"
+        ]
+      }
+    ],
+    "tenpai_discards": 5
+  }
+}
