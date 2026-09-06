@@ -1,0 +1,722 @@
+[
+  {
+    "draws_remaining": 12,
+    "melds": 1,
+    "quiz_seed": 1,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 832
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 6966,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 3,
+          "tai52_vs_ukeire": 3,
+          "weightable_states": 169
+        }
+      }
+    },
+    "seat": 0,
+    "shanten": 1,
+    "turn": 5
+  },
+  {
+    "draws_remaining": 10,
+    "melds": 1,
+    "quiz_seed": 2,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 6,
+          "states": 799
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 7540,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 0,
+          "tai52_vs_ukeire": 0,
+          "weightable_states": 0
+        }
+      }
+    },
+    "seat": 1,
+    "shanten": 1,
+    "turn": 6
+  },
+  {
+    "draws_remaining": 12,
+    "melds": 2,
+    "quiz_seed": 3,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 4,
+          "states": 1039
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 7953,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 2,
+          "tai52_vs_ukeire": 2,
+          "weightable_states": 165
+        }
+      }
+    },
+    "seat": 1,
+    "shanten": 0,
+    "turn": 5
+  },
+  {
+    "draws_remaining": 11,
+    "melds": 0,
+    "quiz_seed": 5,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 850
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 7850,
+          "tai31_vs_tai52": 1,
+          "tai31_vs_ukeire": 22,
+          "tai52_vs_ukeire": 23,
+          "weightable_states": 1174
+        }
+      }
+    },
+    "seat": 0,
+    "shanten": 1,
+    "turn": 6
+  },
+  {
+    "draws_remaining": 9,
+    "melds": 1,
+    "quiz_seed": 6,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 767
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 7232,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 4,
+          "tai52_vs_ukeire": 4,
+          "weightable_states": 149
+        }
+      }
+    },
+    "seat": 0,
+    "shanten": 1,
+    "turn": 7
+  },
+  {
+    "draws_remaining": 11,
+    "melds": 1,
+    "quiz_seed": 7,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 972
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 9410,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 8,
+          "tai52_vs_ukeire": 8,
+          "weightable_states": 467
+        }
+      }
+    },
+    "seat": 1,
+    "shanten": 2,
+    "turn": 5
+  },
+  {
+    "draws_remaining": 10,
+    "melds": 1,
+    "quiz_seed": 8,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 631
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 5857,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 0,
+          "tai52_vs_ukeire": 0,
+          "weightable_states": 0
+        }
+      }
+    },
+    "seat": 1,
+    "shanten": 1,
+    "turn": 7
+  },
+  {
+    "draws_remaining": 10,
+    "melds": 0,
+    "quiz_seed": 9,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 1104
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 10574,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 16,
+          "tai52_vs_ukeire": 16,
+          "weightable_states": 1322
+        }
+      }
+    },
+    "seat": 1,
+    "shanten": 1,
+    "turn": 6
+  },
+  {
+    "draws_remaining": 6,
+    "melds": 0,
+    "quiz_seed": 10,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 1,
+          "states": 671
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 6154,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 10,
+          "tai52_vs_ukeire": 10,
+          "weightable_states": 936
+        }
+      }
+    },
+    "seat": 0,
+    "shanten": 1,
+    "turn": 10
+  },
+  {
+    "draws_remaining": 10,
+    "melds": 0,
+    "quiz_seed": 11,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 5,
+          "states": 578
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 5167,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 2,
+          "tai52_vs_ukeire": 2,
+          "weightable_states": 170
+        }
+      }
+    },
+    "seat": 0,
+    "shanten": 2,
+    "turn": 6
+  },
+  {
+    "draws_remaining": 10,
+    "melds": 1,
+    "quiz_seed": 12,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 765
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 6541,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 1,
+          "tai52_vs_ukeire": 1,
+          "weightable_states": 146
+        }
+      }
+    },
+    "seat": 2,
+    "shanten": 1,
+    "turn": 6
+  },
+  {
+    "draws_remaining": 11,
+    "melds": 1,
+    "quiz_seed": 13,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 1072
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 9037,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 10,
+          "tai52_vs_ukeire": 10,
+          "weightable_states": 452
+        }
+      }
+    },
+    "seat": 0,
+    "shanten": 2,
+    "turn": 5
+  },
+  {
+    "draws_remaining": 8,
+    "melds": 1,
+    "quiz_seed": 14,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 4,
+          "states": 760
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 7056,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 1,
+          "tai52_vs_ukeire": 1,
+          "weightable_states": 209
+        }
+      }
+    },
+    "seat": 1,
+    "shanten": 1,
+    "turn": 8
+  },
+  {
+    "draws_remaining": 9,
+    "melds": 0,
+    "quiz_seed": 15,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 8,
+          "states": 531
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 6010,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 8,
+          "tai52_vs_ukeire": 8,
+          "weightable_states": 537
+        }
+      }
+    },
+    "seat": 2,
+    "shanten": 1,
+    "turn": 7
+  },
+  {
+    "draws_remaining": 10,
+    "melds": 4,
+    "quiz_seed": 16,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 697
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 4922,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 5,
+          "tai52_vs_ukeire": 5,
+          "weightable_states": 142
+        }
+      }
+    },
+    "seat": 1,
+    "shanten": 0,
+    "turn": 6
+  },
+  {
+    "draws_remaining": 11,
+    "melds": 1,
+    "quiz_seed": 17,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 904
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 7928,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 6,
+          "tai52_vs_ukeire": 6,
+          "weightable_states": 219
+        }
+      }
+    },
+    "seat": 3,
+    "shanten": 1,
+    "turn": 5
+  },
+  {
+    "draws_remaining": 9,
+    "melds": 2,
+    "quiz_seed": 18,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 6,
+          "states": 621
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 4945,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 0,
+          "tai52_vs_ukeire": 0,
+          "weightable_states": 0
+        }
+      }
+    },
+    "seat": 3,
+    "shanten": 0,
+    "turn": 6
+  },
+  {
+    "draws_remaining": 9,
+    "melds": 2,
+    "quiz_seed": 20,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 678
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 5718,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 0,
+          "tai52_vs_ukeire": 0,
+          "weightable_states": 0
+        }
+      }
+    },
+    "seat": 1,
+    "shanten": 0,
+    "turn": 7
+  },
+  {
+    "draws_remaining": 12,
+    "melds": 1,
+    "quiz_seed": 22,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 5,
+          "states": 756
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 5901,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 0,
+          "tai52_vs_ukeire": 0,
+          "weightable_states": 0
+        }
+      }
+    },
+    "seat": 0,
+    "shanten": 1,
+    "turn": 6
+  },
+  {
+    "draws_remaining": 11,
+    "melds": 2,
+    "quiz_seed": 23,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 1090
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 8908,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 8,
+          "tai52_vs_ukeire": 8,
+          "weightable_states": 407
+        }
+      }
+    },
+    "seat": 1,
+    "shanten": 2,
+    "turn": 5
+  },
+  {
+    "draws_remaining": 11,
+    "melds": 3,
+    "quiz_seed": 24,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 322
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 5432,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 0,
+          "tai52_vs_ukeire": 0,
+          "weightable_states": 0
+        }
+      }
+    },
+    "seat": 2,
+    "shanten": 0,
+    "turn": 7
+  },
+  {
+    "draws_remaining": 11,
+    "melds": 1,
+    "quiz_seed": 25,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 908
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 8221,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 3,
+          "tai52_vs_ukeire": 3,
+          "weightable_states": 162
+        }
+      }
+    },
+    "seat": 1,
+    "shanten": 1,
+    "turn": 5
+  },
+  {
+    "draws_remaining": 10,
+    "melds": 0,
+    "quiz_seed": 26,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 758
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 6752,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 8,
+          "tai52_vs_ukeire": 8,
+          "weightable_states": 585
+        }
+      }
+    },
+    "seat": 3,
+    "shanten": 1,
+    "turn": 6
+  },
+  {
+    "draws_remaining": 11,
+    "melds": 1,
+    "quiz_seed": 27,
+    "schemes": {
+      "3-1": {
+        "fold": {},
+        "push": {
+          "weightable_states": 0
+        }
+      },
+      "5-2": {
+        "fold": {
+          "differs_by_scheme": 0,
+          "states": 974
+        },
+        "push": {
+          "production_vs_ukeire": 0,
+          "states": 7513,
+          "tai31_vs_tai52": 0,
+          "tai31_vs_ukeire": 9,
+          "tai52_vs_ukeire": 9,
+          "weightable_states": 410
+        }
+      }
+    },
+    "seat": 3,
+    "shanten": 1,
+    "turn": 5
+  }
+]
