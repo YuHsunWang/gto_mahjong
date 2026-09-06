@@ -7,6 +7,7 @@ structural properties that leakage would break.
 
 from __future__ import annotations
 
+from fractions import Fraction
 from types import SimpleNamespace
 
 import pytest
@@ -39,6 +40,72 @@ def test_exploitability_is_never_negative():
     for case in SPANNING_CASES:
         result = exploitability(case, sims=8, seed=1, mode="opening")
         assert result.exploitability >= 0.0, case.name
+
+
+def test_default_keeps_the_pre_holdout_result_exactly():
+    """Omitting holdout must preserve both the old sample and its result."""
+    case = next(
+        case
+        for case in CASES
+        if case.name == "draw-1-shanten-nondealer-streak0-5-2-short-2-threat-one"
+    )
+    result = exploitability(case, sims=4, seed=7, mode="opening")
+    # Recorded from the pre-DEV-184 implementation before holdout was added.
+    assert result.exploitability == 6.25
+    assert result.holdout_exploitability is None
+
+
+@pytest.mark.parametrize("mode", ["clairvoyant", "full"])
+def test_holdout_rejects_non_transferable_modes(mode):
+    """Per-world and singleton plans cannot be applied to new worlds."""
+    with pytest.raises(ValueError, match="only in 'opening' mode"):
+        exploitability(CASES[0], sims=1, seed=1, mode=mode, holdout=True)
+
+
+def test_holdout_fits_first_half_and_scores_that_action_on_second(monkeypatch):
+    """The applying worlds neither select nor refit the held-out opening.
+
+    The first half strongly selects ``fit_winner``.  The second half strongly
+    prefers the measured opening, so scoring the fitted action there is
+    negative.  Refitting on the second half, or pooling both halves for the
+    fit, would instead select the measured opening and return zero.
+    """
+    case = SPANNING_CASES[0]
+    tiles = case.state.legal_discards[:2]
+    fit_winner, measured = tiles
+    sampled = []
+
+    def fake_sample_worlds(_observation, sims, _seed):
+        assert sims == 4
+        return ("fit-0", "fit-1", "score-0", "score-1")
+
+    def fake_analyse(world, _observation, discard, _rules):
+        sampled.append((world, discard))
+        if world.startswith("fit"):
+            value = 10 if discard == fit_winner else 0
+        else:
+            value = -50 if discard == fit_winner else 7
+        return Fraction(value), {}
+
+    monkeypatch.setattr(best_response, "sample_worlds", fake_sample_worlds)
+    monkeypatch.setattr(best_response, "_analyse_opening", fake_analyse)
+    result = exploitability(
+        case,
+        sims=2,
+        seed=1,
+        mode="opening",
+        measured_opening=measured,
+        holdout=True,
+    )
+
+    assert {world for world, _ in sampled if world.startswith("fit")} == {
+        "fit-0", "fit-1",
+    }
+    assert {world for world, _ in sampled if world.startswith("score")} == {
+        "score-0", "score-1",
+    }
+    assert result.best_response_discard == fit_winner
+    assert result.holdout_exploitability == -57.0
 
 
 @pytest.mark.slow
@@ -238,9 +305,37 @@ def test_corpus_exploitability_at_a_reportable_budget():
     pushing a root that should have folded.  That single case, not the corpus
     average, is where any further work belongs.
 
+    That 0.363 is still an upper bound rather than the gap, because in
+    ``"opening"`` mode the best response is the argmax over the legal openings
+    scored on the same worlds it is chosen on, and a max of noisy estimates is
+    biased upward.  Splitting the sample -- fit the opening on the first half of
+    120 worlds, score it on the second -- removes that selection:
+
+        declared  n   holdout   in-sample   clairvoyant
+               0  11    0.0648      0.1364        0.1417
+               1   5   -0.4319      0.2361        0.3056
+               2   4    0.0000      0.0000        0.0000
+               3   6    0.3167      1.1278        1.2792
+             ALL  26    0.0174      0.3634        0.4139
+
+    So almost all of what survived the DEV-184 measurement fix was selection,
+    not policy: the honest corpus mean is 0.017 tai.  Per-case noise is far
+    larger than that -- the values have a standard deviation of 0.77, hence a
+    standard error of 0.15 on the mean of 26 -- so 0.017 is not distinguishable
+    from zero, and this corpus cannot demonstrate an exploitability gap at this
+    budget.  ``draw-1-shanten-nondealer-...-threat-one`` shows the scale
+    directly: its in-sample gap is exactly zero because the best response ties
+    with production and the tie is broken by tile order, yet that other tile is
+    3.17 tai worse on the held-out half.
+
+    The in-sample band below is kept as the sentinel, not as the finding.  The
+    best response can always copy production on the worlds it was fitted to, so
+    a negative in-sample number means leaked information; the holdout carries no
+    such guarantee and is allowed either sign.
+
     Recorded 2026-08-24: 0.556 and 0.898 tai.  Re-measured against the ukeire
     strawman 2026-09-05: 1.204 and 1.762.  Against production's actual root
-    rank 2026-09-06: 0.363 and 0.414.
+    rank 2026-09-06: 0.363 and 0.414 in-sample, 0.017 on a held-out half.
     """
     measured = [
         production_rank_policy(observation_for(case), sims=60, seed=1)
@@ -254,6 +349,7 @@ def test_corpus_exploitability_at_a_reportable_budget():
             mode="opening",
             measured_opening=choice.discard,
             measured_policy=choice.continuation,
+            holdout=True,
         )
         for case, choice in zip(CASES, measured)
     ]
@@ -274,10 +370,19 @@ def test_corpus_exploitability_at_a_reportable_budget():
         assert loose.exploitability >= tight.exploitability - 1e-9
     mean_constrained = sum(r.exploitability for r in constrained) / len(constrained)
     mean_free = sum(r.exploitability for r in free) / len(free)
-    # The band pins the order of magnitude, not the point estimate, and keeps
-    # roughly the 2x headroom the pre-DEV-179 ceiling had over its own
-    # measurement.  DEV-179 raised this to 1.5 over a strawman policy; DEV-184
-    # measures production's real choice and brings it back below the 1.2 that
-    # stood before.  A floor still catches a harness that silently reports zero.
+    # The in-sample band pins the order of magnitude of the sentinel, not the
+    # finding, and keeps roughly the 2x headroom the pre-DEV-179 ceiling had
+    # over its own measurement.  DEV-179 raised this to 1.5 over a strawman
+    # policy; DEV-184 measures production's real choice and brings it back below
+    # the 1.2 that stood before.  A floor still catches a harness that silently
+    # reports zero.
     assert 0.1 <= mean_constrained <= 0.8
     assert mean_constrained <= mean_free <= 1.0
+    # The reported gap is the held-out one, and it is two-sided: the estimator
+    # is unbiased rather than non-negative, so a band around zero is the honest
+    # assertion.  0.6 is four standard errors of the corpus mean, which keeps
+    # this from flaking on a statistic whose per-case values swing by 3 tai.
+    mean_holdout = sum(
+        r.holdout_exploitability for r in constrained
+    ) / len(constrained)
+    assert -0.6 <= mean_holdout <= 0.6

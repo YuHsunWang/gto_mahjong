@@ -15,15 +15,19 @@ Two layers, with different error properties:
   it is estimated rather than enumerated.  Exploitability therefore comes with
   a confidence interval, not as an exact rational.
 
-Both policies are evaluated on the *same* sampled worlds, so their difference
-is paired under common random numbers, exactly as ``paired_delta_moments`` is
-for production EV.
+The in-sample estimate evaluates both policies on the *same* sampled worlds,
+so their difference is paired under common random numbers, exactly as
+``paired_delta_moments`` is for production EV.  An optional opening-only
+holdout instead fits the best-response opening on the first half of a sample
+and applies it to the second half.  Those disjoint roles remove winner's curse
+from the reported point estimate.
 
 Two invariants make the information-set restriction testable, because a plan
 that leaks hidden state would silently inflate the answer rather than fail:
 
-* exploitability is never negative -- the best response can always copy the
-  production action, so a negative estimate is a bug, not a finding;
+* in-sample exploitability is never negative -- the best response can always
+  copy the production action on its fitting worlds, so a negative estimate is
+  a bug, not a finding;
 * feeding the solved best response back in as the measured policy yields
   exactly zero.
 
@@ -498,7 +502,12 @@ def _production_action(
 
 @dataclass(frozen=True)
 class ExploitabilityResult:
-    """One case's measured gap between best response and measured policy."""
+    """One case's measured gap between best response and measured policy.
+
+    ``holdout_exploitability`` may be negative.  It compares two estimators on
+    worlds that did not choose the best-response opening, so the in-sample gap
+    remains the non-negative information-leakage sentinel.
+    """
 
     name: str
     sims: int
@@ -515,6 +524,7 @@ class ExploitabilityResult:
     # Information sets reached by more than one world.  Zero of these on a
     # corpus with shared keys would mean hidden state had leaked into the key.
     shared_information_sets: int = 0
+    holdout_exploitability: float | None = None
 
     @property
     def ci95(self) -> tuple[float, float] | None:
@@ -570,6 +580,7 @@ def exploitability(
     measured_opening: int | None = None,
     measured_plan: dict[InfoKey, int] | None = None,
     measured_policy: DiscardPolicy = _production_discard_policy,
+    holdout: bool = False,
 ) -> ExploitabilityResult:
     """Measure how much the measured policy leaves on the table in ``case``.
 
@@ -606,14 +617,27 @@ def exploitability(
     worlds, 17 of 3,170 sets were reached twice -- and the solved plan overfits
     its own world until the answer equals ``"clairvoyant"``.  The mode is kept
     so the degeneracy stays measurable through ``shared_information_sets``.
+
+    ``holdout=True`` is available only for ``"opening"``.  It draws twice the
+    requested worlds, estimates the best-response opening on the first half,
+    and applies it to the second half.  The estimating and applying sample
+    indices are disjoint.  A clairvoyant plan is fitted per world and cannot
+    transfer to new worlds, while ``"full"`` has the singleton degeneracy
+    above.  The holdout gap may be negative because it is the difference
+    between two estimators on worlds that neither one was selected upon.
     """
     if mode not in ("opening", "clairvoyant", "full"):
         raise ValueError("mode must be 'opening', 'clairvoyant', or 'full'")
+    if holdout and mode != "opening":
+        raise ValueError("holdout is available only in 'opening' mode")
     clairvoyant = mode == "clairvoyant"
     observation = observation_for(case)
-    worlds = sample_worlds(
-        observation, sims, case.seed if seed is None else seed,
+    sampled_worlds = sample_worlds(
+        observation, sims * 2 if holdout else sims,
+        case.seed if seed is None else seed,
     )
+    worlds = sampled_worlds[:sims]
+    holdout_worlds = sampled_worlds[sims:] if holdout else ()
     discards = tuple(tile for tile in range(34) if observation.hand[tile])
     analyses = [
         [
@@ -621,6 +645,13 @@ def exploitability(
             for discard in discards
         ]
         for world in worlds
+    ]
+    holdout_analyses = [
+        [
+            _analyse_opening(world, observation, discard, rules)
+            for discard in discards
+        ]
+        for world in holdout_worlds
     ]
 
     if measured_opening is None and measured_plan is not None:
@@ -730,6 +761,28 @@ def exploitability(
             "negative exploitability: the best response is leaking information "
             f"or the plan is inconsistent (gap={gap!r})"
         )
+    holdout_gap = None
+    if holdout:
+        holdout_differences: list[float] = []
+        for world_analyses in holdout_analyses:
+            best_base, best_contributions = world_analyses[best_index]
+            best_value = best_base + sum(
+                (
+                    node[measured_action(key)]
+                    for key, node in best_contributions.items()
+                ),
+                Fraction(0),
+            )
+            measured_base, measured_contributions = world_analyses[measured_index]
+            measured_value = measured_base + sum(
+                (
+                    node[measured_action(key)]
+                    for key, node in measured_contributions.items()
+                ),
+                Fraction(0),
+            )
+            holdout_differences.append(float(best_value - measured_value))
+        holdout_gap = sum(holdout_differences) / len(holdout_differences)
     return ExploitabilityResult(
         case.name,
         len(worlds),
@@ -743,4 +796,5 @@ def exploitability(
         plans[best_discard],
         clairvoyant,
         shared_counts[best_discard],
+        holdout_gap,
     )
