@@ -1276,7 +1276,20 @@ def _calibrated_ron(
         known_hand = tuple(players[discarder].hand)
         estimates = []
         for seat, player in enumerate(players):
-            if seat == discarder:
+            if seat in (discarder, acting_seat):
+                continue
+            can_complete = player.hand[tile] < 4
+            completed = player.hand.copy()
+            if can_complete:
+                completed[tile] += 1
+            if (
+                not can_complete
+                or _production_shanten(
+                    tuple(completed),
+                    len(player.melds) + len(player.kongs),
+                )
+                != -1
+            ):
                 continue
             opponent = _view(player, seat)
             # Both count vectors are built inside the rollout, so the public
@@ -1293,28 +1306,11 @@ def _calibrated_ron(
                 )
                 else calibration.deal_in_probability(assessment.score)
             )
-            can_complete = player.hand[tile] < 4
-            completed = player.hand.copy()
-            if can_complete:
-                completed[tile] += 1
-            if (
-                can_complete
-                and _production_shanten(
-                    tuple(completed),
-                    len(player.melds) + len(player.kongs),
-                )
-                == -1
-            ):
-                value_hand = (tuple(completed), tile)
-            else:
-                value_hand = ron_value_hands[seat]
-                if value_hand is None:
-                    raise RuntimeError("missing calibrated RON value hand")
             estimates.append(CalibratedRonClaim(
                 seat,
                 min(1.0, max(0.0, probability or 0.0)),
-                winning_hand=value_hand[0],
-                scoring_tile=value_hand[1],
+                winning_hand=tuple(completed),
+                scoring_tile=tile,
             ))
         return tuple(estimates)
 

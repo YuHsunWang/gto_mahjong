@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import product
 from random import Random
 from typing import Callable, Sequence
 
@@ -40,10 +39,8 @@ MIXTURE_TOLERANCE = 1e-9
 class CalibratedRonClaim:
     """RON probability plus either legacy value or a physically scored hand.
 
-    A callback may claim for the acting seat as well as its opponents.  That is
-    required when probabilities are marginal over concealed hand state: making
-    only the acting seat prove a physical completion would bias the channel by
-    caller identity.
+    Calibration prices only non-acting opponents that can win in the fixed
+    hidden world.  The acting seat's actual hand decides its claim physically.
     """
 
     seat: int
@@ -291,11 +288,15 @@ def _calibrated_claim_probabilities(
     }
     if discarder in estimates:
         raise ValueError("calibrated RON claims must exclude the discarder")
+    if acting_seat != discarder:
+        estimates.pop(acting_seat, None)
+        if physical_actor_claim:
+            return {acting_seat: 1.0}, estimates
     probabilities = {
         seat: claim.probability for seat, claim in estimates.items()
     }
-    if acting_seat != discarder and acting_seat not in estimates:
-        probabilities[acting_seat] = 1.0 if physical_actor_claim else 0.0
+    if acting_seat != discarder:
+        probabilities[acting_seat] = 0.0
     return probabilities, estimates
 
 
@@ -306,46 +307,24 @@ def _winner_distribution(
 ) -> dict[tuple[int, ...], float]:
     """Exact distribution over RON winner sets for one discard.
 
-    Each seat's claim is an independent Bernoulli, so enumerating the eight
-    success patterns of the three non-discarding seats and pushing each one
-    through :func:`resolve_ron_claims` reproduces the house rule exactly
-    instead of restating it.  The result is grouped by winner set before the
-    caller pays for any settlement: under ``nearest`` the eight patterns
-    collapse onto at most four distinct winner sets.
-
-    The empty tuple carries the probability that nobody claims, which is the
-    mass the trial continues with.
+    Calibration records only the actual winner, so the seat probabilities are
+    already mutually exclusive and must not pass through claim arbitration a
+    second time.  Independently fitted rows can sum above one; in that case
+    proportional normalization preserves their relative weights and leaves a
+    zero no-win residual.  Otherwise the empty tuple carries the residual mass
+    with which the trial continues.
     """
     seats = tuple((discarder + offset) % 4 for offset in range(1, 4))
-    distribution: dict[tuple[int, ...], float] = {}
-    if rules.multi_ron == "nearest":
-        # The eight patterns collapse to "the first seat that claims", so walk
-        # the priority order once instead.  ``test_rollout`` pins this against
-        # the general enumeration below.
-        survival = 1.0
-        for seat in seats:
-            probability = probabilities.get(seat, 0.0)
-            share = survival * probability
-            if share:
-                distribution[(seat,)] = share
-            survival *= 1.0 - probability
-        if survival:
-            distribution[()] = survival
-        return distribution
-    for pattern in product((False, True), repeat=3):
-        probability = 1.0
-        for seat, claimed in zip(seats, pattern):
-            seat_probability = probabilities.get(seat, 0.0)
-            probability *= seat_probability if claimed else 1.0 - seat_probability
-        if not probability:
-            continue
-        claimed_seats = frozenset(
-            seat for seat, claimed in zip(seats, pattern) if claimed
-        )
-        winners = resolve_ron_claims(
-            discarder, claimed_seats.__contains__, rules,
-        )
-        distribution[winners] = distribution.get(winners, 0.0) + probability
+    total = sum(probabilities.get(seat, 0.0) for seat in seats)
+    scale = 1.0 / total if total > 1.0 else 1.0
+    distribution = {
+        (seat,): probabilities.get(seat, 0.0) * scale
+        for seat in seats
+        if probabilities.get(seat, 0.0)
+    }
+    residual = 0.0 if total > 1.0 else 1.0 - total
+    if residual:
+        distribution[()] = residual
     return distribution
 
 
