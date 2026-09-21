@@ -16,6 +16,17 @@ const FOLD_PRINCIPLES = {
   preserve_safe_inventory: '保留重複安全牌，供後續巡目使用',
 };
 
+// Optional Jev concept label for a graded mistake. The server omits it when
+// the decision was not a mistake, when the top pair is unresolved, or when the
+// answer sat under its confidence gate, so an absent label is the normal case.
+const MISTAKE_LABELS = {
+  rushed_narrow_wait: '搶窄聽',
+  broke_wide_shape: '拆寬型',
+  ignored_danger: '忽略危險',
+  over_defensive: '過度防守',
+  wrong_pair_choice: '留錯雀頭',
+};
+
 function fixed(value, digits = 2) {
   return Number.isFinite(value) ? value.toFixed(digits) : '—';
 }
@@ -53,6 +64,20 @@ export function verdictEl(verdict, marginal, evDelta, text, {
   delta.className = 'delta';
   delta.textContent = unresolvedChoice ? '不計排名獎懲' : `net EV 差 ${fixed(evDelta)}`;
   el.append(badge, body, delta);
+  return el;
+}
+
+function mistakeLabelEl(grade) {
+  const label = grade?.mistake_label;
+  const text = label && MISTAKE_LABELS[label.label];
+  if (!text) return null;
+  const el = document.createElement('div');
+  el.className = 'note mistake-label';
+  const name = document.createElement('b');
+  name.textContent = `觀念判讀：${text}`;
+  const rest = document.createElement('span');
+  rest.textContent = `（信心 ${fixed(label.confidence)}）——概念分類供參考，排名與 net EV 仍以引擎估計為準。`;
+  el.append(name, rest);
   return el;
 }
 
@@ -457,6 +482,8 @@ export function reviewRailEl({
     if ((grade.ranking_state || 'clear') === 'clear' && grade.best?.discard !== undefined) {
       current.append(bestLineEl(`模型領先選項：${faceText(grade.best.discard)}（估計 net EV ${fixed(grade.best.net_ev)}）`));
     }
+    const mistake = mistakeLabelEl(grade);
+    if (mistake) current.append(mistake);
     rail.append(current);
     const banner = rankingBannerEl(grade);
     if (banner) rail.append(banner);
