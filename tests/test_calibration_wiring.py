@@ -33,7 +33,33 @@ def _real_entry(payload, discard):
     )
 
 
-# Drives quiz and trainer end-to-end twice (~26s).
+# DEV-207: one quiz grade is one Monte Carlo draw at one fixed seed. Measured on
+# this test's position and discard over 20 seeds at REFINE_SIMS=200, raising the
+# deal-in probability 200x raised risk_ev by +0.40 on average (sd 0.26) but went
+# the other way at 2 of the 20 seeds -- and the seed this test used to rely on
+# is one of them (4.129 -> 4.022). Raising sims does not help: at 1000 sims the
+# spread only fell to 0.20, and at that seed net_ev turned wrong instead. The
+# noise is between seeds, so the direction is checked on a seed average.
+QUIZ_DIRECTION_SEEDS = 8
+
+
+def _seed_averaged_quiz_chosen(monkeypatch, position, tile, analysis):
+    """Mean (risk_ev, net_ev) of the quiz's own chosen-discard estimate over seeds."""
+    original = quiz._evaluation_seed
+    risk, net = [], []
+    for offset in range(QUIZ_DIRECTION_SEEDS):
+        monkeypatch.setattr(
+            quiz, "_evaluation_seed",
+            lambda pos, offset=offset: original(pos) + offset,
+        )
+        entry = quiz._refine(position, tile, quiz.REFINE_SIMS, analysis=analysis)
+        risk.append(entry.risk_ev)
+        net.append(entry.net_ev)
+    monkeypatch.setattr(quiz, "_evaluation_seed", original)
+    return sum(risk) / len(risk), sum(net) / len(net)
+
+
+# Drives quiz and trainer end-to-end twice, plus an 8-seed quiz average (~2 min).
 @pytest.mark.slow
 def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monkeypatch):
     # risk_ev and net_ev are sample means over terminal rollouts (ev.py:895),
@@ -55,7 +81,9 @@ def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monk
     monkeypatch.setattr(quiz, "ESCALATE_SIMS", 201)
     quiz._rank_cached.cache_clear()
     api._SESSIONS.clear()
-    active = [_context("extreme-low", 0.001)]
+    low_context = _context("extreme-low", 0.001)
+    high_context = _context("extreme-high", 0.20)
+    active = [low_context]
     monkeypatch.setattr(api, "_calibration_context", lambda: active[0].calibration)
 
     # A real trainer decision supplies one fixed observable position to both
@@ -95,7 +123,7 @@ def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monk
         entry["discard"] for entry in low_stateless["entries"] if not entry["is_fold"]
     )
 
-    active[0] = _context("extreme-high", 0.20)
+    active[0] = high_context
     high_state = api.trainer_new(api.TrainerNewRequest(seed=1, scheme="3-1"))
     high_quiz = api.quiz_grade(api.GradeRequest(seed=1, tile=tile, scheme="3-1"))
     high_trainer = api.trainer_act(
@@ -106,8 +134,17 @@ def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monk
     )
     high_stateless = api.ev_rank_endpoint(api.EvRankRequest(**stateless_request))
 
-    assert high_quiz["grade"]["chosen"]["risk_ev"] > low_quiz["grade"]["chosen"]["risk_ev"]
-    assert high_trainer["feedback"]["chosen"]["risk_ev"] > low_trainer["feedback"]["chosen"]["risk_ev"]
+    low_quiz_risk, low_quiz_net = _seed_averaged_quiz_chosen(monkeypatch, position, tile, low_context)
+    high_quiz_risk, high_quiz_net = _seed_averaged_quiz_chosen(monkeypatch, position, tile, high_context)
+    assert high_quiz_risk > low_quiz_risk
+    # The trainer grades a discard through the same grade() on the same position
+    # and seed, so its numbers carry the same seed noise as one quiz grade. What
+    # the trainer path must prove is wiring: under each calibration it returns
+    # exactly what the quiz does, and the quiz direction is checked above.
+    for trainer, quiz_payload in ((low_trainer, low_quiz), (high_trainer, high_quiz)):
+        for field in ("risk_ev", "net_ev"):
+            assert trainer["feedback"]["chosen"][field] == quiz_payload["grade"]["chosen"][field]
+    assert high_quiz["grade"]["chosen"]["risk_ev"] != low_quiz["grade"]["chosen"]["risk_ev"]
     assert (
         _real_entry(high_stateless, stateless_discard)["risk_ev"]
         > _real_entry(low_stateless, stateless_discard)["risk_ev"]
@@ -121,8 +158,7 @@ def test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together(monk
     # over the same span, -2.245 to -3.825, and separated at every sample size
     # tested including the one where risk_ev tied.
     # More deal-in risk must never make a decision look better.
-    assert high_quiz["grade"]["chosen"]["net_ev"] < low_quiz["grade"]["chosen"]["net_ev"]
-    assert high_trainer["feedback"]["chosen"]["net_ev"] < low_trainer["feedback"]["chosen"]["net_ev"]
+    assert high_quiz_net < low_quiz_net
     assert (
         _real_entry(high_stateless, stateless_discard)["net_ev"]
         < _real_entry(low_stateless, stateless_discard)["net_ev"]
