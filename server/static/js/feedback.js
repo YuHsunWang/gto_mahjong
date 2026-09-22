@@ -73,7 +73,7 @@ export function evTableEl(entries, {
   const table = document.createElement('table');
   table.className = 'evtable';
   const head = document.createElement('tr');
-  ['打牌', '估計 net EV', '95% CI', 'P(胡牌)', 'P(流局)', 'E[和牌值]', '樣本'].forEach((label) => head.append(cell(label, 'th')));
+  ['打牌', '估計 net EV', '95% CI', 'P(胡牌)', 'P(流局)', 'E[胡牌值]', '樣本'].forEach((label) => head.append(cell(label, 'th')));
   table.append(head);
   const resolvedRankingState = rankingState || topGap?.wording || 'clear';
   entries.filter((entry) => !entry.is_fold).forEach((entry) => {
@@ -213,7 +213,7 @@ export function modelScopeEl(metadata = null) {
     ? `底${metadata.scheme.base_units}／台${metadata.scheme.tai_units}`
     : '目前底台設定';
   el.textContent = `模型範圍：${scheme}；所有選項只以 terminal-rollout net EV 比較；`
-    + `P(胡牌)、P(流局)與和牌值僅供解讀；${calibration}，不代表真人牌局。`;
+    + `P(胡牌)、P(流局)與胡牌值僅供解讀；${calibration}，不代表真人牌局。`;
   return el;
 }
 

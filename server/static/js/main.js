@@ -122,7 +122,7 @@ function homeScreen(root) {
 
   const footnote = document.createElement('div');
   footnote.className = 'footnote';
-  footnote.textContent = '選項只以 terminal-rollout net EV 排序；P(胡牌)、P(流局)與和牌值只作解讀。'
+  footnote.textContent = '選項只以 terminal-rollout net EV 排序；P(胡牌)、P(流局)與胡牌值只作解讀。'
     + '校準資料域只涵蓋內建 bot，缺表時會明示 heuristic fallback，不代表真人牌局。'
     + 'EV 為蒙地卡羅估計：貼著判定門檻的手會自動加碼精算，仍標「（邊緣）」者受殘餘取樣誤差影響。'
     + '本桌無花牌（花牌建模為獨立的未來里程碑）。'
