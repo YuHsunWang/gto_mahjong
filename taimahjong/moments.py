@@ -9,6 +9,13 @@ from typing import Hashable, Iterable, Mapping, Sequence
 
 CI95_Z = 1.959963984540054
 
+# Both merge paths refuse clustered input the same way (DEV-182, fix 2).
+CLUSTERED_MERGE_REFUSAL = (
+    "clustered moments cannot be merged without per-cluster totals; "
+    "build one ClusteredSampleMoments.from_clustered_values over all "
+    "observations and cluster labels instead"
+)
+
 
 @dataclass(frozen=True)
 class SampleMoments:
@@ -35,6 +42,8 @@ class SampleMoments:
         )
 
     def merge(self, *others: "SampleMoments") -> "SampleMoments":
+        if any(isinstance(other, ClusteredSampleMoments) for other in others):
+            raise NotImplementedError(CLUSTERED_MERGE_REFUSAL)
         return SampleMoments(
             self.n + sum(other.n for other in others),
             self.total + sum(other.total for other in others),
@@ -135,6 +144,10 @@ class ClusteredSampleMoments(SampleMoments):
 
     cluster_count: int = 0
     cluster_score_sum_squares: float = 0.0
+
+    def merge(self, *others: "SampleMoments") -> "ClusteredSampleMoments":
+        """Reject a merge that cannot preserve cluster-level sufficient data."""
+        raise NotImplementedError(CLUSTERED_MERGE_REFUSAL)
 
     @classmethod
     def from_clustered_values(

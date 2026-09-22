@@ -2,7 +2,7 @@ name: tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feat/**']
   pull_request:
   schedule:
     # Full suite, including the exhaustive oracle sweeps, every night at 03:00 UTC.

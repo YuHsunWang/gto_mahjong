@@ -175,7 +175,7 @@
   - production top-1 recall 目標事先定義（建議 ≥99%）且 worst regret 有界。
   - UI 若未 exhaustive，不使用未限定的「全手最佳」。
 
-## MJ-009 — 修正 kong 教學 EV 的立即和牌與槓上開花
+## MJ-009 — 修正 kong 教學 EV 的立即胡牌與槓上開花
 
 - **優先級**：P1
 - **狀態**：CONFIRMED
@@ -361,7 +361,7 @@
 - **涉及檔案與位置**：
   - `taimahjong/scoring.py:29-60,219-319`
   - `tests/test_scoring.py`
-- **建議修改方案**：由規則 owner 提供版本化 table 與 50–100 個人工裁定和牌（含互斥、最高分解、天地胡、莊連莊、明暗槓）。
+- **建議修改方案**：由規則 owner 提供版本化 table 與 50–100 個人工裁定胡牌（含互斥、最高分解、天地胡、莊連莊、明暗槓）。
 - **風險**：不同台灣牌桌規則衝突，不能用「一般標準」含糊處理。
 - **驗收條件**：
   - corpus 每例附 rule-table version、expected items/tai/payment。

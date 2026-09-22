@@ -108,7 +108,7 @@ selfplay.py ─ game loop / policies / settlement / calibration counts
 - **CONFIRMED**：`tiles.py:5-44` 只接受 m/p/s/z，共 34 種，字牌限 1–7、每種 0–4 張。
 - **CONFIRMED**：程式沒有 dora、立直、一發等日麻計分；`danger.py:382-390` 的宣告後安全牌是本專案 migi 規則，不是永久振聽。
 - **CONFIRMED / 非缺陷**：目前沒有花牌與補花符合指定 scope。`scoring.py:119` 的 `extra` 只是未來擴充槽；首頁也明示「本桌無花牌」（`main.js:82,124-126`）。
-- **CONFIRMED**：一般和牌目標為 5 組 + 1 對；特殊牌型未實作，README 有揭露。這是產品 scope，不在本次 ground truth 中被要求為缺陷。
+- **CONFIRMED**：一般胡牌目標為 5 組 + 1 對；特殊牌型未實作，README 有揭露。這是產品 scope，不在本次 ground truth 中被要求為缺陷。
 
 ## 2.2 吃、碰、槓
 
@@ -310,14 +310,14 @@ net EV(candidate)
 1. **CONFIRMED / P0**：`main.js:24` 寫「和 GTO 最佳解比對」，但本專案沒有 GTO 計算。
 2. **CONFIRMED / P0**：README 的「理論最佳」「所有機率校準」類文字與實際 heuristic/fallback 不符。
 3. **CONFIRMED / P1**：`lessons.js:63,71` 說碰牌會「失去自摸機會／自摸額外台」；計分 `scoring.py:261-265` 對開門手仍加自摸台，只失去門清台。這是直接錯誤的教學。
-4. **CONFIRMED / P1**：kong recommendation 的 `_kong_option_ev` 對 replacement tile 一律接 `_best_discard_ev`（`trainer.py:490-512`），沒有先判斷立即和牌，也沒有計槓上開花 +1；docstring 自己承認（`:548-557`）。實際 game loop 卻會正確結算（`:665-672`），造成「評分模型」與「遊戲結果」不一致。
+4. **CONFIRMED / P1**：kong recommendation 的 `_kong_option_ev` 對 replacement tile 一律接 `_best_discard_ev`（`trainer.py:490-512`），沒有先判斷立即胡牌，也沒有計槓上開花 +1；docstring 自己承認（`:548-557`）。實際 game loop 卻會正確結算（`:665-672`），造成「評分模型」與「遊戲結果」不一致。
 5. **CONFIRMED / P1**：call pass branch 只算 self-draw win EV，沒算未來放槍；call branch 則有當下 discard risk（`trainer.py:381-430,526-530`），比較基準不對稱。
 6. **CONFIRMED / P1**：fold row 不是可執行策略，使用者學不到「接下來幾巡應如何守」。
 7. **CONFIRMED / P2**：API `_position_payload` 沒輸出 `own_kongs`（`server/api.py:118-148`）；人類槓後，trainer 畫面只畫 own melds，已宣告槓在後續局面不可見。
 
 ## 5.2 速度、台數與攻守取捨
 
-核心 scheme 可以讓高台 vs 快和的 value 比例改變，這個設計方向正確。但由於：
+核心 scheme 可以讓高台 vs 快胡的 value 比例改變，這個設計方向正確。但由於：
 
 - 題目產生固定使用 default scheme（`quiz.py:356-396`）；
 - teaching rank 又沒有 calibration；

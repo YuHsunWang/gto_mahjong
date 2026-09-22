@@ -149,10 +149,10 @@ export function scoreScreen(root) {
   const streak = numberInput(0, 0);
 
   const form = document.createElement('div');
-  form.append(field('和牌手牌（含和的那張）', hand, 'sc-hand'), previewStrip(hand));
+  form.append(field('胡牌手牌（含胡的那張）', hand, 'sc-hand'), previewStrip(hand));
   const row = document.createElement('div');
   row.className = 'field-row';
-  row.append(field('和牌', winTile, 'sc-win'), field('連莊次數', streak, 'sc-streak'));
+  row.append(field('胡牌', winTile, 'sc-win'), field('連莊次數', streak, 'sc-streak'));
   form.append(row);
   form.append(field('副露（以 ; 分隔，可留白）', melds, 'sc-melds'));
 

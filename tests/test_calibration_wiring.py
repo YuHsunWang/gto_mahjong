@@ -181,3 +181,35 @@ def test_missing_table_falls_back_consistently_and_responses_say_so(tmp_path, mo
         assert response["calibration_id"] == "heuristic-fallback"
         assert response["domain"] == "bot"
         assert response["fallback_used"] is True
+
+
+@pytest.mark.parametrize("content", [
+    "{truncated",
+    '{"metadata":{"danger_binning":{"edges":[0,1],"buckets":["a"]}}}',
+    "[]",
+    '{"counts": null}',
+])
+def test_malformed_table_warns_and_uses_heuristic_fallback(tmp_path, caplog, content):
+    path = tmp_path / "calibration.json"
+    path.write_text(content, encoding="utf-8")
+
+    with caplog.at_level("WARNING"):
+        fallback = CalibrationProvider(path).load()
+
+    assert fallback.fallback_used
+    assert fallback.calibration_id == "heuristic-fallback"
+    assert "unusable calibration table" in caplog.text
+
+
+def test_malformed_table_api_reports_fallback(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    path = tmp_path / "calibration.json"
+    path.write_text('{"metadata":{"danger_binning":{"edges":[0,1],"buckets":["a"]}}}')
+    monkeypatch.setattr(api, "_calibration_context", CalibrationProvider(path).load)
+    with TestClient(api.app) as client:
+        response = client.post("/api/ev/rank", json={
+            "hand": "123m123p123s11122233z", "turns": 1, "sims": 1,
+        })
+    assert response.status_code == 200
+    assert response.json()["fallback_used"] is True

@@ -261,11 +261,10 @@ def test_calibration_lookup_interpolates_and_falls_back_for_small_cells():
     ) / 2
     assert calibration.deal_in_probability(1.0) == pytest.approx(expected)
     assert Calibration(table_document(counts), min_cell_count=31).deal_in_probability(1.0) is None
-    # The shipped v2 document has a single 13+ cell.  A regenerated document
-    # may split that heterogeneous tail without changing how the shipped file
-    # is interpreted, while retaining Jeffreys smoothing and monotonic PAV.
-    edges = DANGER_EDGES + (16.0,)
-    buckets = DANGER_BUCKETS[:-1] + ("13-16", "16+")
+    # The canonical split tail keeps the two measured populations separate
+    # while retaining Jeffreys smoothing and monotonic PAV.
+    edges = DANGER_EDGES
+    buckets = DANGER_BUCKETS
     counts = empty_counts(buckets)
     counts["deal_in"]["9-13"] = {"observations": 1000, "deal_ins": 10}
     counts["deal_in"]["13-16"] = {"observations": 1000, "deal_ins": 5}
@@ -282,6 +281,13 @@ def test_calibration_lookup_interpolates_and_falls_back_for_small_cells():
     assert calibration.deal_in_probability(11.0) == pytest.approx(pooled)
     assert calibration.deal_in_probability(14.5) == pytest.approx(pooled)
     assert calibration.deal_in_probability(20.0) == pytest.approx((20 + 0.5) / (1000 + 1))
+
+
+def test_default_danger_binning_matches_the_committed_table():
+    document = load_table(Path("data/calibration.json"))
+    binning = document["metadata"]["danger_binning"]
+    assert tuple(binning["edges"]) == DANGER_EDGES
+    assert tuple(binning["buckets"]) == DANGER_BUCKETS
 
 
 def test_jeffreys_smoothing_keeps_observed_zero_deal_in_bucket_positive():
@@ -520,3 +526,33 @@ def test_daiminkan_is_not_positive_ev_under_house_rule():
     assert with_daiminkan <= added_only + 0.05, (
         f"大明槓 should not help: all={with_daiminkan:.3f} vs concealed_added={added_only:.3f}"
     )
+
+
+def test_new_default_table_round_trips_split_tail(tmp_path):
+    from taimahjong.calibration import format_report
+
+    counts = counts_from_games([])
+    counts["deal_in"]["16+"] = {"observations": 100, "deal_ins": 10}
+    path = tmp_path / "new.json"
+    document = write_merged_table(path, counts)
+    assert tuple(document["metadata"]["danger_binning"]["buckets"]) == DANGER_BUCKETS
+    calibration = Calibration.from_path(path)
+    assert calibration.danger_buckets == DANGER_BUCKETS
+    assert calibration.deal_in_probability(20) == pytest.approx(10.5 / 101)
+    assert "16+" in format_report(document)
+
+
+def test_metadata_free_legacy_table_still_loads_and_merges(tmp_path):
+    import json
+    from taimahjong.calibration import LEGACY_DANGER_BUCKETS, format_report
+
+    counts = empty_counts(LEGACY_DANGER_BUCKETS)
+    counts["deal_in"]["13+"] = {"observations": 100, "deal_ins": 10}
+    document = table_document(counts, danger_buckets=LEGACY_DANGER_BUCKETS)
+    document["metadata"] = {"danger_reference": DANGER_REFERENCE}
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps(document))
+    assert Calibration.from_path(path).danger_buckets == LEGACY_DANGER_BUCKETS
+    assert "13+" in format_report(document)
+    merged = write_merged_table(path, empty_counts(LEGACY_DANGER_BUCKETS))
+    assert Calibration(merged).deal_in_probability(20) == pytest.approx(10.5 / 101)

@@ -43,10 +43,9 @@ TAIL_BOOTSTRAP_SEED = 20260806
 TAIL_DIAGNOSTIC_EDGES = (9.0, 11.0, 13.0, 16.0, 20.0)
 # DEV-119 promoted the split tail to the shipped binning: the open-ended 13+
 # cell mixed a 0.659442% 13-16 population with a 1.586684% 16-20 one.  The
-# pre-split calibration.DANGER_EDGES stays imported because legacy documents
-# without metadata.danger_binning are still read under it.
-STANDARD_DANGER_EDGES = DANGER_EDGES + (16.0,)
-STANDARD_DANGER_BUCKETS = DANGER_BUCKETS[:-1] + ("13-16", "16+")
+# Metadata-free legacy documents remain supported by Calibration itself.
+STANDARD_DANGER_EDGES = DANGER_EDGES
+STANDARD_DANGER_BUCKETS = DANGER_BUCKETS
 
 
 def _deal_in_trials(game) -> tuple[tuple[float, bool], ...]:

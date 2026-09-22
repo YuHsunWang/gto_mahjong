@@ -10,6 +10,7 @@ export const VERDICT_LABELS = {
 };
 
 const FOLD_PRINCIPLES = {
+  defensive_continuation_each_turn: '每巡都依當下公開資訊繼續防守',
   genbutsu_first: '宣告對手現物優先',
   minimum_conditional_loss_each_turn: '每巡依新公開資訊重算條件損失',
   preserve_safe_inventory: '保留重複安全牌，供後續巡目使用',
@@ -72,7 +73,7 @@ export function evTableEl(entries, {
   const table = document.createElement('table');
   table.className = 'evtable';
   const head = document.createElement('tr');
-  ['打牌', '估計 net EV', '95% CI', 'P(自摸)', 'P(流局)', 'E[和牌值]', '樣本'].forEach((label) => head.append(cell(label, 'th')));
+  ['打牌', '估計 net EV', '95% CI', 'P(胡牌)', 'P(流局)', 'E[胡牌值]', '樣本'].forEach((label) => head.append(cell(label, 'th')));
   table.append(head);
   const resolvedRankingState = rankingState || topGap?.wording || 'clear';
   entries.filter((entry) => !entry.is_fold).forEach((entry) => {
@@ -212,7 +213,7 @@ export function modelScopeEl(metadata = null) {
     ? `底${metadata.scheme.base_units}／台${metadata.scheme.tai_units}`
     : '目前底台設定';
   el.textContent = `模型範圍：${scheme}；所有選項只以 terminal-rollout net EV 比較；`
-    + `P(自摸)、P(流局)與和牌值僅供解讀；${calibration}，不代表真人牌局。`;
+    + `P(胡牌)、P(流局)與胡牌值僅供解讀；${calibration}，不代表真人牌局。`;
   return el;
 }
 
@@ -358,7 +359,7 @@ function optionGridEl(grade, chosenTile) {
       ['選項', faceText(entry.discard)],
       ['估計 net EV', fixed(entry.net_ev)],
       ['與點估計領先值差', fixed(pointLeader - entry.net_ev)],
-      ['P(自摸) / P(流局)', `${fixed(entry.p_win, 3)} / ${fixed(entry.p_draw, 3)}`],
+      ['P(胡牌) / P(流局)', `${fixed(entry.p_win, 3)} / ${fixed(entry.p_draw, 3)}`],
       ['樣本', String(entry.sample_count ?? '—')],
     ];
     lines.forEach(([name, value]) => {
