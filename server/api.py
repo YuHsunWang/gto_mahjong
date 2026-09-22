@@ -54,7 +54,14 @@ from taimahjong.ev import (
     paired_delta_moments,
     remaining_draws,
 )
-from taimahjong.quiz import QuizGrade, QuizPosition, explain, generate_position, grade
+from taimahjong.quiz import (
+    EV_EFFECT_SIZE_MIN,
+    QuizGrade,
+    QuizPosition,
+    explain,
+    generate_position,
+    grade,
+)
 from taimahjong.scoring import WinContext, score_hand
 from taimahjong.tiles import parse_tiles
 from taimahjong.shanten import shanten
@@ -245,22 +252,14 @@ def _top_gap_payload(entries: tuple[EVRankEntry, ...] | list[EVRankEntry]) -> di
     if len(ranked) < 2:
         return None
     moments = paired_delta_moments(ranked[0], ranked[1])
-    payload = moments.payload()
-    effect_small = abs(moments.mean) < 0.10
+    # paired_delta_moments always marks its result post-selection, including
+    # empty/mismatched trial paths, so unavailable uncertainty stays uncertain.
+    payload = moments.payload(EV_EFFECT_SIZE_MIN)
     payload.update({
         "top_discard": ranked[0].discard,
         "top_is_fold": ranked[0].is_fold,
         "runner_up_discard": ranked[1].discard,
         "runner_up_is_fold": ranked[1].is_fold,
-        "effect_threshold": 0.10,
-        "effect_small": effect_small,
-        "wording": (
-            "uncertain"
-            if moments.crosses_zero
-            else "marginal"
-            if effect_small
-            else "clear"
-        ),
     })
     return payload
 

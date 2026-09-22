@@ -3,6 +3,7 @@
 import pytest
 
 from server import api
+from taimahjong import quiz
 from taimahjong.ev import EVRankEntry, paired_delta_moments, ev_rank
 from taimahjong.moments import ClusteredSampleMoments, SampleMoments
 from taimahjong.quiz import QuizGrade
@@ -33,6 +34,17 @@ def test_clustered_se_does_not_treat_reused_hidden_worlds_as_independent():
     assert clustered.mean == independent.mean == 5.0
     assert clustered.standard_error == 5.0
     assert clustered.standard_error > 10 * independent.standard_error
+
+
+def test_clustered_merge_refuses_to_silently_assume_independence():
+    """Chunk merging needs per-cluster totals, which this statistic does not retain."""
+    left = ClusteredSampleMoments.from_clustered_values((0.0, 10.0), (0, 1))
+    right = ClusteredSampleMoments.from_clustered_values((2.0, 8.0), (0, 1))
+
+    with pytest.raises(NotImplementedError, match="per-cluster totals"):
+        left.merge(right)
+    with pytest.raises(NotImplementedError, match="per-cluster totals"):
+        SampleMoments().merge(left)
 
 
 def test_head_to_head_seed_chunks_merge_to_single_run_se():
@@ -87,6 +99,23 @@ def test_boundary_top_gap_whose_paired_ci_crosses_zero_is_uncertain():
     assert "ci95" not in payload
     assert len(payload["descriptive_interval95"]) == 2
     assert "not a selection-adjusted" in payload["interval_note"]
+    assert payload["effect_threshold"] == pytest.approx(quiz.EV_EFFECT_SIZE_MIN)
+
+
+def test_all_paired_delta_paths_remain_marked_post_selection():
+    empty = EVRankEntry(0, 0.0, None, 0.0, (), 0.0, 0.0)
+    one = EVRankEntry(
+        1, 0.0, None, 0.0, (), 0.0, 0.0,
+        trial_values=(1.0,), trial_strata=(0,),
+    )
+    two = EVRankEntry(
+        2, 0.0, None, 0.0, (), 0.0, 0.0,
+        trial_values=(0.0,), trial_strata=(0,),
+    )
+
+    assert paired_delta_moments(empty, empty).post_selection
+    assert paired_delta_moments(one, empty).post_selection
+    assert paired_delta_moments(one, two).post_selection
 
 
 @pytest.mark.parametrize(("values", "state"), [

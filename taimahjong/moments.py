@@ -35,6 +35,8 @@ class SampleMoments:
         )
 
     def merge(self, *others: "SampleMoments") -> "SampleMoments":
+        if any(isinstance(other, ClusteredSampleMoments) for other in others):
+            raise NotImplementedError("clustered moments cannot be merged without per-cluster totals")
         return SampleMoments(
             self.n + sum(other.n for other in others),
             self.total + sum(other.total for other in others),
@@ -135,6 +137,12 @@ class ClusteredSampleMoments(SampleMoments):
 
     cluster_count: int = 0
     cluster_score_sum_squares: float = 0.0
+
+    def merge(self, *others: "SampleMoments") -> "ClusteredSampleMoments":
+        """Reject a merge that cannot preserve cluster-level sufficient data."""
+        raise NotImplementedError(
+            "clustered moments cannot be merged without per-cluster totals"
+        )
 
     @classmethod
     def from_clustered_values(
