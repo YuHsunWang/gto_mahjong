@@ -5,7 +5,8 @@
 - Confirmed: 17; Partially correct: 1 (BUG-018). All 18 findings classified below.
 - Fixed: 17 code/documentation findings, including the five inherited fixes in 868078d. BUG-006 is resolved by an explicit unsupported-operation guard, not a new merge algorithm.
 - Rejected findings: 0. The partially incorrect BUG-018 reproduction is qualified below.
-- Remaining: BUG-016 requires the owner. Browser behavioral coverage, owner wording approval, remote CI enforcement and slow-test remeasurement are explicitly limited below.
+- Remaining: BUG-016 requires the owner. Browser behavioral coverage, owner wording approval and remote CI enforcement are explicitly limited below.
+- Slow suite (run by the reviewer after the delegated round): 18 passed, 1 failed. The failure is **pre-existing** — present at the baseline `94451d1` before any fix here, bisected to `ba7fb20` (DEV-180 part 1). Not caused by this batch; see "Independent verification".
 
 Reviewed on branch `dev-205-python-floor`, starting at `868078d2ac581536a177958d5ca1e82c6552ab45`, whose sole parent above baseline is `94451d13b6cbc141d64d3da021b8cc993edf16fe`. Initial `git diff --stat` independently matched **16 files, +269/-49**, plus untracked AGENTS.md and AUDIT.md. The filename-to-bug mapping in the brief was checked against all diff hunks. tests/test_claims.py additionally covered BUG-011/018. No source change was discarded wholesale.
 
@@ -232,7 +233,7 @@ No complete finding was rejected as Incorrect or Not reproducible.
 - BUG-011/018 have Python source guards, not executable browser regressions. Proposed follow-up: owner-approved JS testing using native Node test facilities or a browser harness, covering blocked setItem and reversed success/error response ordering. No JS runner/dependency was added.
 - BUG-005 local trigger coverage is fixed; historical red-check merging, branch protection, and future Actions execution are UNVERIFIED here. No remote queries or changes were performed.
 - The two empty agent directories remain because this environment mounts them read-only; AGENTS.md is the substantive versioned fix.
-- Slow suite: **SKIPPED by instruction**. Horizon-sensitive tests include `tests/test_quiz.py::test_filter_constraints_hold_for_several_seeded_positions`, `::test_refined_ev_delta_has_lower_cross_seed_variance_than_cheap`, `::test_quiz_cli_noninteractive_prints_best_verdict`, and `tests/test_trainer.py::test_trainer_positions_are_gradeable`; changed quiz horizons can move candidate acceptance and rankings. `tests/test_calibration_wiring.py::test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together` also consumes those horizons. No claim is made about their post-change results.
+- Slow suite: skipped inside the delegated round by instruction, then **run by the reviewer after the round** — see "Independent verification" under Verification. Result: 18 of 19 passed. Four of the five horizon-sensitive tests named here passed. The fifth, `tests/test_calibration_wiring.py::test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together`, fails — but it **already failed before this batch** (at 94451d1) and was bisected to `ba7fb20` (DEV-180 part 1). It is a pre-existing regression, not caused by these fixes; it is proposed below as a new Linear issue.
 - No large corpus rerun or calibration regeneration was attempted. The fixed-wall reference path explicitly supplies its own horizon (`taimahjong/reference_ev.py:910`), and the strata probe supplies `case.turns` (`scripts/hidden_world_strata_probe.py:251`). `docs/ev-reference-report.md:9` is dated historical evidence; `docs/batch-a-simulation-report.md:3` documents a separate capped-draw experiment; `docs/hidden-world-strata.md:25` records explicit turns=8. Their existing numbers are not claimed as remeasured. `docs/equilibrium-plan.md` was read for scope, not rewritten. Fresh quiz-derived benchmark numbers require a separate measurement run.
 
 ## Verification
@@ -304,6 +305,80 @@ a394aaa uncertainty: reject lossy merges and share ranking wording (BUG-006, BUG
 c904789 api: protect trainer state and validate opponents (BUG-009, BUG-010, BUG-015)
 72edf07 ui: contain storage errors and ignore stale responses (BUG-011, BUG-018)
 ```
+
+### Independent verification (reviewer, after the delegated round)
+
+The delegated round's own summary (`final.md`) was lost: the reviewer stopped
+the round with SIGTERM to save credits after it had committed everything, so the
+claims above were re-checked independently rather than trusted. All runs below
+are outside the Codex sandbox, on Python 3.14.4, against `84b0911`.
+
+| Run | Command | Result |
+|---|---|---|
+| Fast suite | `python3 -m pytest -m "not slow" -p no:cacheprovider --durations=10` | **382 passed, 19 deselected in 245.96s, exit 0** — matches F2 |
+| Slow suite | `python3 -m pytest -m slow -p no:cacheprovider --durations=19` | **1 failed, 18 passed, 382 deselected in 2188.77s, exit 1** |
+
+Timings are longer than F2 because another session's test run shared the CPU.
+
+**The one slow failure is pre-existing, not caused by this batch.**
+
+```
+tests/test_calibration_wiring.py:109
+assert high_quiz["grade"]["chosen"]["risk_ev"] > low_quiz["grade"]["chosen"]["risk_ev"]
+E       assert 4.022259140844048 > 4.128835005499143
+```
+
+Raising the calibrated deal-in probability 200x lowered the quiz path's
+`risk_ev` for the chosen discard, where the test expects it to rise.
+
+Evidence that it predates the batch — the same single test, each tree exported
+with `git archive` so HEAD and the working tree were never moved:
+
+| Tree | Result |
+|---|---|
+| `origin/main` `628048e` | **1 passed** in 24.21s |
+| baseline `94451d1` (before any fix in this report) | **1 failed** — `assert 4.022554106799213 > 4.244216356944337` |
+| `84b0911` (this batch) | **1 failed** — `assert 4.022259140844048 > 4.128835005499143` |
+
+Bisect over the 30 first-parent commits `origin/main..94451d1`
+(read-only; `git archive` per probe, not `git bisect`):
+
+```
+[14] 6020879 PASS
+[21] b6e7952 FAIL
+[17] 869eb26 PASS
+[19] 999d76c PASS   <- last good
+[20] ba7fb20 FAIL   <- first bad
+```
+
+**First bad commit: `ba7fb20` "ev: reserve a 7-dun dead wall, not the with-flower
+8 dun (DEV-180 part 1)."** It shrank the dead wall from 16 to 14 tiles, so the
+live wall — and every derived horizon — grew by two tiles. BUG-002's horizon
+change in this batch only moved the low-calibration value (4.244 -> 4.129); the
+inversion exists either way.
+
+Why nobody saw it: the test is marked `slow`, and CI runs the slow job only on
+`main` (`.github/workflows/tests.yml`). `ba7fb20` never reached `main`, so the
+nightly job has been green while testing code 30 commits older than the branch.
+That is exactly GitHub discrepancy 3 in AUDIT.md.
+
+Root cause: **UNVERIFIED.** A hypothesis, labelled as such: the test's own
+comment says the *stateless* half was made exhaustive because "a 200x swing in
+deal-in probability legitimately returns different top-k sets", so comparing one
+discard across calibrations "depends on the sets happening to overlap". The
+*quiz* half — the assertion that fails — still uses the `EV_TOP_K = 5` screened
+ranking, so it may carry the same brittleness, exposed by the wall change. Two
+readings remain open and need a separate investigation: (a) a brittle test whose
+quiz half needs the same treatment as its stateless half, or (b) a real
+monotonicity violation in the calibrated risk model. They call for different
+fixes, so this report does not pick one.
+
+Neighbor-path check that turned out clean: the reviewer suspected
+`trainer_get` of skipping the BUG-010 failed-session guard. It does not —
+`_session_payload` calls `_check_session` on its first line (`server/api.py:496`),
+so every endpoint that returns session state is guarded in one place, and
+`test_trainer_send_failure_does_not_commit_score_or_feedback` asserts the GET
+404. Re-run on its own: 1 passed in 1.26s. No change was needed.
 
 ## Proposed Linear updates
 
@@ -401,6 +476,16 @@ For confirmed findings without an issue, draft the following (do not file):
   - Implementation: Retained monotonic identity shared by generate and grade, checking success and failure before updating state or recording statistics.
   - Test coverage: test_quiz_async_responses_are_guarded_by_request_identity (Python source guard only). Recommend **Review**, with limitations above.
 
+- **NEW (pre-existing, not one of the 18): calibration-wiring monotonicity test red since `ba7fb20`**
+  - Title: `test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together` has failed since the 7-dun dead wall (DEV-180 part 1)
+  - Problem: Under a 200x higher calibrated deal-in probability, the quiz path reports a *lower* `risk_ev` for the chosen discard (4.022 vs 4.129 at `84b0911`). The slow-marked test that guards this direction has been red on the integration line since `ba7fb20`, unseen because CI runs slow tests on `main` only.
+  - Reproduction: `python3 -m pytest -p no:cacheprovider -m slow "tests/test_calibration_wiring.py::test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together"` — fails at `94451d1` and `84b0911`, passes at `origin/main` `628048e`. Bisect: last good `999d76c`, first bad `ba7fb20`.
+  - Expected: raising calibrated deal-in risk raises the quiz path's `risk_ev`, as it already does for the stateless path.
+  - Root cause: UNVERIFIED. Either the quiz half of the test compares one discard across two differently-screened top-k sets — the brittleness the test's own comment already removed from its stateless half — or the calibrated risk model is genuinely non-monotone in this position.
+  - Implementation: first decide which of the two it is. If brittle: make the quiz half compare over a well-defined candidate set, the way the stateless half does. If real: fix the model, not the test.
+  - Test coverage: the existing test is the regression test once the cause is settled. Separately, AUDIT.md BUG-005's CI trigger fix means slow tests on `feat/**` would still not run on push — only the fast job does — so this class of failure stays invisible until the slow job also runs off `main`.
+  - Linear mapping: related to **DEV-180** (Done). Recommend a **new issue** rather than reopening DEV-180: DEV-180's own acceptance (the flowerless 7-dun rule) holds; what broke is a downstream test it never ran.
+
 ## Pull request description
 
 ### Summary
@@ -417,7 +502,11 @@ Duplicated horizon/wording rules, stale frontend contracts and generator output 
 
 ### Testing
 
-F2: **382 passed, 19 deselected in 200.08s (0:03:20)**, exit 0. T1: 71 passed / 3 deselected. T2: 52 passed / 4 deselected. First full attempt stalled in sandbox TestClient setup; the isolated empty-app reproduction passed outside the sandbox. Slow suite intentionally not run. Python source guards cover the JS changes; browser behavior was not executed.
+Fast suite: **382 passed, 19 deselected**, exit 0 — measured twice, once by the delegated round (200.08s) and once independently by the reviewer (245.96s). T1: 71 passed / 3 deselected. T2: 52 passed / 4 deselected. First full attempt stalled in sandbox TestClient setup; the isolated empty-app reproduction passed outside the sandbox.
+
+Slow suite (reviewer, after the round): **18 passed, 1 failed**. The failure, `tests/test_calibration_wiring.py::test_extreme_calibration_moves_stateless_quiz_and_trainer_risk_together`, is **pre-existing** — it also fails at the baseline `94451d1` before any fix here, passes at `origin/main`, and bisects to `ba7fb20` (DEV-180 part 1). Not introduced by this PR; proposed as a separate Linear issue in the report.
+
+Python source guards cover the JS changes; browser behavior was not executed.
 
 ### Linear
 
@@ -425,4 +514,4 @@ Recommend reviews/evidence updates as listed above. No Linear or GitHub object c
 
 ### Risks
 
-Quiz-derived EVs and rankings can change; kongs must be supplied for derived horizons. Failed trainer generators now require a new hand instead of retrying a dead session. Clustered merge refuses unsupported combinations. Unknown opponent fields now reject requests. New calibration tables use eight bins; legacy tables retain seven-bin semantics. Final P(和牌) wording and repository naming remain owner decisions. Remote CI and slow/browser checks are not locally certified.
+Quiz-derived EVs and rankings can change; kongs must be supplied for derived horizons. Failed trainer generators now require a new hand instead of retrying a dead session. Clustered merge refuses unsupported combinations. Unknown opponent fields now reject requests. New calibration tables use eight bins; legacy tables retain seven-bin semantics. Final P(和牌) wording and repository naming remain owner decisions. Remote CI and browser checks are not locally certified. **Merging this PR does not turn the slow suite green**: the pre-existing `test_calibration_wiring` failure from `ba7fb20` stays red until its own issue is resolved, and it will surface on `main` the first night after this line of work lands there.
