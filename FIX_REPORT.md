@@ -55,7 +55,7 @@ The round-1 commit was inspected, and its tests are included in this session's v
 - Status: Confirmed; fixed locally. Evidence: `taimahjong/ev.py:1202`; `server/static/js/feedback.js:76`; `server/static/js/main.js:125`.
 - Files changed: server/static/js/feedback.js; server/static/js/main.js; tests/test_claims.py.
 - Root cause: p_win includes own ron as well as self-draw, but labels named only self-draw.
-- Fix: Relabelled to `P(胡牌)` in all four user-visible strings. The delegated round shipped `P(和牌)`; the owner chose 胡牌 on 2026-09-23, which also matches the repo's own precedent in `b6e7952` ("use Taiwanese table words": 榮和 -> 胡牌). The adjacent pre-existing `和牌值` / `E[和牌值]` strings were outside BUG-004 and were left unchanged pending a separate wording decision.
+- Fix: Relabelled to `P(胡牌)` in all four user-visible strings. The delegated round shipped `P(和牌)`; the owner chose 胡牌 on 2026-09-23, which also matches the repo's own precedent in `b6e7952` ("use Taiwanese table words": 榮和 -> 胡牌). The owner then extended the same ruling to the adjacent `和牌值` (three uses, including the `E[胡牌值]` column), so the EV display no longer mixes the two spellings.
 - Tests added: test_p_win_is_not_labeled_as_self_draw.
 - Tests executed: full fast suite F2 below; see targeted coverage T2 where applicable; `tests/test_claims.py` re-run after the relabel.
 - Linear: DEV-117.
@@ -79,7 +79,7 @@ The round-1 commit was inspected, and its tests are included in this session's v
 - Status: Confirmed; fixed locally. Evidence: `taimahjong/moments.py:37`; `taimahjong/moments.py:141`.
 - Files changed: taimahjong/moments.py; tests/test_uncertainty.py.
 - Root cause: Inherited merge constructed plain moments and silently discarded clustering.
-- Fix: Retained explicit refusal for clustered receivers; corrected the uncovered plain.merge(clustered) direction to refuse too. Full cluster-aware merging needs sufficient per-cluster totals and is not implemented.
+- Fix: Retained explicit refusal for clustered receivers; corrected the uncovered plain.merge(clustered) direction to refuse too. Full cluster-aware merging needs sufficient per-cluster totals and is not implemented. After the round, the shared refusal message (`CLUSTERED_MERGE_REFUSAL`) was extended to name the alternative — build one `ClusteredSampleMoments.from_clustered_values` over all observations — because DEV-182 accepts a refusal only if "the raise names what to do instead". The strengthened test failed against the old message (`Regex pattern did not match`) before passing. No production `.merge(` call site exists outside `moments.py`, which is DEV-182's other acceptance condition.
 - Tests added: test_clustered_merge_refuses_to_silently_assume_independence.
 - Tests executed: full fast suite F2 below; see targeted coverage T2 where applicable.
 - Linear: DEV-182; recommendations only below.
@@ -240,7 +240,7 @@ No complete finding was rejected as Incorrect or Not reproducible.
 
 ## Remaining issues
 
-- Wording follow-up, not a finding: six pre-existing `和牌` strings sit beside the new `P(胡牌)` label — `和牌值` in `server/static/js/feedback.js` (table header and model-scope line) and `server/static/js/main.js` (footnote), and `和牌台數計算` / `和牌手牌` / `和牌` in `server/static/js/main.js` and `server/static/js/tools.js`. Three of them now share a sentence or header row with `P(胡牌)`: `feedback.js:76`, `feedback.js:216`, `main.js:125`. Unifying them is a user-visible wording call for the owner.
+- Wording follow-up, not a finding: the owner also moved `和牌值` to `胡牌值` (all three uses, 2026-09-23), so the EV table and the two model-scope lines now read consistently with `P(胡牌)`. Three `和牌` strings remain, all in the scoring tool rather than the EV display — `和牌台數計算` (`server/static/js/main.js:100`), `和牌手牌（含和的那張）` (`server/static/js/tools.js:152`) and the `和牌` field label (`tools.js:155`). They were not named in the owner's ruling and are left unchanged.
 - BUG-011/018 have Python source guards, not executable browser regressions. Proposed follow-up: owner-approved JS testing using native Node test facilities or a browser harness, covering blocked setItem and reversed success/error response ordering. No JS runner/dependency was added.
 - BUG-005 local trigger coverage is fixed; historical red-check merging, branch protection, and future Actions execution are UNVERIFIED here. No remote queries or changes were performed.
 - The two empty agent directories remain because this environment mounts them read-only; AGENTS.md is the substantive versioned fix.
