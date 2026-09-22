@@ -3,9 +3,9 @@
 ## Summary
 
 - Confirmed: 17; Partially correct: 1 (BUG-018). All 18 findings classified below.
-- Fixed: 17 code/documentation findings, including the five inherited fixes in 868078d. BUG-006 is resolved by an explicit unsupported-operation guard, not a new merge algorithm.
+- Fixed: 18. Seventeen in the delegated round, including the five inherited fixes in 868078d; BUG-016 afterwards, once the owner ruled (grandfather the repository name). BUG-006 is resolved by an explicit unsupported-operation guard, not a new merge algorithm.
 - Rejected findings: 0. The partially incorrect BUG-018 reproduction is qualified below.
-- Remaining: BUG-016 requires the owner. Browser behavioral coverage, owner wording approval and remote CI enforcement are explicitly limited below.
+- Remaining: no finding awaits the owner. Owner decisions recorded 2026-09-23: BUG-016 grandfathers the repository name; BUG-004's label is `P(胡牌)`. Browser behavioral coverage and remote CI enforcement are explicitly limited below.
 - Slow suite (run by the reviewer after the delegated round): 18 passed, 1 failed. The failure is **pre-existing** — present at the baseline `94451d1` before any fix here, bisected to `ba7fb20` (DEV-180 part 1). Not caused by this batch; see "Independent verification".
 
 Reviewed on branch `dev-205-python-floor`, starting at `868078d2ac581536a177958d5ca1e82c6552ab45`, whose sole parent above baseline is `94451d13b6cbc141d64d3da021b8cc993edf16fe`. Initial `git diff --stat` independently matched **16 files, +269/-49**, plus untracked AGENTS.md and AUDIT.md. The filename-to-bug mapping in the brief was checked against all diff hunks. tests/test_claims.py additionally covered BUG-011/018. No source change was discarded wholesale.
@@ -55,12 +55,12 @@ The round-1 commit was inspected, and its tests are included in this session's v
 - Status: Confirmed; fixed locally. Evidence: `taimahjong/ev.py:1202`; `server/static/js/feedback.js:76`; `server/static/js/main.js:125`.
 - Files changed: server/static/js/feedback.js; server/static/js/main.js; tests/test_claims.py.
 - Root cause: p_win includes own ron as well as self-draw, but labels named only self-draw.
-- Fix: Retained round-1 P(和牌) wording and copy regression guard.
+- Fix: Relabelled to `P(胡牌)` in all four user-visible strings. The delegated round shipped `P(和牌)`; the owner chose 胡牌 on 2026-09-23, which also matches the repo's own precedent in `b6e7952` ("use Taiwanese table words": 榮和 -> 胡牌). The adjacent pre-existing `和牌值` / `E[和牌值]` strings were outside BUG-004 and were left unchanged pending a separate wording decision.
 - Tests added: test_p_win_is_not_labeled_as_self_draw.
-- Tests executed: full fast suite F2 below; see targeted coverage T2 where applicable.
-- Linear: DEV-117; recommendations only below.
-- GitHub: no issue/PR created or updated; no new GitHub mapping.
-- Risks: Final wording is the owner's call; the payload field remains p_win.
+- Tests executed: full fast suite F2 below; see targeted coverage T2 where applicable; `tests/test_claims.py` re-run after the relabel.
+- Linear: DEV-117.
+- GitHub: PR #6.
+- Risks: Display only; the payload field remains p_win.
 
 ### BUG-005
 
@@ -194,6 +194,18 @@ The round-1 commit was inspected, and its tests are included in this session's v
 - GitHub: no issue/PR created or updated; no new GitHub mapping.
 - Risks: Previously ignored nested keys now cause validation errors (HTTP 422 through FastAPI), intentionally rejecting typo-dependent clients.
 
+### BUG-016
+
+- Status: Confirmed; fixed after the delegated round, by owner decision (2026-09-23: grandfather the name rather than rename the repository). Evidence: `git config --get remote.origin.url` returns `git@github.com:YuHsunWang/gto_mahjong.git`; `tests/test_claims.py` barred `gto` from every claim file.
+- Files changed: tests/test_claims.py.
+- Root cause: The claims gate banned `gto` everywhere, but the repository's own name contains it. The gate passed only because no claim file happened to spell the name — adding an ordinary `git clone` line to the README would have failed it.
+- Fix: `GRANDFATHERED_NAMES = ("gto_mahjong",)` and `_without_grandfathered_names` strip exactly that slug before the `gto` check. A comment records who decided and why. The ban on `gto` as a claim is unchanged.
+- Tests added: test_grandfathered_repository_name_is_the_only_gto_exemption — the clone URL passes, while `gto_mahjong is a gto trainer` and `gto-solved endgame` are still caught. Shown able to fail: an over-broad exemption that strips every `gto` makes its second assertion false.
+- Tests executed: `python3 -m pytest -p no:cacheprovider -q tests/test_claims.py` -> 9 passed.
+- Linear: related to DEV-138, whose separate question — whether a solved equilibrium lifts the gate — this does not answer.
+- GitHub: PR #6.
+- Risks: The exemption is a literal token; renaming the repository later would leave a dead entry to remove.
+
 ### BUG-017
 
 - Status: Confirmed; fixed locally. Evidence: `AGENTS.md:1`; `README.md:81`; `tests/test_claims.py:21`.
@@ -228,8 +240,7 @@ No complete finding was rejected as Incorrect or Not reproducible.
 
 ## Remaining issues
 
-- **BUG-016 — Confirmed; deferred to owner.** Evidence: local `git config --get remote.origin.url` returned `git@github.com:YuHsunWang/gto_mahjong.git`; `tests/test_claims.py:21` and `:38` explain/enforce the claim restriction. Either rename the repository or explicitly grandfather the name. Neither decision was made here; no remote was contacted. Linear mapping: DEV-138, recommend leaving Backlog pending owner decision.
-- BUG-004 final Chinese wording remains the owner's call; this round preserves the already committed P(和牌).
+- Wording follow-up, not a finding: six pre-existing `和牌` strings sit beside the new `P(胡牌)` label — `和牌值` in `server/static/js/feedback.js` (table header and model-scope line) and `server/static/js/main.js` (footnote), and `和牌台數計算` / `和牌手牌` / `和牌` in `server/static/js/main.js` and `server/static/js/tools.js`. Three of them now share a sentence or header row with `P(胡牌)`: `feedback.js:76`, `feedback.js:216`, `main.js:125`. Unifying them is a user-visible wording call for the owner.
 - BUG-011/018 have Python source guards, not executable browser regressions. Proposed follow-up: owner-approved JS testing using native Node test facilities or a browser harness, covering blocked setItem and reversed success/error response ordering. No JS runner/dependency was added.
 - BUG-005 local trigger coverage is fixed; historical red-check merging, branch protection, and future Actions execution are UNVERIFIED here. No remote queries or changes were performed.
 - The two empty agent directories remain because this environment mounts them read-only; AGENTS.md is the substantive versioned fix.
@@ -386,13 +397,13 @@ Recommendations only; statuses below are from AUDIT.md, not live service verific
 
 | Findings | Existing issue(s) | Recommended update |
 |---|---|---|
-| BUG-001, BUG-004 | DEV-117 (Backlog) | Move to Review for the label fixes and key-set guard; keep browser coverage and final wording as explicit follow-ups. |
+| BUG-001, BUG-004 | DEV-117 (Backlog) | Move to Review for the label fixes and key-set guard; keep browser coverage as an explicit follow-up. Final wording decided by the owner: `P(胡牌)`. |
 | BUG-005, BUG-008 | DEV-205 (Done) | Attach README-floor and integration-trigger evidence; keep Done for Python-floor work after review. Do not claim branch-protection work complete. |
 | BUG-005 | DEV-149 / DEV-151 (Done) | Leave numerical-estimator tickets Done; note CI-trigger follow-up without reopening their unrelated implementation. |
 | BUG-006 | DEV-182 (Backlog) | Move guard fix to Review; if full clustered merging is still required, retain that as a separate backlog scope. |
 | BUG-007 | DEV-181 (Backlog) | Move to Review with explicit-kongs API contract, horizon tests and measurement. |
 | BUG-013 | DEV-119 (Done), DEV-122 (Backlog) | Attach default/legacy compatibility evidence to DEV-119; keep DEV-122 Backlog because its calibrated-RON approximation is unrelated and unchanged. |
-| BUG-016 | DEV-138 (Backlog) | Leave Backlog, awaiting owner rename/grandfather decision. |
+| BUG-016 | DEV-138 (Backlog) | Leave Backlog and add a comment. The owner grandfathered the repository name (BUG-016 fixed in PR #6), but DEV-138 asks a different question — whether a solved equilibrium lifts the gate — which that ruling does not answer. |
 
 For confirmed findings without an issue, draft the following (do not file):
 
@@ -494,7 +505,7 @@ Align quiz horizons with post-discard turn order, account for kong backfill in d
 
 ### Bugs fixed
 
-BUG-001 through BUG-015, BUG-017 and BUG-018 (17 findings; BUG-018's original click recipe is only partially correct). BUG-016 remains an owner decision. Five fixes were already present in 868078d; this round reviewed them and completed the inherited working tree.
+All 18 findings, BUG-001 through BUG-018 (BUG-018's original click recipe is only partially correct). BUG-016 was fixed after the owner chose to grandfather the repository name. Five fixes were already present in 868078d; this round reviewed them and completed the inherited working tree.
 
 ### Root causes
 
@@ -514,4 +525,4 @@ Recommend reviews/evidence updates as listed above. No Linear or GitHub object c
 
 ### Risks
 
-Quiz-derived EVs and rankings can change; kongs must be supplied for derived horizons. Failed trainer generators now require a new hand instead of retrying a dead session. Clustered merge refuses unsupported combinations. Unknown opponent fields now reject requests. New calibration tables use eight bins; legacy tables retain seven-bin semantics. Final P(和牌) wording and repository naming remain owner decisions. Remote CI and browser checks are not locally certified. **Merging this PR does not turn the slow suite green**: the pre-existing `test_calibration_wiring` failure from `ba7fb20` stays red until its own issue is resolved, and it will surface on `main` the first night after this line of work lands there.
+Quiz-derived EVs and rankings can change; kongs must be supplied for derived horizons. Failed trainer generators now require a new hand instead of retrying a dead session. Clustered merge refuses unsupported combinations. Unknown opponent fields now reject requests. New calibration tables use eight bins; legacy tables retain seven-bin semantics. Owner decisions are recorded: the label is `P(胡牌)` and the repository name is grandfathered in the claims gate. Remote CI and browser checks are not locally certified. **Merging this PR does not turn the slow suite green**: the pre-existing `test_calibration_wiring` failure from `ba7fb20` stays red until its own issue is resolved, and it will surface on `main` the first night after this line of work lands there.
