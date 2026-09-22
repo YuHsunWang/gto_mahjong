@@ -17,6 +17,18 @@ CLAIM_FILES = [
     ROOT / "taimahjong" / "trainer.py",
 ]
 
+# The repository slug `gto_mahjong` predates this gate and is grandfathered by
+# owner decision (2026-09-23, audit finding BUG-016). It is a proper noun, not a
+# product claim, so it may appear -- in a clone URL, say -- while "gto" as a
+# claim stays barred everywhere else. Keep the exemption to this exact token.
+GRANDFATHERED_NAMES = ("gto_mahjong",)
+
+
+def _without_grandfathered_names(text: str) -> str:
+    for name in GRANDFATHERED_NAMES:
+        text = text.replace(name, "")
+    return text
+
 
 def test_ui_readmes_and_metadata_do_not_make_unqualified_solver_claims():
     # These words are barred because they are not true yet, not because they are
@@ -35,7 +47,7 @@ def test_ui_readmes_and_metadata_do_not_make_unqualified_solver_claims():
     # "GTO-solved in the <=N-tile endgame", not a bare "GTO trainer".
     # docs/equilibrium-plan.md records what has and has not been done.
     combined = "\n".join(path.read_text(encoding="utf-8") for path in CLAIM_FILES)
-    lowered = combined.lower()
+    lowered = _without_grandfathered_names(combined.lower())
     assert "gto" not in lowered
     assert "理論最佳" not in combined
     assert "最佳解" not in combined
@@ -43,6 +55,16 @@ def test_ui_readmes_and_metadata_do_not_make_unqualified_solver_claims():
     assert "所有的機率" not in combined
     assert "all probabilities" not in lowered
     assert "theoretically best" not in lowered
+
+
+def test_grandfathered_repository_name_is_the_only_gto_exemption():
+    # The exemption must let the repository's own name through without opening
+    # a path for an actual GTO claim. If this ever passes a claim, the gate above
+    # has silently stopped guarding what it was written to guard.
+    clone_line = "git clone git@github.com:yuhsunwang/gto_mahjong.git"
+    assert "gto" not in _without_grandfathered_names(clone_line)
+    assert "gto" in _without_grandfathered_names("gto_mahjong is a gto trainer")
+    assert "gto" in _without_grandfathered_names("gto-solved endgame")
 
 
 def test_zh_and_en_methodology_cards_disclose_the_same_four_boundaries():
