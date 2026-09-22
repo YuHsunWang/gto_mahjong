@@ -97,7 +97,7 @@ function homeScreen(root) {
 
   const tools = document.createElement('div');
   tools.className = 'tools-row';
-  [['#/analyze', '打牌分析', '任意局面 EV 排名'], ['#/score', '算台', '和牌台數計算']].forEach(([hash, name, desc]) => {
+  [['#/analyze', '打牌分析', '任意局面 EV 排名'], ['#/score', '算台', '胡牌台數計算']].forEach(([hash, name, desc]) => {
     const card = document.createElement('a');
     card.className = 'card';
     card.href = hash;

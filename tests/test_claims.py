@@ -86,6 +86,15 @@ def test_readme_python_badges_match_declared_floor():
         assert f"python-{floor}%2B" in text
 
 
+def test_ui_spells_a_win_the_taiwanese_way():
+    # The owner ruled twice in 2026-09 that a win is 胡, not 和: first for the
+    # P(胡牌) label, then for every remaining 和牌 string. b6e7952 made the same
+    # call for 榮和 -> 胡牌. The bare character 和 is left alone because it also
+    # means "and" in ordinary prose, so only the compound is barred.
+    for path in sorted((ROOT / "server" / "static" / "js").glob("*.js")):
+        assert "和牌" not in path.read_text(encoding="utf-8"), path.name
+
+
 def test_p_win_is_not_labeled_as_self_draw():
     feedback = (ROOT / "server" / "static" / "js" / "feedback.js").read_text(encoding="utf-8")
     main = (ROOT / "server" / "static" / "js" / "main.js").read_text(encoding="utf-8")
