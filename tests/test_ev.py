@@ -438,6 +438,18 @@ def test_remaining_draws_uses_live_wall_and_four_seats():
     assert remaining_draws(POST_DRAW, parse_tiles("9999m")) == 13  # four public tiles also left the wall
 
 
+@pytest.mark.parametrize("kongs", range(5))
+def test_derived_live_wall_retires_one_tile_per_declared_kong(kongs):
+    from taimahjong.selfplay import KONG_DEAD_WALL_BACKFILL_TILES
+
+    expected_live_wall = 136 - FLOWERLESS_DEAD_WALL_TILES - 17 - 3 * 16 - KONG_DEAD_WALL_BACKFILL_TILES * kongs
+    assert remaining_draws(POST_DRAW, (0,) * 34, kongs=kongs) == expected_live_wall // 4
+
+
+def test_explicit_live_wall_does_not_double_count_kongs():
+    assert remaining_draws(POST_DRAW, wall_remaining=51, kongs=4) == 12
+
+
 @pytest.mark.parametrize("live_wall", [55, 7])
 def test_automatic_horizon_stays_in_live_wall_and_preserves_actor_turn_order(live_wall):
     """Post-discard play starts downstream, so the actor gets floor(live/4) draws.

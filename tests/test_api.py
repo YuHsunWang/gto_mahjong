@@ -296,6 +296,17 @@ def test_ev_rank_auto_turns_include_hidden_opponent_hands(client):
     assert response.json()["turns"] == 14  # floor((136 - 14 dead - 17 own - 48 opponents) / 4)
 
 
+def test_ev_rank_auto_turns_account_for_declared_kongs(monkeypatch):
+    from taimahjong.analysis import AnalysisContext
+
+    monkeypatch.setattr(api, "ev_rank", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(api, "_analysis_context", lambda _request: AnalysisContext())
+    base = {"hand": "123m123p123s11122233z", "sims": 1}
+    no_kongs = api.ev_rank_endpoint(api.EvRankRequest(**base))
+    four_kongs = api.ev_rank_endpoint(api.EvRankRequest(**base, kongs=4))
+    assert four_kongs["turns"] == no_kongs["turns"] - 1
+
+
 def test_ev_rank_open_meld_does_not_shorten_the_live_wall(client):
     base = {
         "hand": "123m123p123s11122233z",

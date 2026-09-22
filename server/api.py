@@ -651,6 +651,7 @@ class EvRankRequest(SchemeRequest):
     visible: str = ""
     turns: int = Field(default=0, ge=0, le=24)  # 0 = derive from wall_remaining or the visible pool
     wall_remaining: int | None = Field(default=None, ge=0, le=136)
+    kongs: int = Field(default=0, ge=0, le=16)
     sims: int = Field(default=400, ge=1, le=5_000)
     seed: int = 7
     exhaustive: bool = False
@@ -721,7 +722,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
         elif request.wall_remaining is not None:
             turns = remaining_draws(counts, accounting, wall_remaining=request.wall_remaining)
         else:
-            turns = remaining_draws(counts, accounting)
+            turns = remaining_draws(counts, accounting, kongs=request.kongs)
         entries = ev_rank(
             counts, opponents, visible,
             turns=turns, sims=request.sims, seed=request.seed,

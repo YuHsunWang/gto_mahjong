@@ -237,6 +237,7 @@ def remaining_draws(
     accounting: TileAccounting | tuple[int, ...] | list[int] | None = None,
     *,
     wall_remaining: int | None = None,
+    kongs: int = 0,
 ) -> int:
     """Approximate this seat's remaining draws from the live-wall tile count.
 
@@ -247,6 +248,8 @@ def remaining_draws(
     stay inside those holdings and do not shorten the wall a second time.
     """
     hand = validate_counts(own_hand)
+    if not isinstance(kongs, int) or isinstance(kongs, bool) or kongs < 0:
+        raise ValueError("kongs must be a non-negative integer")
     if wall_remaining is not None:
         if not isinstance(wall_remaining, int) or isinstance(wall_remaining, bool) or wall_remaining < 0:
             raise ValueError("wall_remaining must be a non-negative integer")
@@ -261,7 +264,20 @@ def remaining_draws(
         tiles = TileAccounting(accounting)
     if any(hand[tile] + tiles.visible[tile] > 4 for tile in range(34)):
         raise ValueError("hand and observable tiles cannot contain more than four copies of a tile kind")
-    live_wall = 136 - FLOWERLESS_DEAD_WALL_TILES - sum(hand) - 3 * 16 - sum(tiles.out_of_hands)
+    # Local import avoids the selfplay -> ev module initialization cycle.
+    from .selfplay import KONG_DEAD_WALL_BACKFILL_TILES
+
+    # Under 「一槓一」 each declared kong moves one additional tile from the
+    # live wall into the retained tail. An explicit wall count already reflects
+    # that engine mutation and therefore does not subtract it again.
+    live_wall = (
+        136
+        - FLOWERLESS_DEAD_WALL_TILES
+        - sum(hand)
+        - 3 * 16
+        - sum(tiles.out_of_hands)
+        - KONG_DEAD_WALL_BACKFILL_TILES * kongs
+    )
     return max(0, floor(live_wall / 4))
 
 
