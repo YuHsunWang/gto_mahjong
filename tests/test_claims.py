@@ -97,3 +97,19 @@ def test_tile_face_module_exports_cover_imports_and_no_generator_overwrites_it()
 
     for script in (ROOT / "scripts").glob("*.py"):
         assert "server/static/js/tile-faces.js" not in script.read_text(encoding="utf-8")
+
+
+def test_stats_persistence_failure_is_contained():
+    stats = (ROOT / "server" / "static" / "js" / "stats.js").read_text(encoding="utf-8")
+    save = re.search(r"function save\(data\) \{(.*?)\n\}", stats, re.DOTALL)
+    assert save is not None
+    assert "try {" in save.group(1)
+    assert "localStorage.setItem" in save.group(1)
+    assert "catch" in save.group(1)
+
+
+def test_quiz_async_responses_are_guarded_by_request_identity():
+    quiz = (ROOT / "server" / "static" / "js" / "quiz.js").read_text(encoding="utf-8")
+    assert "let requestId = 0;" in quiz
+    assert quiz.count("const ownRequestId = ++requestId;") == 2
+    assert quiz.count("if (ownRequestId !== requestId) return;") == 4
