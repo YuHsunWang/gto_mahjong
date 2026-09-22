@@ -405,6 +405,21 @@ Recommendations only; statuses below are from AUDIT.md, not live service verific
 | BUG-013 | DEV-119 (Done), DEV-122 (Backlog) | Attach default/legacy compatibility evidence to DEV-119; keep DEV-122 Backlog because its calibrated-RON approximation is unrelated and unchanged. |
 | BUG-016 | DEV-138 (Backlog) | Leave Backlog and add a comment. The owner grandfathered the repository name (BUG-016 fixed in PR #6), but DEV-138 asks a different question — whether a solved equilibrium lifts the gate — which that ruling does not answer. |
 
+**Executed 2026-09-23, on the owner's instruction.** Live statuses were read back from Linear first and matched the table's assumptions.
+
+| Issue | Action taken |
+|---|---|
+| DEV-117 | Backlog -> **Review**; comment maps all three instances, records the `P(胡牌)` / `胡牌值` ruling, and flags that there are still no executable JS tests. |
+| DEV-182 | Backlog -> **Review**; comment checks each acceptance line — all three met for fix 2, after `eb0c2df` made the refusal name its alternative. |
+| DEV-181 | Backlog -> **Review**; comment marks two acceptance lines as only partly met: no dedicated revealed-kong `TileAccounting` test, and no full old->new list of changed expected values. |
+| DEV-205 | Stays Done; comment on the README floor (BUG-008) and the CI trigger (BUG-005). |
+| DEV-149, DEV-151 | Stay Done; comment that PR #4 was merged over a stale red check with an untested merge commit, and that the merged tree was later verified green. |
+| DEV-119 | Stays Done; comment on the retired 7-bin library default (BUG-013). |
+| DEV-138 | Stays Backlog; comment that grandfathering the repository name does not answer its own question. |
+| DEV-207 | **New** — the pre-existing slow failure bisected to `ba7fb20`, related to DEV-180. |
+
+The drafts below were **not** filed: the owner's instruction covered status updates, and these are new issues for bugs PR #6 already fixes.
+
 For confirmed findings without an issue, draft the following (do not file):
 
 - **BUG-002: Unify post-draw EV horizons**
@@ -495,7 +510,7 @@ For confirmed findings without an issue, draft the following (do not file):
   - Root cause: UNVERIFIED. Either the quiz half of the test compares one discard across two differently-screened top-k sets — the brittleness the test's own comment already removed from its stateless half — or the calibrated risk model is genuinely non-monotone in this position.
   - Implementation: first decide which of the two it is. If brittle: make the quiz half compare over a well-defined candidate set, the way the stateless half does. If real: fix the model, not the test.
   - Test coverage: the existing test is the regression test once the cause is settled. Separately, AUDIT.md BUG-005's CI trigger fix means slow tests on `feat/**` would still not run on push — only the fast job does — so this class of failure stays invisible until the slow job also runs off `main`.
-  - Linear mapping: related to **DEV-180** (Done). Recommend a **new issue** rather than reopening DEV-180: DEV-180's own acceptance (the flowerless 7-dun rule) holds; what broke is a downstream test it never ran.
+  - Linear mapping: **filed as DEV-207** on 2026-09-23, related to DEV-180 (Done). A new issue rather than a reopening of DEV-180: DEV-180's own acceptance (the flowerless 7-dun rule) holds; what broke is a downstream test it never ran.
 
 ## Pull request description
 
