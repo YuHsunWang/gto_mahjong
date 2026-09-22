@@ -243,6 +243,64 @@ def test_trainer_unknown_session_is_404(client):
     assert client.get("/api/trainer/nope").status_code == 404
 
 
+def test_trainer_session_eviction_uses_recent_access(monkeypatch):
+    monkeypatch.setattr(api, "_MAX_SESSIONS", 2)
+    api._SESSIONS.clear()
+    first_session, second_session, third_session = object(), object(), object()
+    api._store_session("first", first_session)
+    api._store_session("second", second_session)
+    assert api._get_session("first") is first_session
+
+    api._store_session("third", third_session)
+
+    assert tuple(api._SESSIONS) == ("first", "third")
+
+
+def test_trainer_send_failure_does_not_commit_score_or_feedback(monkeypatch):
+    from taimahjong.analysis import AnalysisContext
+
+    class FakeDecision:
+        position = object()
+
+    class Result:
+        verdict = "best"
+        ev_loss = 0.0
+
+    current = FakeDecision()
+
+    def failing_generator():
+        yield current
+        raise RuntimeError("injected send failure")
+
+    generator = failing_generator()
+    assert next(generator) is current
+    session = api._TrainerSession(1, 0, 0, generator, current, AnalysisContext())
+    api._SESSIONS.clear()
+    api._store_session("session", session)
+    monkeypatch.setattr(api, "TrainerDecision", FakeDecision)
+    monkeypatch.setattr(api, "grade", lambda *_args: Result())
+    monkeypatch.setattr(api, "_grade_payload", lambda _result: {})
+    request = api.TrainerActRequest(step=0, action="discard", tile=0)
+
+    with pytest.raises(api.HTTPException) as caught:
+        api.trainer_act("session", request)
+
+    assert caught.value.status_code == 422
+    assert "injected send failure" in caught.value.detail
+    assert session.step == 0
+    assert session.score["decisions"] == 0
+    assert session.feedback is None
+    assert session.current is current
+    with pytest.raises(api.HTTPException) as retry:
+        api.trainer_act("session", request)
+    assert retry.value.status_code == 404
+    with pytest.raises(api.HTTPException) as get:
+        api.trainer_get("session")
+    assert get.value.status_code == 404
+    assert session.score["decisions"] == 0
+
+
+
 def test_ev_rank_endpoint_with_opponent(client):
     response = client.post("/api/ev/rank", json={
         "hand": "123m123p123s11122233z",
@@ -376,6 +434,16 @@ def test_api_rejects_unknown_request_fields(client, path, payload):
     response = client.post(path, json={**payload, "unexpected": True})
 
     assert response.status_code == 422
+
+
+def test_ev_rank_rejects_unknown_nested_opponent_fields():
+    with pytest.raises(ValueError, match="unexpected"):
+        api.EvRankRequest(
+            hand="123m123p123s11122233z",
+            opponents=[{"river": "9m", "unexpected": True}],
+            turns=1,
+            sims=1,
+        )
 
 
 def test_score_endpoint_matches_engine(client):

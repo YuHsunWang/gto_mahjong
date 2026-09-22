@@ -421,12 +421,21 @@ class _TrainerSession:
     current: Any  # TrainerDecision | TrainerKongDecision | TrainerCallDecision | TrainerOutcome
     analysis: AnalysisContext
     step: int = 0
+    failed: bool = False
     score: dict[str, float] = field(default_factory=lambda: {"decisions": 0, "best": 0, "loss": 0.0})
     feedback: dict[str, Any] | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 _SESSIONS: OrderedDict[str, _TrainerSession] = OrderedDict()
+_SESSIONS_LOCK = threading.Lock()
+
+
+def _store_session(session_id: str, session: _TrainerSession) -> None:
+    with _SESSIONS_LOCK:
+        _SESSIONS[session_id] = session
+        while len(_SESSIONS) > _MAX_SESSIONS:
+            _SESSIONS.popitem(last=False)
 
 
 class TrainerNewRequest(SchemeRequest):
@@ -484,6 +493,7 @@ def _decision_payload(item: Any) -> dict[str, Any]:
 
 
 def _session_payload(session_id: str, session: _TrainerSession) -> dict[str, Any]:
+    _check_session(session)
     return {
         "session_id": session_id,
         "step": session.step,
@@ -498,10 +508,12 @@ def _session_payload(session_id: str, session: _TrainerSession) -> dict[str, Any
 
 
 def _get_session(session_id: str) -> _TrainerSession:
-    session = _SESSIONS.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="unknown trainer session")
-    return session
+    with _SESSIONS_LOCK:
+        session = _SESSIONS.get(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="unknown trainer session")
+        _SESSIONS.move_to_end(session_id)
+        return session
 
 
 @app.post("/api/trainer/new")
@@ -518,9 +530,7 @@ def trainer_new(request: TrainerNewRequest) -> dict[str, Any]:
         seed, request.human_seat, request.dealer_streak, generator, first, analysis,
     )
     session_id = uuid.uuid4().hex
-    _SESSIONS[session_id] = session
-    while len(_SESSIONS) > _MAX_SESSIONS:
-        _SESSIONS.popitem(last=False)
+    _store_session(session_id, session)
     return _session_payload(session_id, session)
 
 
@@ -546,10 +556,25 @@ def _validate_option(options, option: int | None) -> int | None:
     return option
 
 
+def _check_session(session: _TrainerSession) -> None:
+    if session.failed:
+        raise HTTPException(status_code=404, detail="trainer session failed; start a new hand")
+
+
+def _advance_session(session: _TrainerSession, choice):
+    try:
+        return session.generator.send(choice)
+    except Exception:
+        # A generator that raises is closed; retrying cannot restore its state.
+        session.failed = True
+        raise
+
+
 @app.post("/api/trainer/{session_id}/act")
 def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
     session = _get_session(session_id)
     with session.lock:
+        _check_session(session)
         if request.step != session.step:
             raise HTTPException(status_code=409, detail=f"stale step {request.step}, session is at {session.step}")
         item = session.current
@@ -570,17 +595,15 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
             # grade() validates the tile before anything is sent into the
             # generator — a bad send would terminate the game generator.
             result = _engine(grade, item.position, request.tile, scheme, analysis)
-            _record(session, result.verdict, result.ev_loss)
-            session.feedback = {"kind": "discard", "chosen_tile": request.tile, **_grade_payload(result)}
-            session.current = session.generator.send(request.tile)
+            feedback = {"kind": "discard", "chosen_tile": request.tile, **_grade_payload(result)}
+            next_item = _engine(_advance_session, session, request.tile)
         elif isinstance(item, TrainerKongDecision):
             if request.action != "kong":
                 raise HTTPException(status_code=422, detail="current decision expects action=kong")
             choice = _validate_option(item.options, request.option)
             evaluation = evaluate_kong(item, scheme=scheme, analysis=analysis)
             result = evaluation.verdict_for(choice)
-            _record(session, result.verdict, result.ev_loss)
-            session.feedback = {
+            feedback = {
                 "kind": "kong",
                 "choice": choice,
                 "verdict": result.verdict,
@@ -593,15 +616,14 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
                 "pass_ev": evaluation.pass_ev,
                 "option_evs": list(evaluation.option_evs),
             }
-            session.current = session.generator.send(choice)
+            next_item = _engine(_advance_session, session, choice)
         elif isinstance(item, TrainerCallDecision):
             if request.action != "call":
                 raise HTTPException(status_code=422, detail="current decision expects action=call")
             choice = _validate_option(item.options, request.option)
             evaluation = evaluate_call(item, scheme=scheme, analysis=analysis)
             result = evaluation.verdict_for(choice)
-            _record(session, result.verdict, result.ev_loss)
-            session.feedback = {
+            feedback = {
                 "kind": "call",
                 "choice": choice,
                 "verdict": result.verdict,
@@ -614,10 +636,13 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
                 "pass_ev": evaluation.pass_ev,
                 "option_evs": list(evaluation.option_evs),
             }
-            session.current = session.generator.send(choice)
+            next_item = _engine(_advance_session, session, choice)
         else:  # pragma: no cover - the isinstance set above is exhaustive
             raise HTTPException(status_code=500, detail="unknown decision type")
 
+        session.current = next_item
+        _record(session, result.verdict, result.ev_loss)
+        session.feedback = feedback
         session.step += 1
         return _session_payload(session_id, session)
 
@@ -626,7 +651,7 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
 # Stateless analysis: EV ranking and hand scoring
 
 
-class EvOpponentRequest(BaseModel):
+class EvOpponentRequest(ApiRequest):
     river: str = ""
     melds: str = ""
     declared_at: int | None = None
