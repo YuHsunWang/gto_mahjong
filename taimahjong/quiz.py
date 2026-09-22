@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from functools import lru_cache
-from math import ceil
 from typing import Callable, TypeVar
 
 from .analysis import AnalysisContext, DEFAULT_ANALYSIS_CONTEXT
@@ -30,6 +29,7 @@ from .ev import (
     evaluate_discard,
     ev_rank,
     paired_delta_moments,
+    remaining_draws,
 )
 from .moments import SampleMoments
 from .scoring import DEFAULT_SCHEME, ScoringScheme, WinContext
@@ -350,7 +350,11 @@ def _position_from(snapshot: DecisionSnapshot, seed: int) -> QuizPosition:
         shanten=shanten(hand, len(snapshot.melds)),
         # Remaining draws from the actual live wall (one draw per four tiles),
         # not a turn-count proxy: this reflects who is close to running out.
-        draws_remaining=ceil(snapshot.wall_remaining / 4),
+        draws_remaining=remaining_draws(
+            hand,
+            public,
+            wall_remaining=snapshot.wall_remaining,
+        ),
         wall_remaining=snapshot.wall_remaining,
         candidate_ev_gap=0.0,
         dealer_streak=snapshot.dealer_streak,
