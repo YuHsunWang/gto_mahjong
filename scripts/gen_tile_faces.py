@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # Source font: Noto Serif TC (NotoSerifTC.ttf), SIL Open Font License 1.1.
 # Copyright 2012 Google Inc. All Rights Reserved.
-"""Generate self-contained Noto Serif TC SVG outlines for Mahjong tile faces.
+"""Generate legacy Noto Serif TC SVG-outline data for design reference.
 
 Usage:
     python3 scripts/gen_tile_faces.py
 
 The script reads ~/.local/share/fonts/NotoSerifTC.ttf (an OFL-licensed
 variable font), instantiates wght=700 when possible, and deterministically
-writes server/static/js/tile-faces.js.  It needs fontTools, installable with:
+writes scripts/tile-face-glyphs.js.  The runtime tile-faces.js module is
+hand-authored and has a different export contract.  This script needs
+fontTools, installable with:
     python3 -m pip install --user fonttools
 """
 
@@ -29,7 +31,7 @@ except ImportError:  # Older fontTools can still extract the default outlines.
 
 
 FONT_PATH = Path.home() / ".local/share/fonts/NotoSerifTC.ttf"
-OUTPUT_PATH = Path(__file__).resolve().parents[1] / "server/static/js/tile-faces.js"
+OUTPUT_PATH = Path(__file__).with_name("tile-face-glyphs.js")
 GLYPHS = "一二三四五六七八九萬東南西北中發"
 WEIGHT = 700
 

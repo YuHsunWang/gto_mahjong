@@ -85,6 +85,12 @@ PRODUCTION_HIDDEN_WORLD_STRATA = 800
 # Flowerless Taiwanese mahjong retains 7 dun rather than the 8-dun
 # with-flower dead wall.
 FLOWERLESS_DEAD_WALL_TILES = 14
+FOLD_PRINCIPLE_KEYS = (
+    "defensive_continuation_each_turn",
+    "genbutsu_first",
+    "minimum_conditional_loss_each_turn",
+    "preserve_safe_inventory",
+)
 
 
 @dataclass(frozen=True)
@@ -1768,12 +1774,7 @@ def ev_rank(
         action_plan=FoldActionPlan(
             fold_discard,
             safe_inventory,
-            (
-                "defensive_continuation_each_turn",
-                "genbutsu_first",
-                "minimum_conditional_loss_each_turn",
-                "preserve_safe_inventory",
-            ),
+            FOLD_PRINCIPLE_KEYS,
         ),
     ))
     return sorted(entries, key=lambda entry: (entry.is_fold, -entry.net_ev, entry.discard))

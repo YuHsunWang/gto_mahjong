@@ -1,6 +1,8 @@
 """MJ-005 product claims stay within the implemented model scope."""
 
 from pathlib import Path
+import re
+import tomllib
 
 
 ROOT = Path(__file__).parents[1]
@@ -52,3 +54,46 @@ def test_zh_and_en_methodology_cards_disclose_the_same_four_boundaries():
         assert phrase in en
     assert "模型工程 owner" in zh
     assert "model-engineering owner" in en
+
+
+def test_readme_python_badges_match_declared_floor():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    floor = project["project"]["requires-python"].removeprefix(">=")
+    for name in ("README.md", "README.en.md"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert f"python-{floor}%2B" in text
+
+
+def test_p_win_is_not_labeled_as_self_draw():
+    feedback = (ROOT / "server" / "static" / "js" / "feedback.js").read_text(encoding="utf-8")
+    main = (ROOT / "server" / "static" / "js" / "main.js").read_text(encoding="utf-8")
+    assert "P(自摸)" not in feedback
+    assert "P(自摸)" not in main
+
+
+def test_frontend_fold_principles_cover_backend_contract():
+    from taimahjong.ev import FOLD_PRINCIPLE_KEYS
+
+    feedback = (ROOT / "server" / "static" / "js" / "feedback.js").read_text(encoding="utf-8")
+    match = re.search(r"const FOLD_PRINCIPLES = \{(.*?)\n\};", feedback, re.DOTALL)
+    assert match is not None
+    frontend_keys = set(re.findall(r"^\s{2}([a-z_]+):", match.group(1), re.MULTILINE))
+    assert frontend_keys == set(FOLD_PRINCIPLE_KEYS)
+
+
+def test_tile_face_module_exports_cover_imports_and_no_generator_overwrites_it():
+    tile_faces = (ROOT / "server" / "static" / "js" / "tile-faces.js").read_text(encoding="utf-8")
+    tiles = (ROOT / "server" / "static" / "js" / "tiles.js").read_text(encoding="utf-8")
+    import_match = re.search(
+        r"import\s*\{(?P<names>.*?)\}\s*from\s*['\"]\./tile-faces\.js['\"]\s*;",
+        tiles,
+        re.DOTALL,
+    )
+    assert import_match is not None
+    imported = import_match.group("names")
+    imported_names = {name.strip() for name in imported.split(",")}
+    exported_names = set(re.findall(r"^export (?:const|function) (\w+)", tile_faces, re.MULTILINE))
+    assert imported_names <= exported_names
+
+    for script in (ROOT / "scripts").glob("*.py"):
+        assert "server/static/js/tile-faces.js" not in script.read_text(encoding="utf-8")

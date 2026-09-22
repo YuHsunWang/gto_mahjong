@@ -3,7 +3,7 @@
 # 台灣麻將 heuristic EV 訓練器
 
 [![tests](../../actions/workflows/tests.yml/badge.svg)](../../actions/workflows/tests.yml)
-[![python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
+[![python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **一局台灣十六張麻將，每一次打牌都用蒙地卡羅終局 rollout 打分，並在模型分不出高下時直說。**
@@ -63,12 +63,12 @@ uvicorn server.api:app
 
 ```bash
 python3 -m pip install -r requirements-dev.txt
-python3 -m pytest -q              # 269 個測試，約 2 分半
-python3 -m pytest -q -m slow      # 14 個窮舉 oracle 與大樣本統計測試，約 15 分鐘
+python3 -m pytest -q -m "not slow"  # 快速測試，約 3 分鐘
+python3 -m pytest -q -m slow        # 窮舉 oracle 與大樣本統計測試，約 15 分鐘
 ```
 
 慢的那批標成 `slow` 並從預設執行中排除——它們是暴力 oracle 全掃描與需要大量 trial 才有檢定力的
-統計測試，光是單一花色 shape 的窮舉比對就佔 7 分半。CI 每次 push 跑快的那批（Python 3.10 與
+統計測試，光是單一花色 shape 的窮舉比對就佔 7 分半。CI 每次 push 跑快的那批（Python 3.11 與
 3.13），慢的那批走每日排程。
 
 拆分的目的是縮短 push 當下的回饋時間，不是縮短總時數：兩批分開跑的總和其實比合併跑更久，因為
