@@ -13,8 +13,10 @@ BETA_PRIOR_ALPHA = 0.5
 BETA_PRIOR_BETA = 0.5
 TURN_BUCKETS = ("1-6", "7-12", "13+")
 RUN_BUCKETS = ("0", "1-2", "3+")
-DANGER_EDGES = (0.0, 1.0, 2.0, 4.0, 6.0, 9.0, 13.0)
-DANGER_BUCKETS = ("0-1", "1-2", "2-4", "4-6", "6-9", "9-13", "13+")
+LEGACY_DANGER_EDGES = (0.0, 1.0, 2.0, 4.0, 6.0, 9.0, 13.0)
+LEGACY_DANGER_BUCKETS = ("0-1", "1-2", "2-4", "4-6", "6-9", "9-13", "13+")
+DANGER_EDGES = LEGACY_DANGER_EDGES + (16.0,)
+DANGER_BUCKETS = LEGACY_DANGER_BUCKETS[:-1] + ("13-16", "16+")
 DANGER_REFERENCE = "per_opponent"
 DANGER_MODIFIERS = {
     "SUIT_VOID": SUIT_VOID,
@@ -218,9 +220,15 @@ def table_document(
     *,
     danger_buckets: tuple[str, ...] = DANGER_BUCKETS,
 ) -> dict:
+    metadata = dict(metadata or {})
+    if "danger_binning" not in metadata:
+        edges = LEGACY_DANGER_EDGES if danger_buckets == LEGACY_DANGER_BUCKETS else DANGER_EDGES
+        if danger_buckets not in (LEGACY_DANGER_BUCKETS, DANGER_BUCKETS):
+            raise ValueError("custom danger buckets require explicit danger_binning metadata")
+        metadata["danger_binning"] = {"edges": list(edges), "buckets": list(danger_buckets)}
     return {
         "version": 2,
-        "metadata": metadata or {},
+        "metadata": metadata,
         "counts": counts,
         "tables": derive_tables(counts, danger_buckets=danger_buckets),
     }
@@ -239,7 +247,7 @@ def write_merged_table(path: str | Path, new_counts: dict, metadata: dict | None
         if old.get("metadata", {}).get("danger_reference") != DANGER_REFERENCE:
             raise ValueError("existing calibration uses incompatible danger-reference semantics; rebuild from scratch")
         binning = old.get("metadata", {}).get("danger_binning", {})
-        buckets = tuple(binning.get("buckets", DANGER_BUCKETS))
+        buckets = tuple(binning.get("buckets", LEGACY_DANGER_BUCKETS))
         # Merging under a fixed bucket list would drop every cell the
         # destination declares and this batch does not name, so a split-tail
         # table silently loses 13-16 and 16+ to an append built on the older
@@ -279,8 +287,10 @@ class Calibration:
     def __init__(self, document: dict, min_cell_count: int = MIN_CELL_COUNT) -> None:
         self.document = document
         binning = document.get("metadata", {}).get("danger_binning", {})
-        self.danger_edges = tuple(binning.get("edges", DANGER_EDGES))
-        self.danger_buckets = tuple(binning.get("buckets", DANGER_BUCKETS))
+        # Metadata-free documents predate DEV-119 and use the legacy 7-bin
+        # layout; newly generated tables use the split tail defaults above.
+        self.danger_edges = tuple(binning.get("edges", LEGACY_DANGER_EDGES))
+        self.danger_buckets = tuple(binning.get("buckets", LEGACY_DANGER_BUCKETS))
         if (
             len(self.danger_edges) != len(self.danger_buckets)
             or tuple(sorted(self.danger_edges)) != self.danger_edges
@@ -326,7 +336,8 @@ class Calibration:
 
 def format_report(document: dict) -> str:
     """Return a compact human-readable report for the CLI."""
-    tables = document.get("tables", derive_tables(document["counts"]))
+    calibration = Calibration(document)
+    tables = calibration.tables
     lines = ["P(tenpai | melds, turn bucket, tsumogiri run bucket)", "melds  turn  run  probability  observations"]
     for melds in range(6):
         for turn in TURN_BUCKETS:
@@ -335,7 +346,7 @@ def format_report(document: dict) -> str:
                 value = "-" if cell["probability"] is None else f"{cell['probability']:.3f}"
                 lines.append(f"{melds:<5}  {turn:<4}  {run:<3}  {value:<11}  {cell['observations']}")
     lines.extend(["", "P(deal-in | M4a danger bucket; monotone calibrated)", "bucket  probability  raw deal-ins/observations"])
-    for bucket in DANGER_BUCKETS:
+    for bucket in calibration.danger_buckets:
         cell = tables["deal_in"][bucket]
         value = "-" if cell["probability"] is None else f"{cell['probability']:.4f}"
         lines.append(f"{bucket:<6}  {value:<11}  {cell['deal_ins']}/{cell['observations']}")
