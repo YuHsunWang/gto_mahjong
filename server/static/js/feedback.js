@@ -73,7 +73,7 @@ export function evTableEl(entries, {
   const table = document.createElement('table');
   table.className = 'evtable';
   const head = document.createElement('tr');
-  ['打牌', '估計 net EV', '95% CI', 'P(和牌)', 'P(流局)', 'E[和牌值]', '樣本'].forEach((label) => head.append(cell(label, 'th')));
+  ['打牌', '估計 net EV', '95% CI', 'P(胡牌)', 'P(流局)', 'E[和牌值]', '樣本'].forEach((label) => head.append(cell(label, 'th')));
   table.append(head);
   const resolvedRankingState = rankingState || topGap?.wording || 'clear';
   entries.filter((entry) => !entry.is_fold).forEach((entry) => {
@@ -213,7 +213,7 @@ export function modelScopeEl(metadata = null) {
     ? `底${metadata.scheme.base_units}／台${metadata.scheme.tai_units}`
     : '目前底台設定';
   el.textContent = `模型範圍：${scheme}；所有選項只以 terminal-rollout net EV 比較；`
-    + `P(和牌)、P(流局)與和牌值僅供解讀；${calibration}，不代表真人牌局。`;
+    + `P(胡牌)、P(流局)與和牌值僅供解讀；${calibration}，不代表真人牌局。`;
   return el;
 }
 
@@ -359,7 +359,7 @@ function optionGridEl(grade, chosenTile) {
       ['選項', faceText(entry.discard)],
       ['估計 net EV', fixed(entry.net_ev)],
       ['與點估計領先值差', fixed(pointLeader - entry.net_ev)],
-      ['P(和牌) / P(流局)', `${fixed(entry.p_win, 3)} / ${fixed(entry.p_draw, 3)}`],
+      ['P(胡牌) / P(流局)', `${fixed(entry.p_win, 3)} / ${fixed(entry.p_draw, 3)}`],
       ['樣本', String(entry.sample_count ?? '—')],
     ];
     lines.forEach(([name, value]) => {
