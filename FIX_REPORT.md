@@ -418,9 +418,24 @@ Recommendations only; statuses below are from AUDIT.md, not live service verific
 | DEV-138 | Stays Backlog; comment that grandfathering the repository name does not answer its own question. |
 | DEV-207 | **New** — the pre-existing slow failure bisected to `ba7fb20`, related to DEV-180. |
 
-The drafts below were **not** filed: the owner's instruction covered status updates, and these are new issues for bugs PR #6 already fixes.
+The drafts below were then **filed too**, on the owner's instruction, each in **Review** with a link to PR #6. The formulaic "Expected"/"Root cause" restatements were rewritten into readable issues; the substance is unchanged, except BUG-018, whose filed issue leads with the part of its reproduction that turned out to be wrong.
 
-For confirmed findings without an issue, draft the following (do not file):
+| Draft | Filed as | Priority |
+|---|---|---|
+| BUG-002 | DEV-208 | High |
+| BUG-003 | DEV-209 | High |
+| BUG-009 | DEV-210 | Medium |
+| BUG-010 | DEV-211 | Medium |
+| BUG-011 | DEV-212 | Medium |
+| BUG-012 | DEV-213 | Medium |
+| BUG-014 | DEV-214 | Low |
+| BUG-015 | DEV-215 | Low |
+| BUG-017 | DEV-216 | Low |
+| BUG-018 | DEV-217 | Low |
+
+Priorities map the audit's severities: P2 to High, P3 to Medium where a user can hit it and Low where it is drift or hygiene.
+
+The drafts, as the delegated round wrote them:
 
 - **BUG-002: Unify post-draw EV horizons**
   - Problem: Quiz used ceil for a post-draw seat whose next draw is four tiles away.
