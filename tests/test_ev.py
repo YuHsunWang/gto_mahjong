@@ -450,6 +450,19 @@ def test_explicit_live_wall_does_not_double_count_kongs():
     assert remaining_draws(POST_DRAW, wall_remaining=51, kongs=4) == 12
 
 
+def test_revealed_kong_costs_the_wall_only_its_backfill_tile():
+    """DEV-181: a declared kong shortens the live wall by its backfill tile only.
+
+    Its four tiles sit in the owner's 16-tile holding, so passing them through
+    ``TileAccounting.revealed_holdings`` must not deduct them from the wall as
+    well. 136 - 14 dead - 17 own - 48 opponents - 1 backfill = 56 -> 14 draws;
+    counting the kong's tiles too would give 52 -> 13.
+    """
+    kong_on_table = TileAccounting(revealed_holdings=parse_tiles("9999m"))
+    assert remaining_draws(POST_DRAW, kong_on_table, kongs=1) == 14
+    assert remaining_draws(POST_DRAW, kong_on_table, kongs=1) == remaining_draws(POST_DRAW, kongs=1)
+
+
 @pytest.mark.parametrize("live_wall", [55, 7])
 def test_automatic_horizon_stays_in_live_wall_and_preserves_actor_turn_order(live_wall):
     """Post-discard play starts downstream, so the actor gets floor(live/4) draws.
