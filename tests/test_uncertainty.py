@@ -37,13 +37,19 @@ def test_clustered_se_does_not_treat_reused_hidden_worlds_as_independent():
 
 
 def test_clustered_merge_refuses_to_silently_assume_independence():
-    """Chunk merging needs per-cluster totals, which this statistic does not retain."""
+    """Chunk merging needs per-cluster totals, which this statistic does not retain.
+
+    DEV-182 accepts a refusal only if it names what to do instead, so the
+    message must say why the merge is refused and point at the one-pass
+    constructor that does preserve clustering.
+    """
     left = ClusteredSampleMoments.from_clustered_values((0.0, 10.0), (0, 1))
     right = ClusteredSampleMoments.from_clustered_values((2.0, 8.0), (0, 1))
+    guidance = "per-cluster totals.*from_clustered_values"
 
-    with pytest.raises(NotImplementedError, match="per-cluster totals"):
+    with pytest.raises(NotImplementedError, match=guidance):
         left.merge(right)
-    with pytest.raises(NotImplementedError, match="per-cluster totals"):
+    with pytest.raises(NotImplementedError, match=guidance):
         SampleMoments().merge(left)
 
 
