@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>台灣十六張麻將模擬：數學推導</title>
+  <style>
+    :root { color-scheme: light; --ink:#18212f; --muted:#5d6878; --paper:#fffdf8; --card:#fff; --line:#dbe1e8; --accent:#087f5b; --soft:#e9f7f1; }
+    * { box-sizing: border-box; }
+    body { margin:0; color:var(--ink); background:var(--paper); font:17px/1.75 system-ui,-apple-system,"Noto Sans TC",sans-serif; }
+    main { width:min(980px,calc(100% - 32px)); margin:auto; padding:48px 0 80px; }
+    h1 { font-size:clamp(2rem,5vw,3.5rem); line-height:1.12; margin:.2em 0; }
+    h2 { margin-top:2.2em; border-bottom:2px solid var(--line); padding-bottom:.25em; }
+    h3 { margin-top:1.8em; }
+    p,li { max-width:78ch; }
+    .lead { color:var(--muted); font-size:1.14rem; }
+    .badge { display:inline-block; padding:.15rem .6rem; color:#fff; background:var(--accent); border-radius:999px; font-size:.82rem; font-weight:700; }
+    .formula { overflow:auto; margin:1rem 0; padding:1rem 1.2rem; background:#f5f7f9; border-left:4px solid var(--accent); font:1.05rem/1.65 ui-monospace,SFMono-Regular,Consolas,monospace; }
+    .note { padding:1rem 1.2rem; background:var(--soft); border-radius:10px; }
+    table { border-collapse:collapse; width:100%; background:var(--card); }
+    th,td { padding:.7rem; border:1px solid var(--line); text-align:left; vertical-align:top; }
+    th { background:#f1f4f6; }
+    code { background:#eef1f4; border-radius:4px; padding:.1em .3em; }
+    nav { display:flex; flex-wrap:wrap; gap:.45rem 1rem; margin:1.5rem 0 2.5rem; }
+    nav a { color:var(--accent); }
+    footer { margin-top:3rem; color:var(--muted); border-top:1px solid var(--line); padding-top:1rem; }
+  </style>
+</head>
+<body>
+<main>
+  <span class="badge">模型說明文件</span>
+  <h1>麻將對局模擬的數學推導</h1>
+  <p class="lead">把目前程式中的三種計算拆開：單人自摸率、四家終局 EV，以及候選切牌的不確定性。本文描述的是模型估計，不是真人牌桌的精準機率。</p>
+  <nav aria-label="章節導覽">
+    <a href="#notation">符號</a><a href="#single">單人模擬</a><a href="#terminal">四家終局</a>
+    <a href="#crn">共用亂數</a><a href="#uncertainty">不確定性</a><a href="#example">算例</a><a href="#limits">限制</a>
+  </nav>
+
+  <section id="notation">
+    <h2>1. 符號與樣本空間</h2>
+    <p>34 種牌以 <code>t = 0,…,33</code> 表示，每種最多四張。令自己的手牌張數向量為 <code>h</code>，已知可見牌為 <code>v</code>，則未知池中第 t 種牌的數量為：</p>
+    <div class="formula">rₜ = 4 − hₜ − vₜ，且未知牌總數 R = Σₜ rₜ。</div>
+    <p>一次 trial 不是獨立地重抽每巡的牌，而是先對這個有限未知池做隨機排列；因此摸牌是不放回抽樣，並自然保持每種牌最多四張。</p>
+  </section>
+
+  <section id="single">
+    <h2>2. 單人自摸率模擬</h2>
+    <p>對第 <code>i</code> 次 trial，定義首次聽牌巡目 <code>Tᵢ</code>，若模擬期內未聽則記為無限大；首次自摸巡目記為 <code>Wᵢ</code>。跑 N 次後，第 k 巡的累積估計為：</p>
+    <div class="formula">p̂<sub>tenpai</sub>(k) = (1/N) Σᵢ 𝟙[Tᵢ ≤ k]<br>p̂<sub>win</sub>(k) = (1/N) Σᵢ 𝟙[Wᵢ ≤ k]</div>
+    <p>每次摸到未胡的牌，模型先找令切牌後向聽數最小的候選；若有多張同分，再選擇下一摸能降低向聽數的剩餘實體張數最多者：</p>
+    <div class="formula">d* = arg max<sub>d ∈ Dmin</sub> Σₜ rₜ · 𝟙[s(h − e<sub>d</sub> + eₜ) &lt; s(h − e<sub>d</sub>)]</div>
+    <p>其中 <code>s(·)</code> 是向聽數，<code>Dmin</code> 是切後向聽數最低的牌集合，<code>eₜ</code> 表示增加一張 t。這就是有效牌（ukeire）數最大化。</p>
+    <aside class="note"><strong>範圍：</strong>這條曲線只回答「自己在第 k 巡以前聽牌／自摸的比例」，沒有對手先胡與放槍事件，因此不能直接當作完整對局勝率。</aside>
+  </section>
+
+  <section id="terminal">
+    <h2>3. 四家終局 EV</h2>
+    <p>對候選切牌 <code>a</code>，先抽樣隱藏世界 <code>H</code>（三家暗手）與後續亂數 <code>U</code>（牌牆順序、機率式榮和事件）。終局模擬器是一個映射：</p>
+    <div class="formula">Z(a,H,U) ∈ {自己自摸, 自己榮和, 對手榮和, 對手自摸, 流局}</div>
+    <p>家規結算函數把終局轉為四家點數變化 <code>Δ = (Δ₀,Δ₁,Δ₂,Δ₃)</code>，並滿足零和條件：</p>
+    <div class="formula">Σⱼ Δⱼ = 0。</div>
+    <p>若目前行動者座位為 q，單次樣本報酬就是 <code>Xᵢ(a)=Δq</code>。候選切牌的 net EV 是期望值的 Monte Carlo 樣本平均：</p>
+    <div class="formula">EV(a) = E[X(a)]<br>ÊV(a) = x̄(a) = (1/N) Σᵢ Xᵢ(a)</div>
+    <p>顯示用的進攻與風險欄位由同一批 signed payments 拆出：</p>
+    <div class="formula">AttackEV = (1/N) Σᵢ max(0,Xᵢ)<br>RiskEV = (1/N) Σᵢ max(0,−Xᵢ)<br>因此 x̄ = AttackEV − RiskEV。</div>
+    <h3>榮和機率</h3>
+    <p>每次切牌會對每位非切牌者計算危險分數 <code>g</code>，再以 self-play calibration 表得到 <code>p<sub>ron</sub>=C(g)</code>。抽一個均勻亂數 <code>u~Uniform(0,1)</code>，當 <code>u&lt;p<sub>ron</sub></code> 時產生該家的榮和 claim，再依家規解決一炮多響或優先序。</p>
+  </section>
+
+  <section id="crn">
+    <h2>4. 為什麼所有候選共用亂數</h2>
+    <p>比較切牌 a、b 時，模型讓兩者使用相同的 <code>(Hᵢ,Uᵢ)</code>，直接形成 paired difference：</p>
+    <div class="formula">Dᵢ = Xᵢ(a) − Xᵢ(b)<br>ÊV(a) − ÊV(b) = D̄。</div>
+    <p>差值估計的變異數為：</p>
+    <div class="formula">Var(D) = Var(X(a)) + Var(X(b)) − 2Cov(X(a),X(b))。</div>
+    <p>相似候選通常在同一牌牆下結果正相關，使 covariance 為正，因而降低差值雜訊。這不會使估計變成精確值，只是讓固定預算下的候選比較更穩定。</p>
+  </section>
+
+  <section id="uncertainty">
+    <h2>5. 標準誤與區間</h2>
+    <p>對 N 個終局 payment，樣本變異數及平均值標準誤為：</p>
+    <div class="formula">s² = [1/(N−1)] Σᵢ (Xᵢ−x̄)²<br>SE(x̄) = s/√N。</div>
+    <p>常態近似的描述性 95% 區間是：</p>
+    <div class="formula">x̄ ± 1.959964 · SE(x̄)。</div>
+    <p>比較前兩名時應使用 paired samples 的 <code>Dᵢ</code> 計算區間，而不是把兩個候選的邊際區間分開看。如果差值區間跨過 0，模型應回報 unresolved：目前樣本不足以分辨高下。</p>
+    <p>Production 模式會先以小額 pilot 樣本估計候選的上下界，淘汰顯著落後者，再把完整預算集中在仍可能領先的候選；防守候選會另外保留。</p>
+  </section>
+
+  <section id="example">
+    <h2>6. 簡化算例</h2>
+    <p>假設某候選跑 5 次，行動者的終局 payments 是 <code>[+8, 0, −4, +2, −6]</code>：</p>
+    <table>
+      <thead><tr><th>量</th><th>推導</th><th>結果</th></tr></thead>
+      <tbody>
+        <tr><td>Net EV</td><td>(8+0−4+2−6)/5</td><td>0</td></tr>
+        <tr><td>Attack EV</td><td>(8+0+0+2+0)/5</td><td>2.0</td></tr>
+        <tr><td>Risk EV</td><td>(0+0+4+0+6)/5</td><td>2.0</td></tr>
+        <tr><td>一致性</td><td>Attack EV − Risk EV</td><td>0 = Net EV</td></tr>
+      </tbody>
+    </table>
+    <p>這也說明為什麼不能只看胡牌率：兩個候選即使胡牌率相同，胡牌價值、放槍頻率與放槍價值仍可能令 net EV 完全不同。</p>
+  </section>
+
+  <section id="limits">
+    <h2>7. 推導成立的範圍</h2>
+    <ul>
+      <li>Monte Carlo 平均收斂的是<strong>目前模型</strong>定義的期望值；若隱藏手牌分布或 bot policy 與真人不同，增加樣本不會消除這種模型偏差。</li>
+      <li>RON lookup 由內建 bot self-play 校準，不代表真人牌譜。</li>
+      <li>Production EV 的未來狀態轉移未完整模擬吃、碰、槓、花牌、特殊牌型、過水與四家 best response。</li>
+      <li>流局 payment 目前為 0，未加入聽牌／未聽罰付。</li>
+      <li>95% 區間是抽樣不確定性的描述，不涵蓋規則選擇與 heuristic 假設造成的系統誤差。</li>
+    </ul>
+  </section>
+
+  <footer>對應實作：<code>taimahjong/simulate.py</code>、<code>taimahjong/ev.py</code>、<code>taimahjong/rollout.py</code>、<code>taimahjong/selfplay.py</code>。</footer>
+</main>
+</body>
+</html>
