@@ -316,9 +316,8 @@ def test_priced_ron_splits_the_world_instead_of_tossing_a_coin():
 
 
 def test_priced_ron_mass_survives_across_several_discards():
-    # Two seats priced at even odds on the opening discard: under 'nearest'
-    # only the upstream one can win, so the surviving mass is a quarter and it
-    # is the draw that collects it.
+    # Two mutually exclusive actual-winner probabilities exhaust the opening
+    # discard's mass.  Neither is discounted by a second claim arbitration.
     mixture = resolve_terminal_distribution(
         _claiming_players(),
         (),
@@ -333,15 +332,15 @@ def test_priced_ron_mass_survives_across_several_discards():
         ),
     )
 
-    assert mixture.probability("draw") == pytest.approx(0.25)
-    assert mixture.probability("opponent_ron") == pytest.approx(0.75)
+    assert mixture.probability("draw") == pytest.approx(0.0)
+    assert mixture.probability("opponent_ron") == pytest.approx(1.0)
     winners = {
         terminal.ron_winners: probability
         for probability, terminal in mixture.outcomes
         if terminal.ron_winners
     }
     assert winners[(1,)] == pytest.approx(0.5)
-    assert winners[(2,)] == pytest.approx(0.25)
+    assert winners[(2,)] == pytest.approx(0.5)
 
 
 def test_resolve_terminal_refuses_to_collapse_a_genuine_mixture():
@@ -360,36 +359,24 @@ def test_resolve_terminal_refuses_to_collapse_a_genuine_mixture():
         )
 
 
-@pytest.mark.parametrize(
-    "probabilities",
-    [
-        {1: 0.5, 2: 0.5, 3: 0.5},
-        {1: 0.2, 2: 0.9, 3: 0.0},
-        {1: 0.0, 2: 0.0, 3: 0.0},
-        {1: 1.0, 2: 0.4, 3: 0.7},
-        {2: 0.3},
-    ],
-)
-def test_nearest_fast_path_matches_the_general_enumeration(probabilities):
-    fast = _winner_distribution(probabilities, 0, DEFAULT_RULES)
-    slow = {}
-    for pattern in range(8):
-        probability = 1.0
-        claimed = set()
-        for index, seat in enumerate((1, 2, 3)):
-            seat_probability = probabilities.get(seat, 0.0)
-            if pattern >> index & 1:
-                probability *= seat_probability
-                claimed.add(seat)
-            else:
-                probability *= 1.0 - seat_probability
-        if not probability:
-            continue
-        winners = next(
-            ((seat,) for seat in (1, 2, 3) if seat in claimed), (),
-        )
-        slow[winners] = slow.get(winners, 0.0) + probability
+def test_winner_distribution_uses_mutually_exclusive_calibration_directly():
+    distribution = _winner_distribution(
+        {1: 0.2, 2: 0.2}, 0, DEFAULT_RULES,
+    )
 
-    assert fast.keys() == slow.keys()
-    for winners, probability in fast.items():
-        assert probability == pytest.approx(slow[winners])
+    assert distribution == pytest.approx({(1,): 0.2, (2,): 0.2, (): 0.6})
+    assert sum(distribution.values()) == pytest.approx(1.0)
+
+
+def test_winner_distribution_normalizes_independent_rows_above_one():
+    distribution = _winner_distribution(
+        {1: 0.8, 2: 0.4, 3: 0.3}, 0, DEFAULT_RULES,
+    )
+
+    assert distribution == pytest.approx({
+        (1,): 0.8 / 1.5,
+        (2,): 0.4 / 1.5,
+        (3,): 0.3 / 1.5,
+    })
+    assert distribution.get((), 0.0) == 0.0
+    assert sum(distribution.values()) == pytest.approx(1.0)

@@ -54,6 +54,7 @@ from taimahjong.ev import (
     paired_delta_moments,
     remaining_draws,
 )
+from taimahjong.mistake_label import label_mistake
 from taimahjong.quiz import (
     EV_EFFECT_SIZE_MIN,
     QuizGrade,
@@ -264,6 +265,22 @@ def _top_gap_payload(entries: tuple[EVRankEntry, ...] | list[EVRankEntry]) -> di
     return payload
 
 
+def _mistake_label_payload(result: QuizGrade) -> dict[str, Any] | None:
+    """The optional Jev concept label, or ``None`` when it was not asked for.
+
+    ``None`` is the offline default: without ``TYPESAFE_API_KEY`` the client
+    renders the same feedback it rendered before labels existed.
+    """
+    label = label_mistake(result)
+    if label is None:
+        return None
+    return {
+        "label": label.label,
+        "confidence": label.confidence,
+        "probabilities": label.probabilities,
+    }
+
+
 def _grade_payload(result: QuizGrade) -> dict[str, Any]:
     return {
         "verdict": result.verdict,
@@ -284,6 +301,7 @@ def _grade_payload(result: QuizGrade) -> dict[str, Any]:
         ),
         "top1_vs_top2": _top_gap_payload(result.ranked),
         "explain": explain(result),
+        "mistake_label": _mistake_label_payload(result),
     }
 
 

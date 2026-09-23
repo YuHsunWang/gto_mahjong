@@ -25,7 +25,12 @@ from taimahjong.reference_ev import (
     representative_reference_cases,
     standard_small_wall_state,
 )
-from taimahjong.rollout import CalibratedRonClaim, resolve_terminal
+from taimahjong.rollout import (
+    CalibratedRonClaim,
+    _calibrated_claim_probabilities,
+    _winner_distribution,
+    resolve_terminal,
+)
 from taimahjong.scoring import (
     EARTHLY_TAI, HEAVENLY_TAI, SCHEME_3_1, SCHEME_5_2, WinContext, score_hand,
 )
@@ -155,6 +160,45 @@ def test_calibrated_ron_value_redeterminizes_non_tenpai_to_a_physical_win():
     assert score_hand(completed, (), WinContext(winning_tile)).value_units >= 4
 
 
+def test_calibrated_ron_conditions_on_fixed_hands_and_keeps_actor_physical():
+    class FixedCalibration:
+        def deal_in_probability(self, _danger_score):
+            return 0.2
+
+    waiting = parse_tiles("123m123p123s1112223z")
+    winning = parse_tiles("123456m123p123s333z9m")
+    winning_tile = _tile("9m")
+    players = [Player("attack", list(waiting)) for _ in range(4)]
+    players[2].hand = list(winning)
+    claims = ev._calibrated_ron(
+        FixedCalibration(), 0, (None, None, None, None),
+    )
+
+    probabilities, _ = _calibrated_claim_probabilities(
+        players, 1, winning_tile, 0, claims,
+    )
+    distribution = _winner_distribution(probabilities, 1, ev.DEFAULT_RULES)
+
+    completed_actor = list(players[0].hand)
+    completed_actor[winning_tile] += 1
+    assert ev._production_shanten(tuple(completed_actor), 0) == 0
+    assert probabilities == {2: 0.2, 0: 0.0}
+    assert distribution == pytest.approx({(2,): 0.2, (): 0.8})
+    assert sum(distribution.values()) == pytest.approx(1.0)
+
+    players[0].hand = list(winning)
+    players[2].hand = list(waiting)
+    probabilities, _ = _calibrated_claim_probabilities(
+        players, 1, winning_tile, 0, claims,
+    )
+    distribution = _winner_distribution(probabilities, 1, ev.DEFAULT_RULES)
+
+    assert probabilities == {0: 1.0}
+    assert distribution == {(0,): 1.0}
+    assert distribution.get((), 0.0) == 0.0
+    assert sum(distribution.values()) == pytest.approx(1.0)
+
+
 def test_immediate_actor_deal_in_is_a_negative_terminal_payment():
     class CalibrationMustNotRun:
         def deal_in_probability(self, _danger_score):
@@ -239,10 +283,9 @@ def test_determinized_rollout_has_physical_risk_without_calibration():
     )
 
     assert any(entry.risk_ev > 0.0 for entry in uncalibrated)
-    assert all(entry.risk_ev > 0.0 for entry in calibrated)
-    assert sum(entry.risk_ev for entry in calibrated) > sum(
+    assert [entry.risk_ev for entry in calibrated] == [
         entry.risk_ev for entry in uncalibrated
-    )
+    ]
     assert all(
         entry.net_ev == entry.attack_ev - entry.risk_ev
         for entry in calibrated
@@ -271,7 +314,7 @@ def test_calibrated_ron_is_one_zero_sum_terminal_payment():
     assert terminal.ron_winners == (1,)
 
 
-def test_calibrated_ron_can_pay_the_actor_by_the_same_marginal_channel():
+def test_calibrated_ron_cannot_override_the_actors_physical_hand():
     players = [Player("attack") for _ in range(4)]
     players[0].hand = list(parse_tiles("147m147p147s1234567z"))
     players[1].hand = list(parse_tiles("147m147p147s1234567z"))
@@ -288,9 +331,9 @@ def test_calibrated_ron_can_pay_the_actor_by_the_same_marginal_channel():
         ),
     )
 
-    assert terminal.kind == "self_ron"
-    assert terminal.deltas == (7, -7, 0, 0)
-    assert terminal.ron_winners == (0,)
+    assert terminal.kind == "draw"
+    assert terminal.deltas == (0, 0, 0, 0)
+    assert terminal.ron_winners == ()
 
 
 def test_calibrated_push_records_opening_discard_before_continuation():
