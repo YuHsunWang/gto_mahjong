@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from hashlib import sha256
+import json
+import logging
 from pathlib import Path
 
 from .calibration import Calibration
 from .config import DEFAULT_GAME_CONFIG, GameConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -61,4 +66,9 @@ class CalibrationProvider:
             return HEURISTIC_FALLBACK
         content = self.path.read_bytes()
         calibration_id = f"sha256:{sha256(content).hexdigest()}"
-        return CalibrationContext(calibration_id, Calibration.from_path(self.path))
+        try:
+            calibration = Calibration(json.loads(content))
+        except (ValueError, KeyError, TypeError, AttributeError) as error:
+            logger.warning("ignoring unusable calibration table %s: %s", self.path, error)
+            return HEURISTIC_FALLBACK
+        return CalibrationContext(calibration_id, calibration)

@@ -5,12 +5,44 @@ import random
 
 import pytest
 
+from taimahjong.scoring import SCHEME_3_1, SCHEME_5_2, WinContext, score_hand
+from taimahjong.shanten import shanten
 from taimahjong.simulate import _greedy_discard, win_probability, winning_trials
 from taimahjong.tiles import format_tiles, parse_tiles
 from taimahjong.ukeire import discard_analysis
 
 
 TENPAI_HAND = parse_tiles("123m123p123s1112223z")
+
+
+def _unweighted_reference_discard(
+    current: tuple[int, ...], remaining_counts: tuple[int, ...], melds_declared: int,
+) -> tuple[int, int]:
+    """Reproduce the pre-DEV-157 discard rule for degeneracy checks."""
+    candidates = []
+    best_shanten = 11
+    for tile, count in enumerate(current):
+        if not count:
+            continue
+        after = list(current)
+        after[tile] -= 1
+        after_shanten = shanten(tuple(after), melds_declared)
+        if after_shanten < best_shanten:
+            best_shanten = after_shanten
+            candidates = [(tile, tuple(after))]
+        elif after_shanten == best_shanten:
+            candidates.append((tile, tuple(after)))
+
+    ranked = []
+    for tile, after in candidates:
+        accepted = 0
+        for draw, copies in enumerate(remaining_counts):
+            completed = list(after)
+            completed[draw] += 1
+            if copies > 0 and shanten(tuple(completed), melds_declared) < best_shanten:
+                accepted += copies
+        ranked.append((-accepted, tile))
+    return min(ranked)[1], best_shanten
 
 
 def _stand_pat_visible() -> tuple[int, ...]:
@@ -99,6 +131,78 @@ def test_dynamic_remaining_counts_resolve_review_seed_policy_divergence():
         reduced[discard] -= 1
         current = tuple(reduced)
         prior_discards.append(discard)
+
+
+def test_value_weighting_degenerates_to_ukeire_for_none_and_constant_tai():
+    rng = random.Random(157)
+    wall = [tile for tile in range(34) for _ in range(4)]
+
+    def constant_tai(_hand, _winning_tile):
+        return 4
+
+    for _ in range(200):
+        rng.shuffle(wall)
+        current = tuple(wall[:17].count(tile) for tile in range(34))
+        remaining = tuple(rng.randint(0, 4 - count) for count in current)
+        expected = _unweighted_reference_discard(current, remaining, 0)
+        assert _greedy_discard(current, remaining, 0) == expected
+        assert _greedy_discard(current, remaining, 0, SCHEME_3_1, constant_tai) == expected
+        assert _greedy_discard(current, remaining, 0, SCHEME_5_2, constant_tai) == expected
+
+
+def test_value_weighting_prefers_narrow_high_tai_wait_as_ratio_increases():
+    current = parse_tiles("33345777m333667778s")
+    remaining = (
+        2, 4, 0, 2, 1, 3, 1, 2, 4, 4, 1, 1, 0, 3, 3, 2, 4,
+        2, 2, 0, 1, 4, 3, 0, 0, 3, 2, 4, 2, 1, 2, 3, 2, 1,
+    )
+
+    def accepted_values(discard):
+        after = list(current)
+        after[discard] -= 1
+        values = []
+        for draw, copies in enumerate(remaining):
+            completed = list(after)
+            completed[draw] += 1
+            if copies and shanten(tuple(completed)) == -1:
+                result = score_hand(
+                    tuple(completed),
+                    context=WinContext(winning_tile=draw, self_draw=True),
+                )
+                values.append((copies, result))
+        return values
+
+    wide = accepted_values(24)  # discard 7s: six copies, all worth 2 tai
+    narrow = accepted_values(25)  # discard 8s: three copies worth 7 tai
+    assert (
+        sum(copies for copies, _ in wide),
+        {result.total_tai for _, result in wide},
+    ) == (6, {2})
+    assert (
+        sum(copies for copies, _ in narrow),
+        {result.total_tai for _, result in narrow},
+    ) == (3, {7})
+    assert sum(copies * result.value_in(SCHEME_3_1) for copies, result in wide) == 30
+    assert sum(copies * result.value_in(SCHEME_3_1) for copies, result in narrow) == 30
+    assert sum(copies * result.value_in(SCHEME_5_2) for copies, result in wide) == 54
+    assert sum(copies * result.value_in(SCHEME_5_2) for copies, result in narrow) == 57
+
+    _greedy_discard.cache_clear()
+    assert _greedy_discard(current, remaining, 0) == (24, 0)
+    assert _greedy_discard(current, remaining, 0, SCHEME_3_1) == (24, 0)
+    assert _greedy_discard(current, remaining, 0, SCHEME_5_2) == (25, 0)
+
+
+def test_declared_melds_remain_unweighted_without_their_tiles():
+    current = parse_tiles("123456789m11234p")
+    remaining = tuple(4 - count for count in current)
+
+    def unexpected_estimate(_hand, _winning_tile):
+        raise AssertionError("declared hands cannot be scored without meld tiles")
+
+    assert _greedy_discard(current, remaining, 1, SCHEME_5_2, unexpected_estimate) == _greedy_discard(
+        current, remaining, 1,
+    )
 
 
 def test_win_probability_is_exactly_the_aggregate_of_shared_winning_trials():

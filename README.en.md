@@ -3,7 +3,7 @@
 # Taiwanese Mahjong Heuristic-EV Trainer
 
 [![tests](../../actions/workflows/tests.yml/badge.svg)](../../actions/workflows/tests.yml)
-[![python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
+[![python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **Play a hand of Taiwanese 16-tile mahjong; every discard is scored by Monte Carlo terminal
@@ -74,13 +74,13 @@ uvicorn server.api:app
 
 ```bash
 python3 -m pip install -r requirements-dev.txt
-python3 -m pytest -q              # 269 tests, about 2.5 minutes
-python3 -m pytest -q -m slow      # 14 exhaustive-oracle and large-sample tests, about 15 minutes
+python3 -m pytest -q -m "not slow"  # fast tests, about 3 minutes
+python3 -m pytest -q -m slow        # exhaustive-oracle and large-sample tests, about 15 minutes
 ```
 
 The slow batch is marked `slow` and excluded from the default run — brute-force oracle sweeps and
 statistical tests that need large trial counts to have any power; the single-suit shape sweep alone
-is 7.5 minutes. CI runs the fast batch on every push (Python 3.10 and 3.13) and the slow batch on a
+is 7.5 minutes. CI runs the fast batch on every push (Python 3.11 and 3.13) and the slow batch on a
 nightly schedule.
 
 The split shortens push-time feedback, not total machine time: run separately the two batches add
@@ -323,12 +323,20 @@ The deal-in lookup is not set by hand — it is calibrated within the bot domain
 the state and deal-in outcome of each discard, and builds probability tables from it (for
 example, a "higher danger score → higher actual deal-in rate" lookup). Danger started as
 just a relative score; this step turns it into a readable percentage. The calibration
-data lives in `data/calibration.json` and you can rebuild or extend it:
+data lives in `data/calibration.json`, rebuilt whole by
+`scripts/generate_calibration.py`. The bots that generate it **do not read the previous
+table**, so a new table does not inherit the old one's preferences:
 
 ```bash
-python3 -m taimahjong --selfplay --games 250 --seed 10001 --out data/calibration.json
+python3 scripts/generate_calibration.py --games 8000 --seed-start 50001 \
+    --workers 4 --verify-games 12 --out data/calibration.json
 python3 -m taimahjong --selfplay-report data/calibration.json
 ```
+
+`python3 -m taimahjong --selfplay --out <path>` is a separate exploratory path that
+*appends* counts to the file you name. Do not point it at `data/calibration.json`: it
+still uses the older seven-bin danger edges while the shipped table now has eight (the
+tail splits at 16), and the append is refused.
 
 The table maps each discard's per-opponent `danger_score` to a ron probability, and the
 production rollout uses it on the opening and later discards. Again: only this ron/deal-in
@@ -346,7 +354,7 @@ currently fixed at zero. The table below splits the model by *how* each piece is
 | --- | --- | --- |
 | **Modeled and calculated exactly** | Given one sampled four-seat world, it validates ordinary-tile wins, scores the selected house rules, and performs zero-sum four-seat settlement. Each trial produces exactly one of `self_tsumo`, `self_ron`, `opponent_ron`, `opponent_tsumo`, or `draw`; `net_ev` is exactly the acting seat's mean sampled terminal payment. | “Exact” covers rules, settlement, and aggregation inside that sampled world—not exact terminal probabilities or human play. Draw payment is currently fixed at zero. |
 | **Heuristic approximation** | Public information drives opponent-tenpai estimates and hidden-hand sampling; efficiency-discard and fixed defense policies advance future play. Wall and terminal frequencies are fixed-seed Monte Carlo estimates. | Opponents do not fully adapt; the hidden-world distribution and policies are model assumptions, and finite sampling leaves error. |
-| **Calibrated by a calibration table** | The per-opponent `danger_score` lookup supplies ron/deal-in probabilities on the opening and later discards. Its domain is the built-in-bot self-play ecology. | It is not calibrated on human games. If a calibrated event conflicts with the sampled concealed hand, a physically winning hand is redeterminized for valuation. If no usable calibration table is available, a reported heuristic fallback is used. |
+| **Calibrated by a calibration table** | The per-opponent `danger_score` lookup supplies ron/deal-in probabilities on the opening and later discards. A non-tenpai opponent's shanten is drawn from `data/opponent-shanten.json`, the distribution the same self-play observed (see `docs/opponent-shanten.md`), rather than uniformly from the unseen pool. Both data sets live in the built-in-bot self-play ecology. | It is not calibrated on human games. If a calibrated event conflicts with the sampled concealed hand, a physically winning hand is redeterminized for valuation. If no usable calibration table is available, a reported heuristic fallback is used. |
 | **Not modeled** | Future chi, pon, kong/replacement draws and flowers, special hands, complete pass-on-ron decisions, and a full best response by every seat. | These events are absent from the terminal rollout transitions; draws also have no tenpai/noten settlement. |
 
 **Calibration domain**: only the ron/deal-in probability lookup is calibrated, and its domain is

@@ -34,7 +34,7 @@ from .danger import (
     meld_tiles,
     tenpai_score,
 )
-from .ev import BASELINE_TENPAI_RATE, DECLARED_FACTOR, opponent_value_estimate
+from .ev import BASELINE_TENPAI_RATE, DECLARED_FACTOR, FLOWERLESS_DEAD_WALL_TILES, opponent_value_estimate
 from .scoring import BASE_UNITS, DEFAULT_SCHEME, DEALER_TAI, STREAK_TAI_PER_WIN, ScoringScheme, WinContext, score_hand
 from .shanten import shanten
 from .ukeire import DiscardAnalysis
@@ -42,6 +42,8 @@ from .ukeire import DiscardAnalysis
 
 POLICIES = ("attack", "cautious", "ev_aware")
 KONG_POLICIES = ("none", "concealed_added", "all")
+# 「一槓一」: replenish the retained tail with one live-wall tile per kong.
+KONG_DEAD_WALL_BACKFILL_TILES = 1
 
 # M5c's deliberately cheap, deterministic replacement for per-discard Monte
 # Carlo.  Candidate attack value is relative ukeire times a shanten lookup;
@@ -252,9 +254,14 @@ def _self_draw_kong_choice(player: Player, kong_policy: str) -> tuple[int, bool]
     return None
 
 
-def _declare_kong(player: Player, tile: int, concealed: bool, dead: list[int]) -> int:
-    """Apply a kong and draw its replacement from the dead wall (no backfill from
-    the live wall — a deliberate simplification). Returns the replacement tile."""
+def _declare_kong(
+    player: Player,
+    tile: int,
+    concealed: bool,
+    dead: list[int],
+    wall: list[int] | None = None,
+) -> int:
+    """Apply a kong and draw its dead-wall replacement under 「一槓一」."""
     if concealed:
         player.hand[tile] -= 4
     else:
@@ -269,6 +276,8 @@ def _declare_kong(player: Player, tile: int, concealed: bool, dead: list[int]) -
     player.kongs.append(DeclaredKong(tile, concealed))
     replacement = dead.pop(0)
     player.hand[replacement] += 1
+    if wall:
+        dead.extend(wall.pop(0) for _ in range(KONG_DEAD_WALL_BACKFILL_TILES))
     return replacement
 
 
@@ -293,6 +302,7 @@ def _apply_big_kong(
     tile: int,
     dead: list[int],
     declared_kong: DeclaredKong | None = None,
+    wall: list[int] | None = None,
 ) -> int:
     """Declare a 大明槓 on a discard (three from hand + the discard) and draw the
     dead-wall replacement. Open, no bloom eligibility. Returns the replacement."""
@@ -303,6 +313,8 @@ def _apply_big_kong(
     player.kongs.append(kong)
     replacement = dead.pop(0)
     player.hand[replacement] += 1
+    if wall:
+        dead.extend(wall.pop(0) for _ in range(KONG_DEAD_WALL_BACKFILL_TILES))
     return replacement
 
 
@@ -490,6 +502,26 @@ def _dealer_leg_premium(
     return scheme.tai_units * (DEALER_TAI + STREAK_TAI_PER_WIN * dealer_streak)
 
 
+@lru_cache(maxsize=200_000)
+def _cached_score_hand(
+    winning_hand: tuple[int, ...],
+    melds: tuple,
+    context: WinContext,
+    kongs: tuple,
+):
+    """Memoised :func:`score_hand` for settlement.
+
+    Integrating out the RON claims prices a settlement at every discard rather
+    than once per trial, and the bounded hidden-world pool makes the same
+    (hand, tile) pairs recur across trials.  ``score_hand`` is a pure function
+    of these four arguments, so the cache changes cost only.
+
+    ``WinContext.rules`` is ``compare=False`` and therefore outside the key;
+    every caller here leaves it unset.
+    """
+    return score_hand(winning_hand, melds, context, kongs=kongs)
+
+
 def _settlement(
     outcome: str,
     winner: int | None,
@@ -518,9 +550,9 @@ def _settlement(
         return (0, 0, 0, 0), 0
     assert winner is not None and winning_hand is not None and winning_tile is not None
     dealer_won = winner == DEALER_SEAT
-    value = score_hand(
+    value = _cached_score_hand(
         winning_hand,
-        players[winner].melds,
+        tuple(players[winner].melds),
         WinContext(
             winning_tile=winning_tile,
             self_draw=outcome == "tsumo",
@@ -530,7 +562,7 @@ def _settlement(
             kong_bloom=kong_bloom,
             robbed_kong=robbed_kong,
         ),
-        kongs=tuple(players[winner].kongs),
+        tuple(players[winner].kongs),
     ).value_in(scheme)
     premium = _dealer_leg_premium(outcome, winner, discarder, dealer_streak, scheme)
     deltas = [0, 0, 0, 0]
@@ -685,7 +717,7 @@ def play_game(
     for _ in range(16):
         for player in players:
             player.hand[tiles.pop()] += 1
-    dead = [tiles.pop() for _ in range(16)]
+    dead = [tiles.pop() for _ in range(FLOWERLESS_DEAD_WALL_TILES)]
     wall = tiles
     events: list[dict] = []
     kong_log: list[tuple[int, int, bool]] = []  # (seat, tile, concealed) per declared kong
@@ -749,7 +781,7 @@ def play_game(
                             kongs=tuple(players[robber].kongs), robbed_kong=True, kong_log=tuple(kong_log),
                         )
                 kong_log.append((current, kind_tile, concealed))
-                drawn_tile = _declare_kong(player, kind_tile, concealed, dead)
+                drawn_tile = _declare_kong(player, kind_tile, concealed, dead, wall)
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                     winning_hand = tuple(player.hand)
@@ -775,7 +807,12 @@ def play_game(
         origin = "tsumogiri" if drawn_tile == tile else "tedashi"
         player.hand[tile] -= 1
         turn = player.discards + 1
-        true_tenpai = _cached_shanten(tuple(player.hand), _declared(player)) == 0
+        # One shanten call answers both questions.  DEV-120 needs the whole
+        # number, not just whether it is zero: the production world sampler
+        # has no source for the 1- and 2-shanten opponents it should be
+        # drawing, and this is where that distribution is observable.
+        true_shanten = _cached_shanten(tuple(player.hand), _declared(player))
+        true_tenpai = true_shanten == 0
         dangers = {
             index: _danger_for(index, tile, player.hand, players)
             for index in range(4)
@@ -794,6 +831,7 @@ def play_game(
             "declared": player.declared,
             "fold_policy_active": fold_active,
             "true_tenpai": true_tenpai,
+            "true_shanten": true_shanten,
             "dealt_in": False,
             "danger_score": max(dangers.values()),
             "danger_by_opponent": dangers,
@@ -856,7 +894,7 @@ def play_game(
                 )
                 player.river.pop()  # the konged tile leaves the discarder's river
                 kong_log.append((big_caller, tile, False))
-                replacement = _apply_big_kong(players[big_caller], tile, dead, declared_kong)
+                replacement = _apply_big_kong(players[big_caller], tile, dead, declared_kong, wall)
                 any_call = True
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(players[big_caller].hand), _declared(players[big_caller])) == -1:

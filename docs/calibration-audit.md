@@ -180,3 +180,62 @@ used to recombine the heterogeneous tail.
 - Full suite: `1 failed, 263 passed, 1 warning`. The sole failure is the
   pre-existing DEV-115 `test_fold_policy` assertion `-0.925 > 12.3`; it was not
   modified, skipped, or fixed.
+
+## Promotion (2026-09-01, DEV-119)
+
+The recommendation above — freeze the shipped file this round and stage the
+candidate — was taken up on 2026-09-01. `data/calibration.json` now holds the
+audited candidate's bytes, and the independent-policy path became the standard
+way to build a shipped table rather than an audit-only instrument.
+
+What moved:
+
+- `data/calibration.json` was replaced by the `audit`-free content of
+  `data/calibration-independent.json`. The replaced document was
+  `sha256:7ab0f1aa7e432afe7e2cc0287c4780a52f2d2fdef2531cb2839358cde88b9ddd`;
+  the promoted one is
+  `sha256:3edbea05a714f77083f46c4711e9c6b03c3d8fafd6952d1dce09274770cd1834`.
+  `metadata.promotion` records both, the audit report, and the reason.
+- `scripts/generate_calibration.py` lost `--independent-policy` and gained
+  `--consume-calibration` and `--audit`. The default build no longer reads a
+  previous table and fits under the split tail edges, so the feedback loop is
+  closed by default rather than by remembering a flag. `--audit` carries the
+  shipped-versus-candidate comparison and the tail diagnostics, and is refused
+  together with `--consume-calibration` because that arm reads the very table
+  it is being compared against. Wall-clock timing is now always recorded; the
+  suppression flag was specific to the contended host of the 2026-08-06 run.
+- `calibration.write_merged_table` now refuses to append counts whose danger
+  buckets differ from the destination's declared binning. Before the guard,
+  appending seven-bin counts onto the promoted eight-bin table dropped the
+  `13-16` and `16+` cells silently. Both READMEs stop pointing
+  `python3 -m taimahjong --selfplay` at `data/calibration.json` and name
+  `scripts/generate_calibration.py` as the rebuild path.
+
+Two committed-table assertions in `tests/test_selfplay.py` changed:
+
+- The danger check asserted at most one adjacent empirical inversion, inside
+  1.5 standard errors. Eight thousand independent-policy games falsify that:
+  `9-13` is 0.866347% (1,386/159,982) against `13-16`'s 0.656045%
+  (546/83,226), far outside 1.5 SE, and PAV pools the pair. The dip was never
+  the DEV-119 defect; the defect was that the open-ended `13+` cell averaged
+  that dip together with a `16+` population three times hotter. The assertion
+  is now that the most dangerous populated cell has the strictly highest
+  empirical rate. The pre-promotion table fails it (`13+` 0.774546% against
+  `9-13` 0.857410%), so it is falsifiable rather than a restatement of PAV.
+- The tenpai monotonicity check floored cells at ten times the lookup minimum
+  in exposures. At 6,400 fit games that admitted `1-6|3+`, whose 29/592 and
+  13/390 differ by 1.19 standard errors and read as an inversion. The floor
+  now also requires the lookup minimum in tenpai events, which drops those two
+  cells and leaves five buckets checked.
+
+Verification: `python3 -m pytest -q` gives `307 passed, 19 deselected,
+1 warning in 196.51s`, matching the pre-promotion baseline of `307 passed,
+19 deselected, 1 warning in 184.06s` on the same tree.
+
+Known limit carried forward: the promoted bytes were generated at commit
+`2743669`, and the engine has since moved to `68f8fd3` (seat-symmetric
+opponents, memoized shanten, RON claims integrated out). Rerunning the
+recorded command at HEAD produces a different table. Promoting the audited
+bytes keeps the evidence chain that justified the split; regenerating at HEAD
+would need the paired comparison rerun as well, and is a separate piece of
+work.

@@ -160,7 +160,8 @@ def test_open_kong_call_can_be_evaluated_and_graded(monkeypatch):
 
 
 def test_taking_open_kong_draws_replacement_and_records_kong():
-    gen = play_trainer(79, human_seat=0)
+    # Seed 71 restores an open-kong call after the flowerless dead-wall deal shift.
+    gen = play_trainer(71, human_seat=0)
     item = next(gen)
     while not isinstance(item, TrainerCallDecision):
         choice = _discard_drawn(item.position) if isinstance(item, TrainerDecision) else None
@@ -181,7 +182,7 @@ def test_taking_open_kong_draws_replacement_and_records_kong():
     kong = item.position.own_kongs[0]
     assert isinstance(kong, DeclaredKong)
     assert kong.called_from_seat == discarder
-    assert kong.called_from_discard_number == 3
+    assert kong.called_from_discard_number == 2
 
 
 def _first_call(seed_range=range(1, 20)):

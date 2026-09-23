@@ -2,7 +2,7 @@
 name = "taimahjong"
 version = "0.1.0"
 description = "A heuristic-EV trainer for Taiwanese 16-tile Mahjong"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110,<1",
     "pydantic>=2,<3",

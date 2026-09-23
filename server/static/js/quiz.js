@@ -16,6 +16,7 @@ export function drillScreen(root, { apiBase, mode, title }) {
   let gradeResult = null;
   let chosenTile = null;
   let metadata = null;
+  let requestId = 0;
 
   function header() {
     const bar = document.createElement('div');
@@ -40,6 +41,7 @@ export function drillScreen(root, { apiBase, mode, title }) {
   }
 
   async function generate(requestedSeed) {
+    const ownRequestId = ++requestId;
     phase = 'generating';
     seed = requestedSeed;
     position = null;
@@ -49,12 +51,14 @@ export function drillScreen(root, { apiBase, mode, title }) {
     render();
     try {
       const body = await post(`${apiBase}/new`, { seed: requestedSeed, ...schemeParams() });
+      if (ownRequestId !== requestId) return;
       position = body.position;
       metadata = body;
       seed = position.seed;
       tag = body.tag || null;
       phase = 'awaiting';
     } catch (error) {
+      if (ownRequestId !== requestId) return;
       showError(error);
       phase = 'idle';
     }
@@ -62,16 +66,19 @@ export function drillScreen(root, { apiBase, mode, title }) {
   }
 
   async function gradeTile(tile) {
+    const ownRequestId = ++requestId;
     phase = 'grading';
     chosenTile = tile;
     render();
     try {
       const body = await post(`${apiBase}/grade`, { seed, tile, ...schemeParams() });
+      if (ownRequestId !== requestId) return;
       gradeResult = body.grade;
       metadata = body;
       record(mode, gradeResult, body.scheme.id);
       phase = 'feedback';
     } catch (error) {
+      if (ownRequestId !== requestId) return;
       showError(error);
       phase = 'awaiting';
     }
@@ -147,7 +154,7 @@ export function drillScreen(root, { apiBase, mode, title }) {
       board.append(feltEl(position, {
         handOptions: { marks: { cut: chosenTile } },
       }));
-      board.append(computingEl(`你切 ${faceText(chosenTile)}，計算 net EV 中…`));
+      board.append(computingEl(`你打 ${faceText(chosenTile)}，計算 net EV 中…`));
       root.append(workspace(board));
       return;
     }

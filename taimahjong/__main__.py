@@ -472,7 +472,15 @@ def main() -> None:
                 f" × {result.total_tai} = {result.value_in(config.scheme)} units"
             )
         elif args.simulate:
-            result = win_probability(counts, args.turns if args.turns is not None else 10, args.melds, visible, args.sims or 5000, args.seed)
+            result = win_probability(
+                counts,
+                args.turns if args.turns is not None else 10,
+                args.melds,
+                visible,
+                args.sims or 5000,
+                args.seed,
+                scheme=config.scheme,
+            )
             print(f"Hand: {format_tiles(counts)}")
             print(scheme_line)
             print("Turn  Tenpai %  Win %")

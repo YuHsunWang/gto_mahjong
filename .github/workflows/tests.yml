@@ -2,7 +2,7 @@ name: tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feat/**']
   pull_request:
   schedule:
     # Full suite, including the exhaustive oracle sweeps, every night at 03:00 UTC.
@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.13"]
+        python-version: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,8 +29,9 @@ jobs:
 
   slow:
     name: exhaustive oracle suite
-    # The oracle sweeps take ~10 minutes, so they run nightly and on demand
-    # rather than on every push.
+    # Measured 2026-08-24: 25 minutes, against a 45-minute cap. The oracle
+    # sweeps are ~7 of that; endgame exploitability and the equilibrium game
+    # are another ~12. Nightly and on demand, never on a push.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 45

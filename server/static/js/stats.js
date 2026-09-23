@@ -21,7 +21,12 @@ function load() {
 }
 
 function save(data) {
-  localStorage.setItem(KEY, JSON.stringify(data));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(data));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function bucket(data, mode, schemeId) {

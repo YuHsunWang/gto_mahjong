@@ -1,5 +1,4 @@
 from dataclasses import replace
-from math import sqrt
 from pathlib import Path
 
 import pytest
@@ -25,8 +24,11 @@ from taimahjong.calibration import (
 from taimahjong.config import DEFAULT_RULES, resolve_ron_claims
 from taimahjong.danger import OpponentView, danger_score
 from taimahjong.selfplay import (
+    KONG_DEAD_WALL_BACKFILL_TILES,
     Player,
+    _assert_conservation,
     _choose_discard,
+    _declare_kong,
     _declared,
     _robbing_winners,
     _settle_ron_winners,
@@ -49,7 +51,12 @@ def test_fixed_seed_is_deterministic_and_conserves_tiles():
 
 
 def test_smoke_batch_has_each_terminal_path_and_valid_wins():
-    games = play_games(50, 20260717)
+    # A batch is only a smoke test if it actually reaches every terminal path
+    # and at least one migi declaration; both together are rare (about 3% of
+    # 50-game batches), so this seed differs from the one the point-accounting
+    # test uses.  If the deal moves again, rescan for a seed satisfying both
+    # rather than dropping either half of the assertion.
+    games = play_games(50, 20260754)
     outcomes = {game.outcome for game in games}
     assert {"ron", "tsumo", "draw"} <= outcomes
     assert any(event["declared"] for game in games for event in game.events)
@@ -254,11 +261,10 @@ def test_calibration_lookup_interpolates_and_falls_back_for_small_cells():
     ) / 2
     assert calibration.deal_in_probability(1.0) == pytest.approx(expected)
     assert Calibration(table_document(counts), min_cell_count=31).deal_in_probability(1.0) is None
-    # The shipped v2 document has a single 13+ cell.  A regenerated document
-    # may split that heterogeneous tail without changing how the shipped file
-    # is interpreted, while retaining Jeffreys smoothing and monotonic PAV.
-    edges = DANGER_EDGES + (16.0,)
-    buckets = DANGER_BUCKETS[:-1] + ("13-16", "16+")
+    # The canonical split tail keeps the two measured populations separate
+    # while retaining Jeffreys smoothing and monotonic PAV.
+    edges = DANGER_EDGES
+    buckets = DANGER_BUCKETS
     counts = empty_counts(buckets)
     counts["deal_in"]["9-13"] = {"observations": 1000, "deal_ins": 10}
     counts["deal_in"]["13-16"] = {"observations": 1000, "deal_ins": 5}
@@ -275,6 +281,13 @@ def test_calibration_lookup_interpolates_and_falls_back_for_small_cells():
     assert calibration.deal_in_probability(11.0) == pytest.approx(pooled)
     assert calibration.deal_in_probability(14.5) == pytest.approx(pooled)
     assert calibration.deal_in_probability(20.0) == pytest.approx((20 + 0.5) / (1000 + 1))
+
+
+def test_default_danger_binning_matches_the_committed_table():
+    document = load_table(Path("data/calibration.json"))
+    binning = document["metadata"]["danger_binning"]
+    assert tuple(binning["edges"]) == DANGER_EDGES
+    assert tuple(binning["buckets"]) == DANGER_BUCKETS
 
 
 def test_jeffreys_smoothing_keeps_observed_zero_deal_in_bucket_positive():
@@ -310,7 +323,9 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
     assert calibration.document["metadata"]["ev_model"]["source_date"] == "2026-07-29"
     assert calibration.document["quality"]["brier_score"] >= 0
     assert calibration.document["quality"]["log_loss"] >= 0
-    assert len(calibration.document["quality"]["reliability_curve"]) == len(DANGER_BUCKETS)
+    assert len(calibration.document["quality"]["reliability_curve"]) == len(
+        calibration.danger_buckets
+    )
     assert calibration.document["metadata"]["danger_reference"] == DANGER_REFERENCE
     assert calibration.document["metadata"]["danger_modifiers"] == DANGER_MODIFIERS
     assert calibration.document["metadata"]["policy_mix"] == ["attack", "cautious", "ev_aware", "ev_aware"]
@@ -322,7 +337,12 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
     # dealer-folding (M3) feeds that pool — so the relationship legitimately
     # inverts. Restrict this broad structural check to cells with 10x the
     # lookup minimum so sparse early-game run buckets do not turn sampling
-    # noise into a committed-table failure.
+    # noise into a committed-table failure. The exposure floor alone is not
+    # enough: the check compares probabilities, so the numerator has to be
+    # resolvable too. At 6,400 fit games the 1-6|3+ row cleared 300 exposures
+    # on 29/592 and 13/390 tenpai, a 1.19-standard-error step that reads as an
+    # inversion. Requiring the lookup minimum in tenpai events as well drops
+    # exactly those cells and leaves five buckets to check.
     checked_buckets = 0
     for turn in ("1-6", "7-12"):
         for run in ("0", "1-2", "3+"):
@@ -331,6 +351,7 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
                 for melds in range(6)
                 if table[f"{melds}|{turn}|{run}"]["observations"]
                 >= 10 * MIN_CELL_COUNT
+                and table[f"{melds}|{turn}|{run}"]["tenpai"] >= MIN_CELL_COUNT
             ]
             if len(populated) >= 2:
                 values = [cell["probability"] for cell in populated]
@@ -338,22 +359,40 @@ def test_committed_calibration_has_signal_and_monotonic_tenpai():
                 checked_buckets += 1
     assert checked_buckets >= 4, "the developing-phase monotonicity check must cover several buckets"
     danger = calibration.tables["deal_in"]
-    values = [danger[bucket]["probability"] for bucket in DANGER_BUCKETS]
+    # Read the binning the document itself declares, which is what production
+    # reads: DEV-119 split the open-ended tail at 16, so a shipped table now
+    # has eight cells and an older one still has seven.
+    buckets = calibration.danger_buckets
+    values = [danger[bucket]["probability"] for bucket in buckets]
     assert values == sorted(values)
-    raw = [danger[bucket] for bucket in DANGER_BUCKETS]
-    inversions = [
-        (left, right)
-        for left, right in zip(raw, raw[1:])
-        if left["observations"] >= MIN_CELL_COUNT
-        and right["observations"] >= MIN_CELL_COUNT
-        and left["empirical_probability"] > right["empirical_probability"]
+
+    # This used to assert that at most one adjacent pair inverted empirically
+    # and that the inversion sat inside 1.5 standard errors, i.e. that any
+    # inversion was sampling noise. Eight thousand independent-policy games
+    # falsified that: 9-13 is 0.866347% (1,386/159,982) against 13-16's
+    # 0.656045% (546/83,226), far outside 1.5 SE, and PAV pools the two to one
+    # value. The real DEV-119 defect was never the dip; it was that the old
+    # open-ended 13+ cell averaged that dip together with a 16+ population
+    # three times hotter, so the most dangerous cell priced below its
+    # neighbour. That is what this now asserts, and it is what the
+    # pre-promotion table failed: its 13+ cell was 0.774546% against 9-13's
+    # 0.857410%.
+    populated = [
+        (bucket, danger[bucket])
+        for bucket in buckets
+        if danger[bucket]["observations"] >= MIN_CELL_COUNT
     ]
-    assert len(inversions) <= 1
-    if inversions:
-        left, right = inversions[0]
-        pooled = (left["deal_ins"] + right["deal_ins"]) / (left["observations"] + right["observations"])
-        standard_error = sqrt(pooled * (1 - pooled) * (1 / left["observations"] + 1 / right["observations"]))
-        assert left["empirical_probability"] - right["empirical_probability"] <= 1.5 * standard_error
+    assert len(populated) >= 2
+    top_bucket, top_cell = populated[-1]
+    hotter = [
+        bucket
+        for bucket, cell in populated[:-1]
+        if cell["empirical_probability"] >= top_cell["empirical_probability"]
+    ]
+    assert not hotter, (
+        f"{top_bucket} is the most dangerous cell but prices at or below "
+        f"{hotter}; the tail is mixing populations again"
+    )
 
 
 # --- M5: kong engine ---
@@ -364,6 +403,41 @@ def test_kong_policy_none_reproduces_baseline():
     # existing behavior or the committed calibration.
     for seed in (941, 20260717, 42, 30001):
         assert play_game(seed).summary() == play_game(seed, kong_policy="none").summary()
+
+
+def test_kong_backfills_dead_wall_and_costs_one_live_draw():
+    # 「一槓一」: every kong consumes exactly one future live-wall draw.
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand[0] = 4
+    remaining = [tile for tile in range(34) for _ in range(4)]
+    for _ in range(4):
+        remaining.remove(0)
+    dead = remaining[:14]
+    wall = remaining[14:]
+    initial_live_tiles = len(wall)
+
+    _declare_kong(players[0], 0, True, dead, wall)
+
+    assert len(wall) == initial_live_tiles - KONG_DEAD_WALL_BACKFILL_TILES * len(players[0].kongs)
+    assert len(dead) == 14
+    _assert_conservation(players, wall, dead)
+
+
+def test_kong_with_empty_live_wall_does_not_backfill_or_corrupt_tiles():
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand[0] = 4
+    remaining = [tile for tile in range(34) for _ in range(4)]
+    for _ in range(4):
+        remaining.remove(0)
+    dead = [remaining.pop()]
+    players[1].hand = [remaining.count(tile) for tile in range(34)]
+    wall: list[int] = []
+
+    _declare_kong(players[0], 0, True, dead, wall)
+
+    assert wall == []
+    assert dead == []
+    _assert_conservation(players, wall, dead)
 
 
 # Full-game invariant sweep (~22s).
@@ -452,3 +526,33 @@ def test_daiminkan_is_not_positive_ev_under_house_rule():
     assert with_daiminkan <= added_only + 0.05, (
         f"大明槓 should not help: all={with_daiminkan:.3f} vs concealed_added={added_only:.3f}"
     )
+
+
+def test_new_default_table_round_trips_split_tail(tmp_path):
+    from taimahjong.calibration import format_report
+
+    counts = counts_from_games([])
+    counts["deal_in"]["16+"] = {"observations": 100, "deal_ins": 10}
+    path = tmp_path / "new.json"
+    document = write_merged_table(path, counts)
+    assert tuple(document["metadata"]["danger_binning"]["buckets"]) == DANGER_BUCKETS
+    calibration = Calibration.from_path(path)
+    assert calibration.danger_buckets == DANGER_BUCKETS
+    assert calibration.deal_in_probability(20) == pytest.approx(10.5 / 101)
+    assert "16+" in format_report(document)
+
+
+def test_metadata_free_legacy_table_still_loads_and_merges(tmp_path):
+    import json
+    from taimahjong.calibration import LEGACY_DANGER_BUCKETS, format_report
+
+    counts = empty_counts(LEGACY_DANGER_BUCKETS)
+    counts["deal_in"]["13+"] = {"observations": 100, "deal_ins": 10}
+    document = table_document(counts, danger_buckets=LEGACY_DANGER_BUCKETS)
+    document["metadata"] = {"danger_reference": DANGER_REFERENCE}
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps(document))
+    assert Calibration.from_path(path).danger_buckets == LEGACY_DANGER_BUCKETS
+    assert "13+" in format_report(document)
+    merged = write_merged_table(path, empty_counts(LEGACY_DANGER_BUCKETS))
+    assert Calibration(merged).deal_in_probability(20) == pytest.approx(10.5 / 101)

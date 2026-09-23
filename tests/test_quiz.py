@@ -8,7 +8,7 @@ import pytest
 
 import taimahjong.quiz as quiz
 from taimahjong.danger import meld_tiles
-from taimahjong.ev import EVRankEntry, evaluate_discard
+from taimahjong.ev import EVRankEntry, evaluate_discard, remaining_draws
 from taimahjong.moments import SampleMoments
 from taimahjong.quiz import (
     ESCALATE_SIMS,
@@ -104,6 +104,23 @@ def test_empty_wall_allows_zero_remaining_draws():
 
     assert position.wall_remaining == 0
     assert position.draws_remaining == 0
+
+
+@pytest.mark.parametrize("wall_remaining", range(17))
+def test_post_draw_quiz_horizon_matches_shared_actor_turn_order(wall_remaining):
+    """After the actor discards, only each fourth live-wall tile returns to it."""
+    hand = parse_tiles("123m123p123s11122233z")
+    snapshot = DecisionSnapshot(
+        2, hand, (), (), (), (0,) * 34, 17, 0,
+        wall_remaining=wall_remaining,
+    )
+
+    position = quiz._position_from(snapshot, seed=13)
+
+    assert position.draws_remaining == wall_remaining // 4
+    assert position.draws_remaining == remaining_draws(
+        hand, (0,) * 34, wall_remaining=wall_remaining,
+    )
 
 
 def test_grading_best_worst_and_illegal_choices(position):

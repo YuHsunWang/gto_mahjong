@@ -166,7 +166,7 @@ export function trainerScreen(root) {
 
     const note = document.createElement('div');
     note.className = 'note';
-    note.textContent = '每手切牌、可鳴牌與可宣告的暗槓／加槓都會即時 EV 回饋並計分。本桌無花牌。';
+    note.textContent = '每手打牌、可鳴牌與可宣告的暗槓／加槓都會即時 EV 回饋並計分。本桌無花牌。';
 
     const controls = document.createElement('div');
     controls.className = 'controls';
@@ -301,7 +301,7 @@ export function trainerScreen(root) {
       hint.textContent = '點一張牌切出（再點一次確認；金框為剛摸入）';
       board.append(feltEl(decision.position, {
         handOptions: {
-          onDiscard: (tile) => act({ action: 'discard', tile }, `你切 ${faceText(tile)}，計算 net EV 中…`),
+          onDiscard: (tile) => act({ action: 'discard', tile }, `你打 ${faceText(tile)}，計算 net EV 中…`),
         },
       }), hint);
     } else if (decision.type === 'kong') {
@@ -337,7 +337,7 @@ export function trainerScreen(root) {
           },
         },
       }));
-      choiceText = `你切 ${faceText(feedback.chosen_tile)}`;
+      choiceText = `你打 ${faceText(feedback.chosen_tile)}`;
     } else {
       const isCall = feedback.kind === 'call';
       const chosenLabel = feedback.choice === null

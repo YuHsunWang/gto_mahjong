@@ -439,8 +439,10 @@ def evaluate_candidate(
                     drawn_hand,
                 ), next_probability)
                 continue
-            discard_tile = _policy_discard(
-                drawn_hand, tuple(next_remaining),
+            discard_tile = (
+                tile
+                if state.players[seat].declared_at is not None
+                else _policy_discard(drawn_hand, tuple(next_remaining))
             )
             post = list(drawn_hand)
             post[discard_tile] -= 1
@@ -750,7 +752,7 @@ def representative_reference_cases() -> tuple[ReferenceCase, ...]:
             (6, 6, 32, 32),
         ),
         _CorpusSpec(
-            "self-ron", "tenpai", 0, 2, SCHEME_5_2, 4, 2, (6, 6, 31, 33),
+            "self-ron", "tenpai", 0, 2, SCHEME_5_2, 4, 3, (6, 6, 16, 32),
         ),
         _CorpusSpec(
             "opponent-tsumo",
@@ -776,11 +778,11 @@ def representative_reference_cases() -> tuple[ReferenceCase, ...]:
             "opponent-tsumo",
             "tenpai",
             1,
-            0,
+            2,
             SCHEME_5_2,
             4,
-            1,
-            (6, 31, 32, 32),
+            3,
+            (6, 33, 33, 33),
         ),
         _CorpusSpec(
             "opponent-tsumo",
@@ -790,10 +792,10 @@ def representative_reference_cases() -> tuple[ReferenceCase, ...]:
             SCHEME_3_1,
             4,
             2,
-            (6, 33, 33, 33),
+            (6, 6, 33, 33),
         ),
         _CorpusSpec(
-            "self-ron", "tenpai", 1, 2, SCHEME_5_2, 4, 3, (6, 6, 6, 33),
+            "self-ron", "tenpai", 1, 2, SCHEME_5_2, 4, 1, (6, 6, 6, 33),
         ),
     )
     cases = []

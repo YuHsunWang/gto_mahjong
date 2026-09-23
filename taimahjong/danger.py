@@ -410,6 +410,42 @@ def _wait_shapes(tile: int) -> list[tuple[str, tuple[int, ...], float]]:
     return shapes
 
 
+# One opponent hand, used as the draw size when turning the unseen pool into
+# a per-tile holding chance.
+_HAND_TILES = 16
+
+
+def deal_in_weight(tile: int, belief: tuple[int, ...], pool: int) -> float:
+    """Weighted chance one unseen hand is waiting on ``tile``.
+
+    Asking whether any copy of a tile is still unseen makes every tile with one
+    copy left look alike.  This asks how a hand could be *waiting* on the tile
+    instead: it walks the standard wait shapes above and weights each by the
+    chance an opponent holds the tiles that shape needs.
+
+    Two approximations, both forced by what a seat may look at.  The seat knows
+    only its own hand and the unseen pool, so an opponent's hand is treated as
+    a draw from that pool, and each required tile is treated as drawn
+    independently -- true only in the limit of a large pool.  What this keeps is
+    the ordering *between* live tiles: a tile whose neighbours are gone is safer
+    than one whose neighbours are live, even when both still have copies unseen.
+
+    It lives here, rather than beside the empirical game that first used it,
+    because every module needing a seat-information danger estimate sits above
+    this one: a policy in :mod:`taimahjong.ev` cannot import the empirical game.
+    """
+    if pool <= 0:
+        return 0.0
+    total = 0.0
+    for _, required, weight in _wait_shapes(tile):
+        chance = 1.0
+        for needed in required:
+            # An opponent holds 16 of the ``pool`` unseen tiles.
+            chance *= min(1.0, _HAND_TILES * belief[needed] / pool)
+        total += weight * chance
+    return total
+
+
 def _recent_river_indexes(river: list[int | RiverEntry]) -> set[int]:
     """Return the newest third of a nonempty river, rounded up."""
     if not river:

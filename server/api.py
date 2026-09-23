@@ -54,7 +54,14 @@ from taimahjong.ev import (
     paired_delta_moments,
     remaining_draws,
 )
-from taimahjong.quiz import QuizGrade, QuizPosition, explain, generate_position, grade
+from taimahjong.quiz import (
+    EV_EFFECT_SIZE_MIN,
+    QuizGrade,
+    QuizPosition,
+    explain,
+    generate_position,
+    grade,
+)
 from taimahjong.scoring import WinContext, score_hand
 from taimahjong.tiles import parse_tiles
 from taimahjong.shanten import shanten
@@ -245,22 +252,14 @@ def _top_gap_payload(entries: tuple[EVRankEntry, ...] | list[EVRankEntry]) -> di
     if len(ranked) < 2:
         return None
     moments = paired_delta_moments(ranked[0], ranked[1])
-    payload = moments.payload()
-    effect_small = abs(moments.mean) < 0.10
+    # paired_delta_moments always marks its result post-selection, including
+    # empty/mismatched trial paths, so unavailable uncertainty stays uncertain.
+    payload = moments.payload(EV_EFFECT_SIZE_MIN)
     payload.update({
         "top_discard": ranked[0].discard,
         "top_is_fold": ranked[0].is_fold,
         "runner_up_discard": ranked[1].discard,
         "runner_up_is_fold": ranked[1].is_fold,
-        "effect_threshold": 0.10,
-        "effect_small": effect_small,
-        "wording": (
-            "uncertain"
-            if moments.crosses_zero
-            else "marginal"
-            if effect_small
-            else "clear"
-        ),
     })
     return payload
 
@@ -422,12 +421,21 @@ class _TrainerSession:
     current: Any  # TrainerDecision | TrainerKongDecision | TrainerCallDecision | TrainerOutcome
     analysis: AnalysisContext
     step: int = 0
+    failed: bool = False
     score: dict[str, float] = field(default_factory=lambda: {"decisions": 0, "best": 0, "loss": 0.0})
     feedback: dict[str, Any] | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 _SESSIONS: OrderedDict[str, _TrainerSession] = OrderedDict()
+_SESSIONS_LOCK = threading.Lock()
+
+
+def _store_session(session_id: str, session: _TrainerSession) -> None:
+    with _SESSIONS_LOCK:
+        _SESSIONS[session_id] = session
+        while len(_SESSIONS) > _MAX_SESSIONS:
+            _SESSIONS.popitem(last=False)
 
 
 class TrainerNewRequest(SchemeRequest):
@@ -485,6 +493,7 @@ def _decision_payload(item: Any) -> dict[str, Any]:
 
 
 def _session_payload(session_id: str, session: _TrainerSession) -> dict[str, Any]:
+    _check_session(session)
     return {
         "session_id": session_id,
         "step": session.step,
@@ -499,10 +508,12 @@ def _session_payload(session_id: str, session: _TrainerSession) -> dict[str, Any
 
 
 def _get_session(session_id: str) -> _TrainerSession:
-    session = _SESSIONS.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="unknown trainer session")
-    return session
+    with _SESSIONS_LOCK:
+        session = _SESSIONS.get(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="unknown trainer session")
+        _SESSIONS.move_to_end(session_id)
+        return session
 
 
 @app.post("/api/trainer/new")
@@ -519,9 +530,7 @@ def trainer_new(request: TrainerNewRequest) -> dict[str, Any]:
         seed, request.human_seat, request.dealer_streak, generator, first, analysis,
     )
     session_id = uuid.uuid4().hex
-    _SESSIONS[session_id] = session
-    while len(_SESSIONS) > _MAX_SESSIONS:
-        _SESSIONS.popitem(last=False)
+    _store_session(session_id, session)
     return _session_payload(session_id, session)
 
 
@@ -547,10 +556,25 @@ def _validate_option(options, option: int | None) -> int | None:
     return option
 
 
+def _check_session(session: _TrainerSession) -> None:
+    if session.failed:
+        raise HTTPException(status_code=404, detail="trainer session failed; start a new hand")
+
+
+def _advance_session(session: _TrainerSession, choice):
+    try:
+        return session.generator.send(choice)
+    except Exception:
+        # A generator that raises is closed; retrying cannot restore its state.
+        session.failed = True
+        raise
+
+
 @app.post("/api/trainer/{session_id}/act")
 def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
     session = _get_session(session_id)
     with session.lock:
+        _check_session(session)
         if request.step != session.step:
             raise HTTPException(status_code=409, detail=f"stale step {request.step}, session is at {session.step}")
         item = session.current
@@ -571,17 +595,15 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
             # grade() validates the tile before anything is sent into the
             # generator — a bad send would terminate the game generator.
             result = _engine(grade, item.position, request.tile, scheme, analysis)
-            _record(session, result.verdict, result.ev_loss)
-            session.feedback = {"kind": "discard", "chosen_tile": request.tile, **_grade_payload(result)}
-            session.current = session.generator.send(request.tile)
+            feedback = {"kind": "discard", "chosen_tile": request.tile, **_grade_payload(result)}
+            next_item = _engine(_advance_session, session, request.tile)
         elif isinstance(item, TrainerKongDecision):
             if request.action != "kong":
                 raise HTTPException(status_code=422, detail="current decision expects action=kong")
             choice = _validate_option(item.options, request.option)
             evaluation = evaluate_kong(item, scheme=scheme, analysis=analysis)
             result = evaluation.verdict_for(choice)
-            _record(session, result.verdict, result.ev_loss)
-            session.feedback = {
+            feedback = {
                 "kind": "kong",
                 "choice": choice,
                 "verdict": result.verdict,
@@ -594,15 +616,14 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
                 "pass_ev": evaluation.pass_ev,
                 "option_evs": list(evaluation.option_evs),
             }
-            session.current = session.generator.send(choice)
+            next_item = _engine(_advance_session, session, choice)
         elif isinstance(item, TrainerCallDecision):
             if request.action != "call":
                 raise HTTPException(status_code=422, detail="current decision expects action=call")
             choice = _validate_option(item.options, request.option)
             evaluation = evaluate_call(item, scheme=scheme, analysis=analysis)
             result = evaluation.verdict_for(choice)
-            _record(session, result.verdict, result.ev_loss)
-            session.feedback = {
+            feedback = {
                 "kind": "call",
                 "choice": choice,
                 "verdict": result.verdict,
@@ -615,10 +636,13 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
                 "pass_ev": evaluation.pass_ev,
                 "option_evs": list(evaluation.option_evs),
             }
-            session.current = session.generator.send(choice)
+            next_item = _engine(_advance_session, session, choice)
         else:  # pragma: no cover - the isinstance set above is exhaustive
             raise HTTPException(status_code=500, detail="unknown decision type")
 
+        session.current = next_item
+        _record(session, result.verdict, result.ev_loss)
+        session.feedback = feedback
         session.step += 1
         return _session_payload(session_id, session)
 
@@ -627,7 +651,7 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
 # Stateless analysis: EV ranking and hand scoring
 
 
-class EvOpponentRequest(BaseModel):
+class EvOpponentRequest(ApiRequest):
     river: str = ""
     melds: str = ""
     declared_at: int | None = None
@@ -651,6 +675,7 @@ class EvRankRequest(SchemeRequest):
     visible: str = ""
     turns: int = Field(default=0, ge=0, le=24)  # 0 = derive from wall_remaining or the visible pool
     wall_remaining: int | None = Field(default=None, ge=0, le=136)
+    kongs: int = Field(default=0, ge=0, le=16)
     sims: int = Field(default=400, ge=1, le=5_000)
     seed: int = 7
     exhaustive: bool = False
@@ -721,7 +746,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
         elif request.wall_remaining is not None:
             turns = remaining_draws(counts, accounting, wall_remaining=request.wall_remaining)
         else:
-            turns = remaining_draws(counts, accounting)
+            turns = remaining_draws(counts, accounting, kongs=request.kongs)
         entries = ev_rank(
             counts, opponents, visible,
             turns=turns, sims=request.sims, seed=request.seed,

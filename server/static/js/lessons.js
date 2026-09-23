@@ -97,7 +97,7 @@ function discardTable(discards, recommendTile) {
   const table = document.createElement('table');
   table.className = 'evtable';
   const head = document.createElement('tr');
-  ['切牌', '向聽', '進張', '接受牌'].forEach((label) => {
+  ['打牌', '向聽', '進張', '接受牌'].forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     head.append(th);

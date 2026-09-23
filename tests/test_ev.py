@@ -11,6 +11,7 @@ import taimahjong.ev as ev
 from taimahjong.ev import (
     DRAW_VALUE,
     FOLD_HAZARD_CUTOFF,
+    FLOWERLESS_DEAD_WALL_TILES,
     declaration_ev,
     estimate_win_value,
     ev_rank,
@@ -25,8 +26,11 @@ from taimahjong.reference_ev import (
     standard_small_wall_state,
 )
 from taimahjong.rollout import CalibratedRonClaim, resolve_terminal
-from taimahjong.scoring import EARTHLY_TAI, HEAVENLY_TAI, WinContext, score_hand
-from taimahjong.selfplay import Player
+from taimahjong.scoring import (
+    EARTHLY_TAI, HEAVENLY_TAI, SCHEME_3_1, SCHEME_5_2, WinContext, score_hand,
+)
+from taimahjong.selfplay import Player, _settlement
+from taimahjong.simulate import TrialTrace, WinningTrial, _greedy_discard
 from taimahjong.tiles import parse_tiles
 
 
@@ -383,10 +387,166 @@ def test_winning_trial_values_are_scored_as_self_draws():
     assert estimate.mean_value_units == expected_value
 
 
+def test_ev_simulation_threads_scheme_and_cache_keeps_scheme_specific_discard():
+    completed = list(TENPAI)
+    completed[29] += 1
+    win = WinningTrial(tuple(completed), 29, 1)
+    winning_schemes = []
+    policy_schemes = []
+
+    def fake_winning_trials(*_args, scheme=None):
+        winning_schemes.append(scheme)
+        return (win,)
+
+    def fake_policy_trials(*_args, scheme=None):
+        policy_schemes.append(scheme)
+        return (TrialTrace(0, win),)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(ev, "winning_trials", fake_winning_trials)
+    monkeypatch.setattr(ev, "policy_trials", fake_policy_trials)
+    try:
+        three_one = estimate_win_value(TENPAI, turns=1, sims=1, scheme=SCHEME_3_1)
+        five_two = estimate_win_value(TENPAI, turns=1, sims=1, scheme=SCHEME_5_2)
+        ev._discounted_win_estimate(
+            TENPAI, 1, 0, (0,) * 34, 1, 1, None, (1.0,), SCHEME_3_1,
+        )
+        ev._discounted_win_estimate(
+            TENPAI, 1, 0, (0,) * 34, 1, 1, None, (1.0,), SCHEME_5_2,
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert (three_one.net_ev, five_two.net_ev) == (6.0, 11.0)
+    assert winning_schemes == [SCHEME_3_1, SCHEME_5_2]
+    assert policy_schemes == [SCHEME_3_1, SCHEME_5_2]
+
+    current = parse_tiles("33345777m333667778s")
+    remaining = (
+        2, 4, 0, 2, 1, 3, 1, 2, 4, 4, 1, 1, 0, 3, 3, 2, 4,
+        2, 2, 0, 1, 4, 3, 0, 0, 3, 2, 4, 2, 1, 2, 3, 2, 1,
+    )
+    _greedy_discard.cache_clear()
+    assert _greedy_discard(current, remaining, 0, SCHEME_3_1) == (24, 0)
+    assert _greedy_discard(current, remaining, 0, SCHEME_5_2) == (25, 0)
+
+
 def test_remaining_draws_uses_live_wall_and_four_seats():
-    # 26 -> 14: the 48 tiles in three hidden opponent hands are not drawable.
-    assert remaining_draws(POST_DRAW, (0,) * 34) == 14  # ceil((136 - 16 - 17 - 48) / 4)
+    # Flowerless Taiwanese mahjong reserves 7 dun (14 tiles), leaving 57 -> 14;
+    # the 48 tiles in three hidden opponent hands are not drawable.
+    assert remaining_draws(POST_DRAW, (0,) * 34) == 14  # floor((136 - 14 - 17 - 48) / 4)
     assert remaining_draws(POST_DRAW, parse_tiles("9999m")) == 13  # four public tiles also left the wall
+
+
+@pytest.mark.parametrize("kongs", range(5))
+def test_derived_live_wall_retires_one_tile_per_declared_kong(kongs):
+    from taimahjong.selfplay import KONG_DEAD_WALL_BACKFILL_TILES
+
+    expected_live_wall = 136 - FLOWERLESS_DEAD_WALL_TILES - 17 - 3 * 16 - KONG_DEAD_WALL_BACKFILL_TILES * kongs
+    assert remaining_draws(POST_DRAW, (0,) * 34, kongs=kongs) == expected_live_wall // 4
+
+
+def test_explicit_live_wall_does_not_double_count_kongs():
+    assert remaining_draws(POST_DRAW, wall_remaining=51, kongs=4) == 12
+
+
+def test_revealed_kong_costs_the_wall_only_its_backfill_tile():
+    """DEV-181: a declared kong shortens the live wall by its backfill tile only.
+
+    Its four tiles sit in the owner's 16-tile holding, so passing them through
+    ``TileAccounting.revealed_holdings`` must not deduct them from the wall as
+    well. 136 - 14 dead - 17 own - 48 opponents - 1 backfill = 56 -> 14 draws;
+    counting the kong's tiles too would give 52 -> 13.
+    """
+    kong_on_table = TileAccounting(revealed_holdings=parse_tiles("9999m"))
+    assert remaining_draws(POST_DRAW, kong_on_table, kongs=1) == 14
+    assert remaining_draws(POST_DRAW, kong_on_table, kongs=1) == remaining_draws(POST_DRAW, kongs=1)
+
+
+@pytest.mark.parametrize("live_wall", [55, 7])
+def test_automatic_horizon_stays_in_live_wall_and_preserves_actor_turn_order(live_wall):
+    """Post-discard play starts downstream, so the actor gets floor(live/4) draws.
+
+    The dead wall is reserved: a production world may not pad an incomplete
+    table round with it just to give the actor one more draw.
+    """
+    seen = [0] * 34
+    if live_wall < 55:
+        needed_out_of_hands = 55 - live_wall
+        for tile, available in enumerate(4 - count for count in POST_DRAW):
+            taken = min(available, needed_out_of_hands)
+            seen[tile] = taken
+            needed_out_of_hands -= taken
+            if not needed_out_of_hands:
+                break
+        assert needed_out_of_hands == 0
+    turns = remaining_draws(POST_DRAW, tuple(seen), wall_remaining=live_wall)
+    world = ev._sample_production_world(
+        POST_DRAW, tuple(seen), (), turns, None, 20260904,
+    )
+
+    assert len(world.wall) <= live_wall
+    # The next seat draws first; seat 1, 2, 3, then the actor at seat 0.
+    assert sum(index % 4 == 3 for index in range(len(world.wall))) == turns
+
+
+def test_declared_context_reaches_ev_rollout_scores_migi_and_locks_tsumogiri(monkeypatch):
+    """A migi hand keeps its 8-tai declaration value and may only tsumogiri."""
+    import taimahjong.rollout as rollout
+
+    context = WinContext(winning_tile=_tile("3z"), migi_declared=True)
+    world = ev._sample_production_world(
+        POST_DRAW, (0,) * 34, (), 1, context, 20260904,
+    )
+    actor = 1
+    assert world.players[actor].declared_at == 0
+
+    _, value = _settlement(
+        "tsumo", actor, None, list(world.players), POST_DRAW, _tile("3z"), 0,
+    )
+    undeclared = score_hand(
+        POST_DRAW, (), WinContext(_tile("3z"), self_draw=True),
+    ).value_units
+    assert value == undeclared + 8
+
+    # The rollout reaches the actor after three downstream draws.  If it asks
+    # a declared actor's continuation policy to choose, it could tedashi from
+    # the concealed hand, which is illegal after a migi declaration.
+    monkeypatch.setattr(rollout, "_cached_shanten", lambda *_: 0)
+    def concealed_discard(*_args):
+        pytest.fail("a declared actor must tsumogiri instead of using policy")
+
+    resolve_terminal(
+        world.players, (0, 1, 2, 3), actor, (actor + 1) % 4, _tile("3z"),
+        lambda hand, *_: next(tile for tile, count in enumerate(hand) if count),
+        Random(3), acting_discard_policy=concealed_discard, visible=(0,) * 34,
+    )
+
+
+def test_declared_opponent_locks_tsumogiri_in_terminal_rollout(monkeypatch):
+    """A declared opponent cannot reshape its frozen hand with tedashi."""
+    import taimahjong.rollout as rollout
+
+    def hand(start: int) -> list[int]:
+        counts = [0] * 34
+        for tile in range(start, start + 4):
+            counts[tile] = 4
+        return counts
+
+    players = [
+        Player("attack", hand(0)),
+        Player("attack", hand(4), declared_at=0),
+        Player("attack", hand(8)),
+        Player("attack", hand(12)),
+    ]
+    monkeypatch.setattr(rollout, "_cached_shanten", lambda *_: 0)
+
+    def tedashi_policy(*_args):
+        pytest.fail("a declared opponent must tsumogiri instead of using policy")
+
+    resolve_terminal(
+        players, (16,), 0, 1, 0, tedashi_policy, Random(3),
+    )
 
 
 @pytest.mark.parametrize(
@@ -394,7 +554,7 @@ def test_remaining_draws_uses_live_wall_and_four_seats():
     [
         ("9m", "", 14),
         ("9m", "111p", 14),  # the same opponent tiles merely become an open pon
-        ("9m9p", "111p777s", 14),  # multiple opponents' chi/pon holdings
+        ("9m9p", "111p777s", 13),  # multiple opponents' chi/pon holdings
         ("9m9p12z", "111p777s8888m", 13),  # several melds plus a revealed kong
     ],
 )
@@ -413,7 +573,7 @@ def test_explicit_wall_and_derived_accounting_return_the_same_turns():
         parse_tiles("9m9p12z"),
         parse_tiles("111p777s8888m"),
     )
-    derived_live_wall = 136 - 16 - sum(POST_DRAW) - 3 * 16 - 4
+    derived_live_wall = 136 - FLOWERLESS_DEAD_WALL_TILES - sum(POST_DRAW) - 3 * 16 - 4
     assert remaining_draws(POST_DRAW, accounting) == remaining_draws(
         POST_DRAW, accounting, wall_remaining=derived_live_wall,
     )
@@ -523,11 +683,14 @@ def test_crn_reuses_the_same_wall_order_for_every_candidate(monkeypatch):
         choices.setdefault(discard, []).append(
             None if not wall else rng.randrange(len(wall))
         )
-        return rollout.TerminalResult(
-            "draw", None, None, None, (0, 0, 0, 0), 0,
-        )
+        return rollout.TerminalMixture(((
+            1.0,
+            rollout.TerminalResult("draw", None, None, None, (0, 0, 0, 0), 0),
+        ),))
 
-    monkeypatch.setattr(rollout, "resolve_terminal", fake_terminal)
+    monkeypatch.setattr(
+        rollout, "resolve_terminal_distribution", fake_terminal,
+    )
     ev_rank(
         state.players[state.acting_seat].hand,
         (),
@@ -563,11 +726,14 @@ def test_fold_and_push_with_same_discard_have_separate_terminal_cache(monkeypatc
         deltas = [0, 0, 0, 0]
         deltas[acting_seat] = payment
         deltas[(acting_seat + 1) % 4] = -payment
-        return rollout.TerminalResult(
-            "draw", None, None, None, tuple(deltas), 0,
-        )
+        return rollout.TerminalMixture(((
+            1.0,
+            rollout.TerminalResult("draw", None, None, None, tuple(deltas), 0),
+        ),))
 
-    monkeypatch.setattr(rollout, "resolve_terminal", fake_terminal)
+    monkeypatch.setattr(
+        rollout, "resolve_terminal_distribution", fake_terminal,
+    )
     ranked = ev_rank(
         POST_DRAW, [], (0,) * 34,
         turns=1, sims=2, seed=19, exhaustive=True,
@@ -633,3 +799,61 @@ def test_deal_in_ev_rises_against_dealer():
     peer_risk = ev.deal_in_ev(tile, opponent_peer, visible, POST_DRAW, None)
     dealer_risk = ev.deal_in_ev(tile, opponent_dealer, visible, POST_DRAW, None)
     assert dealer_risk > peer_risk
+
+
+def test_defensive_policy_buys_safety_with_win_equity_when_nothing_threatens():
+    """Why the defensive rule must not become production's unconditional default.
+
+    The empirical game over ``{efficiency, deal_in_risk}`` makes all-defensive
+    the unique equilibrium of the shallow endgame, which reads as an argument
+    for shipping :func:`ev._defensive_discard_policy` as the rollout default.
+    Measured 2026-08-27 on the 26 reference cases at 60 worlds, that swap costs
+    0.835 tai of mean actor EV and triples exploitability (0.556 -> 1.684), and
+    the loss is concentrated in cases where *no opponent has declared tenpai*.
+
+    This pins the mechanism on the six cases that pay the most.  The defensive
+    rule does not break its own tenpai there -- both rules stay at shanten 0 --
+    it narrows the wait, trading a third of its live winning tiles for a tile
+    that is marginally safer against opponents who are not threatening at all.
+    A rule that earns its place has to condition on whether defence is called
+    for; this test fails once one does, which is exactly when it should.
+    """
+    from taimahjong.best_response import observation_for
+    from taimahjong.ev import _defensive_discard_policy, _production_discard_policy
+
+    def live_waits(hand: tuple[int, ...], belief: tuple[int, ...]) -> int:
+        return sum(
+            belief[tile]
+            for tile in range(34)
+            if hand[tile] < 4
+            and ev._production_shanten(
+                tuple(count + (tile == index) for index, count in enumerate(hand)), 0,
+            ) == -1
+        )
+
+    cases = [
+        case for case in representative_reference_cases()
+        if case.name.startswith("actor-tsumo-tenpai") and "threat-none" in case.name
+    ]
+    assert len(cases) == 6, "the corpus block this documents has changed size"
+
+    for case in cases:
+        observation = observation_for(case)
+        belief = observation.belief_remaining()
+        assert ev._production_shanten(observation.hand, 0) == 0, case.name
+
+        measured = {}
+        for label, policy in (
+            ("production", _production_discard_policy),
+            ("defensive", _defensive_discard_policy),
+        ):
+            discard = policy(observation.hand, belief, 0)
+            after = list(observation.hand)
+            after[discard] -= 1
+            after = tuple(after)
+            # Neither rule may drop tenpai here; the cost is in the wait, and
+            # a broken tenpai would mean this test documents the wrong thing.
+            assert ev._production_shanten(after, 0) == 0, (case.name, label)
+            measured[label] = live_waits(after, belief)
+
+        assert measured["defensive"] < measured["production"], case.name
