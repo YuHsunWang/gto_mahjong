@@ -1508,6 +1508,8 @@ def ev_rank(
     dealer_streak: int | None = None,
     rules: RulesConfig = DEFAULT_RULES,
     _target_discard: int | None = None,
+    _screen_floor: int | None = None,
+    _screen_cap: int | None = None,
 ) -> list[EVRankEntry]:
     """Rank discards by mean signed actor payment from terminal rollouts.
 
@@ -1734,16 +1736,22 @@ def ev_rank(
             for analysis, entry in pilots
             if entry.net_ev + radius(entry) + SCREENING_EFFECT_MARGIN >= best_lower
         ]
-        if len(screened) < min(top_k, len(pilots)):
+        # ``top_k`` is both the floor and the cap, so today exactly
+        # min(top_k, len(pilots)) candidates survive (DEV-121).  The two
+        # private overrides exist only so scripts/screen_survivors_probe.py
+        # can price other survivor rules; production never passes them.
+        keep_floor = top_k if _screen_floor is None else _screen_floor
+        keep_cap = top_k if _screen_cap is None else _screen_cap
+        if len(screened) < min(keep_floor, len(pilots)):
             screened = sorted(
                 pilots,
                 key=lambda item: (-item[1].net_ev, item[1].discard),
-            )[:min(top_k, len(pilots))]
+            )[:min(keep_floor, len(pilots))]
         else:
             screened = sorted(
                 screened,
                 key=lambda item: (-item[1].net_ev, item[1].discard),
-            )[:top_k]
+            )[:keep_cap]
         if all(
             analysis.discard != fold_discard
             for analysis, _ in screened
