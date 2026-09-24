@@ -30,6 +30,24 @@ def _without_grandfathered_names(text: str) -> str:
     return text
 
 
+# The one scoped GTO claim the owner licensed (2026-09-24, DEV-138), in each
+# README language. It rests on step 3f of docs/equilibrium-plan.md, re-measured
+# on abb16c3 in step 3h: DDDD is the unique equilibrium of the four-role
+# empirical game over {efficiency, deal_in_risk} under both world seeds. Only
+# these exact sentences pass; any change of scope wording, and any other "gto",
+# is still barred. If the equilibrium stops holding, delete them.
+SCOPED_GTO_CLAIMS = (
+    "GTO-solved in the <=4-tile, no-call endgame under a two-strategy abstraction",
+    "在 ≤4 張牌牆、無鳴牌殘局的兩策略抽象下 GTO 求解",
+)
+
+
+def _without_scoped_claims(lowered: str) -> str:
+    for claim in SCOPED_GTO_CLAIMS:
+        lowered = lowered.replace(claim.lower(), "")
+    return lowered
+
+
 def test_ui_readmes_and_metadata_do_not_make_unqualified_solver_claims():
     # These words are barred because they are not true yet, not because they are
     # forbidden. Production still runs a fixed deterministic policy at every
@@ -45,9 +63,10 @@ def test_ui_readmes_and_metadata_do_not_make_unqualified_solver_claims():
     # To lift a bar, earn it and scope the wording to what was actually solved --
     # e.g. computing an equilibrium for the shallow-endgame subgame would license
     # "GTO-solved in the <=N-tile endgame", not a bare "GTO trainer".
-    # docs/equilibrium-plan.md records what has and has not been done.
+    # docs/equilibrium-plan.md records what has and has not been done. One such
+    # scoped sentence has been earned; see SCOPED_GTO_CLAIMS above.
     combined = "\n".join(path.read_text(encoding="utf-8") for path in CLAIM_FILES)
-    lowered = _without_grandfathered_names(combined.lower())
+    lowered = _without_scoped_claims(_without_grandfathered_names(combined.lower()))
     assert "gto" not in lowered
     assert "理論最佳" not in combined
     assert "最佳解" not in combined
@@ -65,6 +84,21 @@ def test_grandfathered_repository_name_is_the_only_gto_exemption():
     assert "gto" not in _without_grandfathered_names(clone_line)
     assert "gto" in _without_grandfathered_names("gto_mahjong is a gto trainer")
     assert "gto" in _without_grandfathered_names("gto-solved endgame")
+
+
+def test_only_the_exact_scoped_claims_pass_the_gto_gate():
+    # Each licensed sentence passes whole; dropping or widening any part of its
+    # scope must bring the gate back, or the exemption has become a loophole.
+    for claim in SCOPED_GTO_CLAIMS:
+        assert "gto" not in _without_scoped_claims(claim.lower())
+    for widened in (
+        "gto-solved in the <=8-tile, no-call endgame under a two-strategy abstraction",
+        "gto-solved in the <=4-tile endgame",
+        "gto-solved endgame",
+        "在 ≤4 張牌牆殘局 gto 求解",
+        "gto trainer",
+    ):
+        assert "gto" in _without_scoped_claims(widened), widened
 
 
 def test_zh_and_en_methodology_cards_disclose_the_same_four_boundaries():
