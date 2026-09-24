@@ -152,8 +152,8 @@ def _honor_profile(honors: tuple[int, ...]) -> tuple[tuple[int, int, int], ...]:
     return _group_profile(_honor_options(honors))
 
 
-def _shanten_unchecked(counts: tuple[int, ...], melds_declared: int) -> int:
-    """Exact shanten for an internally validated concealed hand."""
+def _shanten_unchecked_reference(counts: tuple[int, ...], melds_declared: int) -> int:
+    """Original exact evaluator, retained for equivalence checks."""
     groups = (
         _numeric_profile(counts[0:9]),
         _numeric_profile(counts[9:18]),
@@ -170,6 +170,26 @@ def _shanten_unchecked(counts: tuple[int, ...], melds_declared: int) -> int:
         for melds, taatsu, has_head in profile
         if melds + melds_declared <= 5
     )
+    return 10 - best
+
+
+def _shanten_unchecked(counts: tuple[int, ...], melds_declared: int) -> int:
+    """Exact shanten for an internally validated concealed hand."""
+    profile = _numeric_profile(counts[0:9])
+    profile = _combine_profiles(profile, _numeric_profile(counts[9:18]))
+    profile = _combine_profiles(profile, _numeric_profile(counts[18:27]))
+    profile = _combine_profiles(profile, _honor_profile(counts[27:34]))
+    best = -1
+    melds_room = 5 - melds_declared
+    for melds, taatsu, has_head in profile:
+        if melds > melds_room:
+            continue
+        useful_taatsu = melds_room - melds
+        if taatsu < useful_taatsu:
+            useful_taatsu = taatsu
+        score = 2 * (melds + melds_declared) + useful_taatsu + has_head
+        if score > best:
+            best = score
     return 10 - best
 
 
