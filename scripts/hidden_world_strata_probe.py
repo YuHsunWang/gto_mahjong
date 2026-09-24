@@ -147,12 +147,6 @@ def _validate_mechanisms(
         if effective_is_lhs or all(native == effective for native, effective in quantile_records):
             raise AssertionError("IID control failed to disable effective stratification")
 
-    if calibration_active:
-        if not all(all(item is not None for item in world.ron_value_hands) for world in worlds[:pool]):
-            raise AssertionError("calibrated RON valuation was not active")
-    elif not all(all(item is None for item in world.ron_value_hands) for world in worlds[:pool]):
-        raise AssertionError("uncalibrated control unexpectedly built RON value hands")
-
     real = sorted(
         (entry for entry in ranked if not entry.is_fold),
         key=lambda entry: (-entry.net_ev, entry.discard),
@@ -213,7 +207,7 @@ def run_case(
         context_template,
         world_seed,
         tenpai_quantiles=None,
-        calibrated_ron_values=False,
+        shanten_quantiles=None,
     ):
         if tenpai_quantiles is None:
             raise AssertionError("production sampler did not supply stratified quantiles")
@@ -231,7 +225,7 @@ def run_case(
             context_template,
             world_seed,
             effective,
-            calibrated_ron_values,
+            shanten_quantiles,
         )
 
     def production_worlds(*args, **kwargs):

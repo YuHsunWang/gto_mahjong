@@ -153,7 +153,7 @@ def _exchangeable_trials(
             hand = _exchangeable_hand(rng, seeded_tenpai=seeded_tenpai)
             world = _sample_production_world(
                 hand, (0,) * 34, opponents, TURNS, context,
-                rng.randrange(2**64), quantiles, calibrated,
+                rng.randrange(2**64), quantiles,
             )
             discard = _production_discard_policy(
                 hand, tuple(4 - hand[tile] for tile in range(34)), 0,
@@ -163,7 +163,7 @@ def _exchangeable_trials(
                 _production_discard_policy, random.Random(rng.randrange(2**64)),
                 dealer_streak=streak,
                 calibrated_ron=(
-                    _calibrated_ron(calibration, acting, world.ron_value_hands)
+                    _calibrated_ron(calibration, acting)
                     if calibrated
                     else None
                 ),
