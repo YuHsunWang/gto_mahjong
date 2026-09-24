@@ -145,21 +145,6 @@ def test_determinized_opponents_track_public_tenpai_state_and_conserve_tiles():
     assert sampled_rate(declared, samples=32) == 1.0
 
 
-def test_calibrated_ron_value_redeterminizes_non_tenpai_to_a_physical_win():
-    hand = list(parse_tiles("147m147p147s1234567z"))
-    available = [4 - count for count in hand]
-
-    first = ev._ron_value_hand(hand, available, 0, Random(41))
-    repeat = ev._ron_value_hand(hand, available, 0, Random(41))
-    completed, winning_tile = first
-
-    assert ev._production_shanten(tuple(hand), 0) > 0
-    assert first == repeat
-    assert ev._production_shanten(completed, 0) == -1
-    assert completed[winning_tile] > 0
-    assert score_hand(completed, (), WinContext(winning_tile)).value_units >= 4
-
-
 def test_calibrated_ron_conditions_on_fixed_hands_and_keeps_actor_physical():
     class FixedCalibration:
         def deal_in_probability(self, _danger_score):
@@ -170,9 +155,7 @@ def test_calibrated_ron_conditions_on_fixed_hands_and_keeps_actor_physical():
     winning_tile = _tile("9m")
     players = [Player("attack", list(waiting)) for _ in range(4)]
     players[2].hand = list(winning)
-    claims = ev._calibrated_ron(
-        FixedCalibration(), 0, (None, None, None, None),
-    )
+    claims = ev._calibrated_ron(FixedCalibration(), 0)
 
     probabilities, _ = _calibrated_claim_probabilities(
         players, 1, winning_tile, 0, claims,

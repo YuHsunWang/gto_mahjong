@@ -618,12 +618,6 @@ class _TrialWorld:
     terminal_seed: int | None = None
     wall_order: tuple[int, ...] | None = None
     hidden_stratum: int | None = None
-    ron_value_hands: tuple[
-        tuple[tuple[int, ...], int] | None,
-        tuple[tuple[int, ...], int] | None,
-        tuple[tuple[int, ...], int] | None,
-        tuple[tuple[int, ...], int] | None,
-    ] = (None, None, None, None)
 
 
 class _OrderedWallRandom:
@@ -941,60 +935,6 @@ def _construct_shanten_hand(
     return hand
 
 
-def _ron_value_hand(
-    hand: list[int],
-    available: list[int],
-    melds_declared: int,
-    rng: random.Random,
-) -> tuple[tuple[int, ...], int]:
-    """Return one physical completion used only to value a calibrated RON.
-
-    A sampled tenpai hand keeps its exact tiles.  A non-tenpai sample conflicts
-    with the calibrated event, so redeterminize that seat from its own tiles
-    plus tiles hidden from the public, conditional on tenpai.  In both cases
-    the returned tile is a real wait with a publicly available copy.  Callers
-    pass the same public unknown pool for every seat so valuation cannot depend
-    on the order in which concealed hands happened to be sampled.
-    """
-    source = [
-        available[tile] + hand[tile]
-        for tile in range(34)
-    ]
-    tenpai = (
-        hand.copy()
-        if _production_shanten(tuple(hand), melds_declared) == 0
-        else None
-    )
-
-    def physical_waits(candidate: list[int]) -> list[int]:
-        waits = []
-        for tile in range(34):
-            if candidate[tile] >= source[tile]:
-                continue
-            completed = candidate.copy()
-            completed[tile] += 1
-            if _production_shanten(tuple(completed), melds_declared) == -1:
-                waits.append(tile)
-        return waits
-
-    waits = [] if tenpai is None else physical_waits(tenpai)
-    if not waits:
-        tenpai = _construct_tenpai_hand(
-            source,
-            16 - 3 * melds_declared,
-            melds_declared,
-            rng,
-        )
-        if tenpai is None:
-            raise RuntimeError("unable to determinize a calibrated RON value hand")
-        waits = physical_waits(tenpai)
-        if not waits:
-            raise RuntimeError("calibrated RON value hand has no physical wait")
-    winning_tile = rng.choice(waits)
-    tenpai[winning_tile] += 1
-    return tuple(tenpai), winning_tile
-
-
 def _sample_production_world(
     hand: tuple[int, ...],
     seen: tuple[int, ...],
@@ -1003,7 +943,6 @@ def _sample_production_world(
     context_template: WinContext | WinValueContext | None,
     world_seed: int,
     tenpai_quantiles: tuple[float, ...] | None = None,
-    calibrated_ron_values: bool = False,
     shanten_quantiles: tuple[float, ...] | None = None,
 ) -> _TrialWorld:
     from .selfplay import Player
@@ -1026,7 +965,6 @@ def _sample_production_world(
         for tile in range(34)
     ]
     rng = random.Random(world_seed)
-    value_rng = random.Random(f"calibrated-ron-value:{world_seed}")
     opponent_ordinal = 0
     for seat, player in enumerate(players):
         if seat == acting_seat:
@@ -1083,37 +1021,6 @@ def _sample_production_world(
                 remaining[tile] -= count
         player.hand[:] = sampled
         opponent_ordinal += 1
-    ron_value_hands = (None, None, None, None)
-    if calibrated_ron_values:
-        value_hands = []
-        for seat, player in enumerate(players):
-            source_hand = player.hand.copy()
-            declared = len(player.melds) + len(player.kongs)
-            if seat == acting_seat:
-                # The actor enters the discard decision holding 17 tiles, but
-                # _ron_value_hand's tenpai test assumes a post-discard hand of
-                # 16 - 3*declared.  Feeding it 17 makes a five-meld single wait
-                # read as tenpai, so it keeps all 17 tiles and then hands an
-                # 18-tile winner to scoring.  Drop one to restore that size.
-                #
-                # Which tile does not matter: _ron_value_hand rebuilds its pool
-                # as available + hand, and available is 4 - seen - hand, so the
-                # hand term cancels and the pool is 4 - seen either way.  The
-                # removal only feeds the tenpai test, and it is identical for
-                # every candidate, so the shared world stays candidate-neutral.
-                source_hand[next(
-                    tile for tile, count in enumerate(source_hand) if count
-                )] -= 1
-            value_hands.append(_ron_value_hand(
-                source_hand,
-                [
-                    4 - seen[tile] - source_hand[tile]
-                    for tile in range(34)
-                ],
-                declared,
-                value_rng,
-            ))
-        ron_value_hands = tuple(value_hands)
     pool = [
         tile
         for tile, count in enumerate(remaining)
@@ -1125,7 +1032,6 @@ def _sample_production_world(
         tuple(players),
         wall,
         terminal_seed=rng.randrange(2**64),
-        ron_value_hands=ron_value_hands,
     )
 
 
@@ -1252,12 +1158,6 @@ def _rollout_entry(
 def _calibrated_ron(
     calibration: Calibration,
     acting_seat: int,
-    ron_value_hands: tuple[
-        tuple[tuple[int, ...], int] | None,
-        tuple[tuple[int, ...], int] | None,
-        tuple[tuple[int, ...], int] | None,
-        tuple[tuple[int, ...], int] | None,
-    ],
 ):
     from .rollout import CalibratedRonClaim
     from .selfplay import _public_counts, _view
@@ -1325,7 +1225,6 @@ def _production_worlds(
     context_template: WinContext | WinValueContext | None,
     base_seed: int,
     sims: int,
-    calibration_active: bool,
 ) -> tuple[list[_TrialWorld], int, int, int, tuple[int | None, ...]]:
     """Build the shared hidden-world layer used by every production estimate.
 
@@ -1384,7 +1283,6 @@ def _production_worlds(
                     quantiles[stratum]
                     for quantiles in opponent_quantiles
                 ),
-                calibration_active,
                 tuple(
                     quantiles[stratum]
                     for quantiles in opponent_shanten_quantiles
@@ -1448,7 +1346,7 @@ def evaluate_pass(
     calibration_active = calibration is not None
     worlds, acting, next_seat, streak, seat_to_opponent = _production_worlds(
         hand, seen, views, turns, context_template,
-        base_seed, sims, calibration_active,
+        base_seed, sims,
     )
     terminals = [
         resolve_terminal_distribution(
@@ -1463,7 +1361,7 @@ def evaluate_pass(
             scheme=scheme,
             rules=rules,
             calibrated_ron=(
-                _calibrated_ron(calibration, acting, world.ron_value_hands)
+                _calibrated_ron(calibration, acting)
                 if calibration_active
                 else None
             ),
@@ -1620,7 +1518,7 @@ def ev_rank(
             )
         return _production_worlds(
             hand, seen, views, turns, context_template,
-            world_seed, sims, calibration_active,
+            world_seed, sims,
         )
 
     (
@@ -1650,11 +1548,7 @@ def ev_rank(
         )
         for world in base[len(terminals):budget]:
             calibrated_ron = (
-                _calibrated_ron(
-                    calibration,
-                    resolved_acting,
-                    world.ron_value_hands,
-                )
+                _calibrated_ron(calibration, resolved_acting)
                 if calibration_active
                 else None
             )
