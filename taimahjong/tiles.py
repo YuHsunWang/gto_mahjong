@@ -11,10 +11,12 @@ def validate_counts(counts: tuple[int, ...] | list[int]) -> tuple[int, ...]:
     result = tuple(counts)
     if len(result) != 34:
         raise ValueError("tile counts must contain exactly 34 entries")
-    if any(not isinstance(count, int) or isinstance(count, bool) for count in result):
-        raise ValueError("tile counts must be integers")
-    if any(count < 0 or count > 4 for count in result):
-        raise ValueError("each tile count must be between 0 and 4")
+    for count in result:
+        if type(count) is not int and (not isinstance(count, int) or isinstance(count, bool)):
+            raise ValueError("tile counts must be integers")
+    for count in result:
+        if count < 0 or count > 4:
+            raise ValueError("each tile count must be between 0 and 4")
     return result
 
 
