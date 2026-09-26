@@ -29,7 +29,7 @@ from taimahjong.opponent_shanten import (  # noqa: E402
     cell_key,
     document,
 )
-from taimahjong.selfplay import play_game  # noqa: E402
+from taimahjong.selfplay import generation_rules, play_game  # noqa: E402
 
 
 POLICIES = ("attack", "cautious", "ev_aware", "ev_aware")
@@ -194,6 +194,7 @@ def main() -> None:
             ),
         },
         "policy_mix": list(POLICIES),
+        "rules": generation_rules(),
         "conditioning": "melds|turn_bucket|run_bucket, as the tenpai table",
         "observation": (
             "the discarding seat's own shanten after its discard, paired with "

@@ -239,3 +239,44 @@ recorded command at HEAD produces a different table. Promoting the audited
 bytes keeps the evidence chain that justified the split; regenerating at HEAD
 would need the paired comparison rerun as well, and is a separate piece of
 work.
+
+## DEV-230 regeneration (2026-09-27)
+
+Both self-play tables predated the 2026-09-04 rule changes (dead wall 8→7 dun,
+`ba7fb20`; a kong costs the table a draw, `88cf44b`). They were regenerated with
+the catalog's recorded commands, and every table now records `metadata.rules`
+(`rules_id`, `flowerless_dead_wall_tiles`, `kong_dead_wall_backfill_tiles`);
+`test_shipped_selfplay_tables_match_current_rules` fails when those drift.
+
+The `--audit` run first crashed: `_tail_pair` still matched a bucket named
+`13+`, which DEV-119's split had removed, so the tail bootstrap had nothing to
+sample. It now compares scores (`143dd9e`).
+
+**Audit, same holdout (216,534 observations, 1,130 deal-ins):**
+
+| table | Brier skill | log-loss skill |
+|---|---:|---:|
+| pre-DEV-230 shipped | 0.00268 | 0.05134 |
+| regenerated | 0.00275 | 0.05202 |
+
+Tail: `9-13` 0.9057% (1,810/199,837), `13+` 0.8918% (1,185/132,870), difference
+−0.014 pp, game-cluster bootstrap 95% [−0.082, +0.051] pp — the same
+no-separation result as the DEV-119 audit.
+
+**How far the tables moved (old → new, cells with ≥1,000 observations):**
+
+- Deal-in: every bucket within ±5% except the sparse low buckets (`0-1`
+  1→2 deal-ins, `1-2` 27→37). `16+` 1.311% → 1.429%; `9-13`/`13-16` 0.795% → 0.830%.
+- Tenpai: the largest well-populated moves are `2|1-6|1-2` 7.3% → 8.9%
+  (n≈3,300) and `3|7-12|3+` 40.6% → 46.7% (n≈1,450); most cells move <5%.
+  `1|1-6|3+` doubles (3.3% → 6.7%, n≈400).
+- Opponent shanten: mean total-variation distance per fitted cell is small;
+  every cell with >1,000 observations has TV ≤ 0.06. One new sparse cell
+  (`5|7-12|3+`).
+
+**8-case ranking corpus (`scripts/profile_shanten.py`, same pickled corpus):**
+the best discard is unchanged in all 8 cases. One ranked discard changes
+verdict — `bench-early-default` tile 12, EV loss 0.469 → 0.285, inaccuracy →
+good across the 0.3 boundary. Four other changes are survivor-set swaps: a
+discard that was a `mistake` leaves the ranked top-k and another `mistake`
+enters it.

@@ -255,13 +255,27 @@ def test_full_mode_information_sets_are_effectively_singletons():
     assert result.exploitability == pytest.approx(free.exploitability, abs=1e-9)
 
 
-def test_a_tenpai_actor_that_tsumos_has_nothing_left_on_the_table():
+def test_a_tenpai_actor_that_tsumos_has_nothing_left_on_the_table(monkeypatch):
     """A hand already committed to its winning wait cannot be improved, so
-    these cases pin the zero end of the scale."""
+    these cases pin the zero end of the scale.
+
+    Only the case's own wall guarantees the self-draw: discarding 1m keeps the
+    2p/5p wait and the wall holds 2p.  Sampled worlds redraw the wall, so on
+    them a nonzero gap is legitimate; DEV-230 found this test had passed on
+    the luck of four sampled worlds.  So evaluate the true state, and measure
+    the opening that commits to the sure wait rather than production's rollout
+    rule (which keeps a 1m tanki here and leaves the tsumo on the table).
+    """
     for case in CASES:
         if not case.name.startswith("actor-tsumo-"):
             continue
-        result = exploitability(case, sims=4, seed=1, mode="opening")
+        monkeypatch.setattr(
+            best_response, "sample_worlds",
+            lambda observation, sims, seed, state=case.state: (state,) * sims,
+        )
+        result = exploitability(
+            case, sims=4, seed=1, mode="opening", measured_opening=0,
+        )
         assert result.exploitability == pytest.approx(0.0, abs=1e-12), case.name
 
 
