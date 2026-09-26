@@ -410,11 +410,12 @@ def _rate_cell(observations: int, deal_ins: int) -> dict:
 def _tail_pair(trials: tuple[tuple[float, bool], ...] | list[tuple[float, bool]]) -> tuple[int, int, int, int]:
     lower_observations = lower_deal_ins = upper_observations = upper_deal_ins = 0
     for score, outcome in trials:
-        bucket = danger_bucket(score)
-        if bucket == "9-13":
+        # Compare scores, not bucket names: DEV-119 split the shipped 13+
+        # bucket into 13-16 and 16+, so no bucket is named "13+" any more.
+        if 9.0 <= score < 13.0:
             lower_observations += 1
             lower_deal_ins += int(outcome)
-        elif bucket == "13+":
+        elif score >= 13.0:
             upper_observations += 1
             upper_deal_ins += int(outcome)
     return lower_observations, lower_deal_ins, upper_observations, upper_deal_ins
