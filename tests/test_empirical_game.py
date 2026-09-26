@@ -19,6 +19,8 @@ without anyone noticing.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from taimahjong.danger import deal_in_weight
@@ -37,6 +39,59 @@ from taimahjong.reference_ev import representative_reference_cases
 
 CASES = representative_reference_cases()
 SMALL = CASES[:3]
+
+
+@pytest.fixture
+def declared_one_draw():
+    case = next(
+        case for case in CASES
+        if case.name == "draw-tenpai-nondealer-streak2-3-1-deep-4-threat-multiple"
+    )
+    observation = observation_for(case)
+    world = sample_worlds(observation, 1, 5)[0]
+    assert world.players[world.next_seat].declared_at is not None
+    return replace(world, wall=(world.wall[0],)), observation
+
+
+@pytest.mark.parametrize("strategy", STRATEGIES)
+def test_declared_seat_discards_its_draw_under_every_strategy(
+    declared_one_draw, monkeypatch, strategy,
+):
+    """A declaration freezes discard choice even when the profile changes."""
+    world, observation = declared_one_draw
+    discards = []
+
+    def capture(hands, seat, tile, rules):
+        if seat == world.next_seat:
+            discards.append(tile)
+        return ()
+
+    monkeypatch.setattr("taimahjong.empirical_game._ron_claims", capture)
+    profile_payoffs(
+        world, observation,
+        ("efficiency", strategy, "efficiency", "efficiency"),
+    )
+    assert discards == [world.wall[0]]
+
+
+def test_deal_in_risk_preserves_declared_hand_after_draw(
+    declared_one_draw, monkeypatch,
+):
+    """A defensive policy cannot break a declared seat's tenpai hand."""
+    world, observation = declared_one_draw
+    post_hands = []
+
+    def capture(hands, seat, tile, rules):
+        if seat == world.next_seat:
+            post_hands.append(hands[seat])
+        return ()
+
+    monkeypatch.setattr("taimahjong.empirical_game._ron_claims", capture)
+    profile_payoffs(
+        world, observation,
+        ("efficiency", "deal_in_risk", "efficiency", "efficiency"),
+    )
+    assert post_hands == [world.players[world.next_seat].hand]
 
 
 def test_every_profile_settles_zero_sum():

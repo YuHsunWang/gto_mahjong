@@ -191,8 +191,13 @@ def profile_payoffs(
         public: tuple[int, ...],
         probability: Fraction,
         drawn_hand: tuple[int, ...],
+        drawn_tile: int | None,
     ) -> None:
-        chosen = policies[seat](drawn_hand, _belief(drawn_hand, public))
+        chosen = (
+            drawn_tile
+            if drawn_tile is not None and state.players[seat].declared_at is not None
+            else policies[seat](drawn_hand, _belief(drawn_hand, public))
+        )
         if not drawn_hand[chosen]:
             raise ValueError("a seat policy returned a tile it does not hold")
         post = list(drawn_hand)
@@ -238,7 +243,7 @@ def profile_payoffs(
                     drawn_hand,
                 ), step)
                 continue
-            act(hands, tuple(following), seat, public, step, drawn_hand)
+            act(hands, tuple(following), seat, public, step, drawn_hand, tile)
 
     # The acting seat opens holding 17 tiles and owes a discard immediately.
     act(
@@ -248,6 +253,7 @@ def profile_payoffs(
         observation.visible,
         Fraction(1),
         state.players[state.acting_seat].hand,
+        None,
     )
     return tuple(totals[(acting + role) % 4] for role in range(4))
 
