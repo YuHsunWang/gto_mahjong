@@ -22,14 +22,14 @@ const MODES = [
     hash: '#/quiz',
     name: '單手',
     en: 'Spot drill',
-    desc: '種子產生的關鍵一手：以 terminal-rollout net EV 與排名不確定性比對。',
+    desc: '種子產生的關鍵一手：比較模型模擬到牌局結束的預期淨得分，並顯示排名是否能分辨。',
     statsKey: 'quiz',
   },
   {
     hash: '#/endgame',
     name: '殘局',
     en: 'Endgame drill',
-    desc: '牌牆將盡的高壓局面：比較 terminal-rollout net EV，並保留推／守題型標記。',
+    desc: '牌牆將盡的高壓局面：比較模型模擬到牌局結束的預期淨得分，並保留推／守題型標記。',
     statsKey: 'endgame',
   },
 ];
@@ -59,7 +59,7 @@ function modeCard(mode) {
     const quality = stats.qualityScore === null ? '—' : `${stats.qualityScore}%`;
     row.innerHTML = `<span>已答 <b>${stats.decisions}</b></span>`
       + `<span>品質分數 <b>${quality}</b></span>`
-      + `<span>累計 net EV loss <b>${stats.loss.toFixed(2)}</b></span>`;
+      + `<span>累計預期淨得分損失 <b>${stats.loss.toFixed(2)}</b></span>`;
     const spark = document.createElement('span');
     spark.className = 'spark';
     spark.append(sparklineEl(accuracySeries(mode.statsKey)));
@@ -122,11 +122,11 @@ function homeScreen(root) {
 
   const footnote = document.createElement('div');
   footnote.className = 'footnote';
-  footnote.textContent = '選項只以 terminal-rollout net EV 排序；P(胡牌)、P(流局)與胡牌值只作解讀。'
-    + '校準資料域只涵蓋內建 bot，缺表時會明示 heuristic fallback，不代表真人牌局。'
-    + 'EV 為蒙地卡羅估計：貼著判定門檻的手會自動加碼精算，仍標「（邊緣）」者受殘餘取樣誤差影響。'
+  footnote.textContent = '選項只依模型模擬到牌局結束的預期淨得分排序；P(胡牌)、P(流局)與胡牌值只作解讀。'
+    + '校準資料只來自內建機器人，缺表時會明示改用簡化估計，不代表真人牌局。'
+    + '預期淨得分來自反覆隨機模擬：貼著判定門檻的手會自動加碼精算，仍標「（邊緣）」者受殘餘取樣誤差影響。'
     + '本桌無花牌（花牌建模為獨立的未來里程碑）。'
-    + (hasLegacyStats() ? ' 舊版未標底台的統計已保留為 legacy，未併入目前方案。' : '');
+    + (hasLegacyStats() ? ' 舊版未標底台的統計已保留為舊紀錄，未併入目前方案。' : '');
   root.append(footnote);
 }
 
