@@ -812,6 +812,17 @@ details.evwrap summary {
   .topbar { align-items: flex-start; flex-wrap: wrap; }
 }
 
+@media screen and (max-width: 700px) and (orientation: portrait) {
+  .felt {
+    min-width: 0;
+    aspect-ratio: 2 / 3;
+    grid-template-rows: 15% 7% minmax(0, 1fr) 7% 24%;
+  }
+  .seat--bottom .table-hand { width: 100%; flex-wrap: wrap; gap: 2px; }
+  .seat--bottom .table-hand > .tile { flex-basis: 28px; width: 28px; height: 38px; }
+  .seat--bottom .table-hand .gap { flex-basis: 5px; }
+}
+
 @media screen and (orientation: landscape) and (max-height: 560px) {
   .app.app--table { padding-top: 4px; }
   .app.app--table .topbar { padding-bottom: 5px; }
