@@ -1,5 +1,5 @@
 catalog_version = 1
-as_of = "2026-08-31"
+as_of = "2026-09-27"
 
 [[datasets]]
 id = "production_calibration"
@@ -11,10 +11,9 @@ owner = "scripts/generate_calibration.py"
 regeneration_command = "python scripts/generate_calibration.py --games 8000 --seed-start 50001 --workers 4 --verify-games 12 --out data/calibration.json"
 primary_key = "tenpai: melds|turn_bucket|run_bucket; deal_in: danger bucket; fold: policy"
 schema = ["version", "metadata", "counts.games", "counts.tenpai", "counts.deal_in", "counts.fold", "tables.tenpai", "tables.deal_in", "tables.fold", "quality", "metadata.promotion"]
-size_bytes = 18690
+size_bytes = 17955
 update_frequency = "manual promotion; no schedule"
-reproducible_from_recorded_seed = false
-known_gap = "DEV-119 promoted these bytes from data/calibration-independent.json rather than generating them in place, so metadata.promotion, not metadata.generation, records how the file arrived. The generating self-play ran at commit 2743669 and no longer consumes a previous table, but the engine has since moved to 68f8fd3, so rerunning the recorded command at HEAD produces a different table."
+reproducible_from_recorded_seed = true
 
 [[datasets]]
 id = "independent_calibration_audit"
@@ -26,10 +25,10 @@ owner = "scripts/generate_calibration.py"
 regeneration_command = "python scripts/generate_calibration.py --games 8000 --seed-start 50001 --workers 4 --verify-games 12 --audit --out data/calibration-independent.json"
 primary_key = "calibration cells as production_calibration; audit sections keyed by comparison and tail band"
 schema = ["version", "metadata", "counts", "tables", "quality", "audit.shipped_table", "audit.candidate_table", "audit.tail"]
-size_bytes = 28733
+size_bytes = 29146
 update_frequency = "one-off audit candidate; no schedule"
 reproducible_from_recorded_seed = false
-known_gap = "The committed bytes were produced by the pre-DEV-119 --independent-policy flag, whose behaviour the --audit flag now carries, and its audit block scores the pre-promotion shipped table. Rerunning the recorded command compares against the promoted table instead, so the audit block will not match."
+known_gap = "DEV-230 regenerated this file under the 7-dun dead wall and kong rules (metadata.rules); its audit block scores the pre-DEV-230 shipped table (calibration_id in audit.shipped_table). Rerunning the recorded command now compares against the regenerated table instead, so the audit block will not match; the calibration tables themselves reproduce."
 
 [[datasets]]
 id = "opponent_shanten_distribution"
@@ -41,7 +40,7 @@ owner = "scripts/generate_opponent_shanten.py"
 regeneration_command = "python scripts/generate_opponent_shanten.py --games 4000 --seed-start 60001 --workers 4 --verify-games 12 --out data/opponent-shanten.json"
 primary_key = "melds|turn_bucket|run_bucket, with the pooled back-off cells melds|turn|*, *|turn|* and *|*|*"
 schema = ["version", "metadata", "counts", "tables", "quality"]
-size_bytes = 17077
+size_bytes = 17314
 update_frequency = "manual; regenerate when the self-play policies or the shanten engine change"
 reproducible_from_recorded_seed = true
 
