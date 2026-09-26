@@ -1269,3 +1269,54 @@ python scripts/empirical_game_table.py --tilt deal_in_risk --seed 2
 - `SCOPED_GTO_CLAIMS` 維持撤回（3i）。「唯一均衡」這個前提已經不成立，不能放行。
 - DEV-140 的 T 策略（commit `ba51d57`）要 rebase 到 DEV-226 之後，才能跑 81 profile 表。
 - 3f／3h 的數字只代表未鎖宣告者的賽局，不得引用。
+
+---
+
+## 步驟 3k（2026-09-26）：三策略 81 個 profile——`TDDD` 是四玩家賽局唯一的均衡
+
+DEV-140 加入第三個策略 `threat`（T）：有別家宣告時用 `deal_in_risk`，否則用 `efficiency`。
+與既有策略的決策差異：T≠E 45%、T≠D 34%（`ba51d57` 回合量的，只算未宣告座位，
+所以 DEV-226 的宣告鎖不影響這兩個比例）。程式在 DEV-226 之後（rebase 成 `1ca4f30`）：
+
+```sh
+python scripts/empirical_game_table.py --strategies efficiency,deal_in_risk,threat --seed 1
+python scripts/empirical_game_table.py --strategies efficiency,deal_in_risk,threat --seed 2
+```
+
+416 局面 × 100 世界，各 5677s／5644s，零和殘差 5.0e-16。
+
+### 結論：兩個世界種子、八個 bootstrap 種子都只剩一個均衡
+
+| 賽局 | profile | 種子 1 regret | 95% CI | 種子 2 regret | 95% CI |
+|---|---|---:|---|---:|---|
+| 四玩家（81 個） | `TDDD` | −0.0074 | **[−0.014, −0.001]** | −0.0106 | **[−0.017, −0.003]** |
+| 兩玩家受限（9 個） | `TDEE` | −0.0110 | **[−0.018, −0.005]** | −0.0111 | **[−0.021, −0.003]** |
+
+其餘 80 個（四玩家）與 8 個（受限）profile 在兩個種子下全部排除，沒有 undecided。
+區間整段在零以下，依步驟 3 的判準才叫證明是均衡。
+
+### 3j 卡住的兩個 profile 被 T 分開了
+
+| profile | 種子 1 | 種子 2 |
+|---|---|---|
+| `DDDD` | +0.046 [+0.022, +0.073] | +0.047 [+0.022, +0.077] |
+| `DEDD` | +0.056 [+0.030, +0.087] | +0.059 [+0.032, +0.092] |
+| `TEDD` = `TTDD` | +0.011 [+0.006, +0.018] | +0.012 [+0.003, +0.022] |
+
+角色 0 從 D 改成 T 就多拿約 0.05 分，所以兩者都被排除。角色 0 換成 T 之後，
+角色 1 選 D 比選 E 多約 0.011 分，而且區間不跨零——3j 裡角色 1 的「無差別」消失了。
+
+### 角色 1 的 T 與 E 完全相同
+
+從全 efficiency 出發，角色 1 改成 T 的增益是**正好 0**（腳本標成「wall never reaches」，
+這是 exact-zero 的共用標籤，不是真的沒摸到牌）。`TEDD` 與 `TTDD` 的數字也逐位相同。
+推論（未另外驗證）：角色 1 未宣告而要出牌時，這個語料裡沒有別家已宣告，T 就退回 E。
+所以對角色 1 而言，三策略實際只有兩個行為。
+
+### 這一步仍然不能講什麼
+
+- 均衡只在 `{efficiency, deal_in_risk, threat}` 這個策略集裡成立；2 策略時是 undecided，
+  加一個策略答案就變了。再加策略，答案可能再變。
+- 3f「這一步仍然不能講什麼」全部照舊：子賽局 ≠ 完整牌局、不含鳴牌、不是中盤、不對真人，
+  production 沒有被解。
+- 要不要重新放行帶範圍的 GTO 說法（DEV-138），由 owner 決定；這一步不改 `tests/test_claims.py`。

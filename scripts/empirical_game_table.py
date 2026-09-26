@@ -29,12 +29,10 @@ makes exclusion easier and proof harder.  The four-player table is the one
 that excludes profiles; the restricted table is the one that can put an
 interval below zero.
 
-``--tilt`` picks which defensive policy plays against the efficiency
-baseline.  ``safety`` is the original crude stand-in -- is any copy of this
-tile still unseen?  ``deal_in_risk`` weights the standard wait shapes by the
-chance an opponent holds what they need, which is the step-3 replacement the
-plan asked for.  Profiles print as E/D either way, so the two runs are read
-side by side; D means whichever tilt the run was given.
+``--tilt`` retains the original two-strategy comparison against efficiency.
+``--strategies`` selects an explicit set, including ``threat`` when requested.
+Profiles use E for efficiency, D for deal_in_risk, T for threat, and S for
+safety.  In the legacy ``--tilt safety`` run, S labels safety.
 """
 
 from __future__ import annotations
@@ -50,7 +48,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from taimahjong.empirical_corpus import empirical_game_cases
-from taimahjong.empirical_game import EmpiricalGame, build_game
+from taimahjong.empirical_game import EmpiricalGame, STRATEGIES, build_game
 
 
 SEEDS = (7, 8, 11, 13, 17, 19, 23, 29)
@@ -58,8 +56,12 @@ EFFICIENCY = ("efficiency",) * 4
 
 
 def _code(profile: tuple[str, ...]) -> str:
-    """E for the efficiency baseline, D for whichever defensive tilt is in use."""
-    return "".join("E" if name == "efficiency" else "D" for name in profile)
+    """Use a stable, distinct letter for each named strategy."""
+    labels = {
+        "efficiency": "E", "deal_in_risk": "D", "threat": "T",
+        "safety": "S", "oracle": "O",
+    }
+    return "".join(labels[name] for name in profile)
 
 
 def interval(
@@ -209,7 +211,7 @@ def role_table(
     game: EmpiricalGame,
     resamples: int,
     *,
-    tilt: str,
+    reply: str,
     baseline: str = "efficiency",
     depth_of: dict[int, int] | None = None,
 ) -> None:
@@ -217,12 +219,11 @@ def role_table(
 
     The baseline matters more than it looks.  Deviating from all-efficiency
     measures the gradient at the profile production actually plays; deviating
-    from the all-tilt profile measures it at the equilibrium.  A depth-by-role
+    from an all-defensive profile measures it at that profile.  A depth-by-role
     cell can pay at one and not the other, and only the second says anything
     about what an equilibrium-shaped policy should condition on.
     """
     profile = (baseline,) * 4
-    reply = "efficiency" if baseline == tilt else tilt
     print(f"\n## Deviating from all-{baseline} to {reply}, one role at a time\n")
     header = f"{'role':>5} {'cases':>6} {'gain':>9} {'95% CI':>20} {'verdict':>20}  seed-robust"
     print(header)
@@ -281,8 +282,13 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--resamples", type=int, default=2000)
     parser.add_argument(
-        "--tilt", default="safety", choices=("safety", "deal_in_risk"),
+        "--tilt", default=None, choices=("safety", "deal_in_risk"),
         help="which defensive policy plays against the efficiency baseline",
+    )
+    parser.add_argument(
+        "--strategies", type=lambda value: tuple(value.split(",")),
+        help="comma-separated strategy names (for example, "
+             "efficiency,deal_in_risk,threat)",
     )
     parser.add_argument(
         "--baseline", default="efficiency", choices=("efficiency", "tilt"),
@@ -296,9 +302,20 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.strategies is not None and args.tilt is not None:
+        parser.error("--strategies and --tilt cannot be combined")
+    strategies = args.strategies or ("efficiency", args.tilt or "safety")
+    if len(strategies) < 2 or len(set(strategies)) != len(strategies):
+        parser.error("--strategies requires at least two distinct names")
+    if "efficiency" not in strategies:
+        parser.error("--strategies must include efficiency")
+    unknown = set(strategies) - STRATEGIES.keys()
+    if unknown:
+        parser.error(f"unknown strategies: {', '.join(sorted(unknown))}")
+    tilt = args.tilt or next(name for name in strategies if name != "efficiency")
+
     cases = empirical_game_cases(args.templates)
     started = perf_counter()
-    strategies = ("efficiency", args.tilt)
     game = build_game(cases, sims=args.sims, seed=args.seed, strategies=strategies)
     elapsed = perf_counter() - started
     residual = max(abs(sum(values)) for values in game.payoffs.values())
@@ -311,15 +328,18 @@ def main() -> int:
     print("restricted_regret reproduces regret_interval at full width")
     profile_table(game, args.resamples)
     profile_table(game, args.resamples, roles=(0, 1))
-    role_table(
-        game,
-        args.resamples,
-        tilt=args.tilt,
-        baseline=args.tilt if args.baseline == "tilt" else "efficiency",
-        depth_of={
-            index: len(case.state.wall) for index, case in enumerate(cases)
-        },
-    )
+    baseline = tilt if args.baseline == "tilt" else "efficiency"
+    for reply in strategies:
+        if reply != baseline:
+            role_table(
+                game,
+                args.resamples,
+                reply=reply,
+                baseline=baseline,
+                depth_of={
+                    index: len(case.state.wall) for index, case in enumerate(cases)
+                },
+            )
     print(f"\nbootstrap seeds checked: {SEEDS}")
     return 0
 

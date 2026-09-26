@@ -26,14 +26,17 @@ import pytest
 from taimahjong.danger import deal_in_weight
 from taimahjong.empirical_game import (
     STRATEGIES,
+    _belief,
     build_game,
     deal_in_risk,
     efficiency,
     oracle_efficiency,
     profile_payoffs,
     safety,
+    threat,
 )
 from taimahjong.best_response import observation_for, sample_worlds
+from taimahjong.empirical_corpus import empirical_game_cases
 from taimahjong.reference_ev import representative_reference_cases
 
 
@@ -168,6 +171,63 @@ def test_deal_in_risk_only_ever_discards_a_held_tile():
             assert hand[deal_in_risk(hand, belief)] > 0
 
 
+def test_threat_switches_only_for_declared_opponents_on_corpus_decisions():
+    """Threat must use each defensive rule in its intended public state,
+    and both branches must matter on reachable decisions."""
+    differs_from_efficiency = differs_from_risk = 0
+    for case in empirical_game_cases(13):
+        observation = observation_for(case)
+        for world in sample_worlds(observation, 5, 1 + case.seed):
+            for seat, player in enumerate(world.players):
+                if player.declared_at is not None:
+                    continue
+                hands = [player.hand] if sum(player.hand) == 17 else []
+                for tile in set(world.wall):
+                    drawn = list(player.hand)
+                    drawn[tile] += 1
+                    if sum(drawn) == 17:
+                        hands.append(tuple(drawn))
+                declared = any(
+                    other.declared_at is not None
+                    for index, other in enumerate(world.players) if index != seat
+                )
+                for hand in hands:
+                    belief = _belief(hand, observation.visible)
+                    efficient = efficiency(hand, belief)
+                    defensive = deal_in_risk(hand, belief)
+                    choice = threat(hand, belief, declared)
+                    assert choice == (defensive if declared else efficient)
+                    differs_from_efficiency += choice != efficient
+                    differs_from_risk += choice != defensive
+    assert differs_from_efficiency > 0
+    assert differs_from_risk > 0
+
+
+def test_profile_passes_other_seats_declaration_to_threat(monkeypatch):
+    """The table must route the public declaration signal to the acting policy."""
+    seen = []
+
+    def record(hand, belief, opponent_declared):
+        seen.append(opponent_declared)
+        return efficiency(hand, belief)
+
+    monkeypatch.setitem(STRATEGIES, "threat", record)
+    for declared in (False, True):
+        case = next(
+            case for case in empirical_game_cases(13)
+            if any(
+                player.declared_at is not None
+                for seat, player in enumerate(case.state.players)
+                if seat != case.state.acting_seat
+            ) == declared
+        )
+        observation = observation_for(case)
+        world = sample_worlds(observation, 1, 1 + case.seed)[0]
+        seen.clear()
+        profile_payoffs(world, observation, ("threat", "efficiency", "efficiency", "efficiency"))
+        assert seen and set(seen) == {declared}
+
+
 def test_a_tile_with_no_unseen_copies_is_not_automatically_safe():
     """This is the gap ``deal_in_risk`` exists to close.
 
@@ -266,7 +326,7 @@ def test_strategy_set_is_listed_not_inferred():
     with pytest.raises(ValueError):
         build_game(SMALL, sims=3, seed=1, strategies=("efficiency", "nope"))
     assert set(STRATEGIES) == {
-        "efficiency", "oracle", "safety", "deal_in_risk",
+        "efficiency", "oracle", "safety", "deal_in_risk", "threat",
     }
 
 

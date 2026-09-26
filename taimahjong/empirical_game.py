@@ -67,21 +67,30 @@ from .reference_ev import (
 from .best_response import ActorObservation, observation_for, sample_worlds
 
 
-# A seat policy: (own 17-tile hand, that seat's belief pool) -> discard.
-SeatPolicy = Callable[[tuple[int, ...], tuple[int, ...]], int]
+# A seat policy: (own 17-tile hand, belief pool, opponent declared) -> discard.
+SeatPolicy = Callable[[tuple[int, ...], tuple[int, ...], bool], int]
 
 
-def efficiency(hand17: tuple[int, ...], belief: tuple[int, ...]) -> int:
+def efficiency(
+    hand17: tuple[int, ...], belief: tuple[int, ...],
+    opponent_declared: bool = False,
+) -> int:
     """Production's rollout policy: maximise ukeire after the discard."""
     return _production_discard_policy(hand17, belief, 0)
 
 
-def oracle_efficiency(hand17: tuple[int, ...], belief: tuple[int, ...]) -> int:
+def oracle_efficiency(
+    hand17: tuple[int, ...], belief: tuple[int, ...],
+    opponent_declared: bool = False,
+) -> int:
     """The reference oracle's efficiency rule, which breaks ties differently."""
     return _policy_discard(hand17, belief, 0)
 
 
-def safety(hand17: tuple[int, ...], belief: tuple[int, ...]) -> int:
+def safety(
+    hand17: tuple[int, ...], belief: tuple[int, ...],
+    opponent_declared: bool = False,
+) -> int:
     """Prefer a tile whose copies are already exhausted elsewhere.
 
     A crude genbutsu stand-in: a tile with no unseen copies left cannot be
@@ -104,7 +113,10 @@ def safety(hand17: tuple[int, ...], belief: tuple[int, ...]) -> int:
     return _production_discard_policy(tuple(masked), belief, 0)
 
 
-def deal_in_risk(hand17: tuple[int, ...], belief: tuple[int, ...]) -> int:
+def deal_in_risk(
+    hand17: tuple[int, ...], belief: tuple[int, ...],
+    opponent_declared: bool = False,
+) -> int:
     """Discard the tile least likely to be waited on, then by efficiency.
 
     The step-3 replacement for ``safety``.  Same shape as ``safety`` -- a
@@ -121,10 +133,19 @@ def deal_in_risk(hand17: tuple[int, ...], belief: tuple[int, ...]) -> int:
     return _defensive_discard_policy(hand17, belief, 0)
 
 
-# Four names, three behaviours: measured 2026-08-24 over all 26 cases at 20
+def threat(
+    hand17: tuple[int, ...], belief: tuple[int, ...],
+    opponent_declared: bool = False,
+) -> int:
+    """Defend iff another seat has declared tenpai."""
+    policy = deal_in_risk if opponent_declared else efficiency
+    return policy(hand17, belief)
+
+
+# The original four names include an efficiency/oracle duplicate: measured
+# 2026-08-24 over all 26 cases at 20
 # worlds, ``efficiency`` and ``oracle`` pick the same tile on all 5,415
-# reachable decisions, so the abstraction any claim must carry is
-# {efficiency, safety} or {efficiency, deal_in_risk}.  ``oracle`` stays
+# reachable decisions.  ``oracle`` stays
 # reachable because its tie-break differs in principle and a corpus that
 # separated them would be worth knowing about;
 # ``test_efficiency_and_oracle_are_one_behaviour_not_two`` fails if that day
@@ -134,12 +155,13 @@ STRATEGIES: dict[str, SeatPolicy] = {
     "oracle": oracle_efficiency,
     "safety": safety,
     "deal_in_risk": deal_in_risk,
+    "threat": threat,
 }
 
-# ...but it is not in the default set, because including it costs a great
+# Oracle is not in the default set, because including it costs a great
 # deal to learn nothing.  Measured per world at 26 cases: all-oracle 143 ms,
 # all-efficiency 11.5 ms, all-safety 3.5 ms.  Of the 81 profiles over the
-# full name set, 65 contain ``oracle`` and every one of them duplicates a
+# then-four-name set, 65 contain ``oracle`` and every one duplicates a
 # profile in the 16 below -- the full-name table cost 2,462s at 20 worlds,
 # where these 16 cost 833s at 400.
 DEFAULT_STRATEGIES: tuple[str, ...] = ("efficiency", "safety")
@@ -193,10 +215,16 @@ def profile_payoffs(
         drawn_hand: tuple[int, ...],
         drawn_tile: int | None,
     ) -> None:
+        opponent_declared = any(
+            player.declared_at is not None
+            for other, player in enumerate(state.players) if other != seat
+        )
         chosen = (
             drawn_tile
             if drawn_tile is not None and state.players[seat].declared_at is not None
-            else policies[seat](drawn_hand, _belief(drawn_hand, public))
+            else policies[seat](
+                drawn_hand, _belief(drawn_hand, public), opponent_declared,
+            )
         )
         if not drawn_hand[chosen]:
             raise ValueError("a seat policy returned a tile it does not hold")
