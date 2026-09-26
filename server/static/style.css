@@ -681,13 +681,11 @@ details.evwrap summary {
 .quality-bar .q-inaccuracy, .quality-swatch.q-inaccuracy { background: var(--q-inaccuracy); }
 .quality-bar .q-wrong, .quality-swatch.q-wrong { background: var(--q-wrong); }
 .quality-bar .q-unresolved, .quality-swatch.q-unresolved { background: var(--q-unresolved); }
-.quality-swatch.q-blunder { background: var(--q-blunder); }
 
 .quality-row { display: grid; grid-template-columns: 10px 1fr auto; align-items: center; gap: 8px; padding: 5px 2px; border-bottom: 1px solid rgba(217, 194, 230, .1); }
 .quality-swatch { width: 9px; height: 9px; border-radius: 3px; }
 .quality-row b { font-size: 12px; font-weight: 600; }
 .quality-count { font-weight: 800; font-variant-numeric: tabular-nums; }
-.quality-row--unavailable { color: var(--ink-faint); }
 .quality-note { margin: 8px 0 0; color: var(--ink-faint); font-size: 10px; }
 .loss-card { display: flex; align-items: baseline; gap: 9px; margin-top: 10px; padding: 9px 10px; border: 1px solid rgba(217, 194, 230, .14); border-radius: 10px; background: rgba(217, 194, 230, .06); }
 .loss-card strong { font-size: 21px; font-variant-numeric: tabular-nums; }
