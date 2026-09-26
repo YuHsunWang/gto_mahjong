@@ -45,6 +45,15 @@ KONG_POLICIES = ("none", "concealed_added", "all")
 # 「一槓一」: replenish the retained tail with one live-wall tile per kong.
 KONG_DEAD_WALL_BACKFILL_TILES = 1
 
+
+def generation_rules() -> dict[str, object]:
+    """The rule constants a self-play table was generated under (DEV-230)."""
+    return {
+        "rules_id": DEFAULT_RULES.rules_id,
+        "flowerless_dead_wall_tiles": FLOWERLESS_DEAD_WALL_TILES,
+        "kong_dead_wall_backfill_tiles": KONG_DEAD_WALL_BACKFILL_TILES,
+    }
+
 # M5c's deliberately cheap, deterministic replacement for per-discard Monte
 # Carlo.  Candidate attack value is relative ukeire times a shanten lookup;
 # risk uses a bot-domain calibrated deal-in lookup when available. These are

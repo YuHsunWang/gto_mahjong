@@ -1,5 +1,6 @@
 """The persisted-data inventory must stay complete enough to be actionable."""
 
+import json
 from pathlib import Path
 import tomllib
 
@@ -55,3 +56,18 @@ def test_dataset_catalog_contract_and_paths():
                 assert {candidate.suffix for candidate in files} <= set(entry["bundle_extensions"])
                 for member in entry.get("required_members", []):
                     assert (path / member).is_file(), f"{entry['id']} missing {member}"
+
+
+def test_shipped_selfplay_tables_match_current_rules():
+    """DEV-230: a table fitted under an older wall or kong rule describes a
+    different game; regenerate it when these constants change."""
+    from taimahjong.selfplay import generation_rules
+
+    root = Path(__file__).resolve().parents[1]
+    for name in (
+        "calibration.json",
+        "calibration-independent.json",
+        "opponent-shanten.json",
+    ):
+        metadata = json.loads((root / "data" / name).read_text())["metadata"]
+        assert metadata.get("rules") == generation_rules(), name

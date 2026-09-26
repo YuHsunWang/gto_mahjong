@@ -659,6 +659,7 @@ def main() -> None:
             ),
         },
         "policy_mix": list(POLICIES),
+        "rules": selfplay.generation_rules(),
         "calibration_feedback": previous_calibration,
         "independent_policy": {
             "enabled": independent_policy,
