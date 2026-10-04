@@ -1,4 +1,4 @@
-"""Check that the playable hand remains visible at portrait phone widths."""
+"""Check that phone hands, seat chips and opponent backs fit the table."""
 
 import argparse
 import subprocess
@@ -47,16 +47,50 @@ def check_page(browser, url, width, height, route, screenshot=None):
             const box = tile.getBoundingClientRect();
             return box.left < 0 || box.right > width;
           });
+          const chips = [...document.querySelectorAll('.felt .seat-identity')];
+          const overflowingChips = chips.filter(chip => chip.scrollWidth > chip.clientWidth);
+          const sideChips = [...document.querySelectorAll(
+            '.seat--left .seat-identity, .seat--right .seat-identity')];
+          const sideChildren = sideChips.flatMap(chip => [...chip.children]);
+          const hiddenSideChildren = sideChildren.filter(child => {
+            const box = child.getBoundingClientRect();
+            const style = getComputedStyle(child);
+            return box.width <= 0 || box.height <= 0 || style.display === 'none'
+              || style.visibility === 'hidden' || style.visibility === 'collapse'
+              || !child.checkVisibility({checkOpacity: true, checkVisibilityCSS: true});
+          });
+          const felt = document.querySelector('.felt').getBoundingClientRect();
+          const topRow = document.querySelector('.seat--top .concealed-hand');
+          const topBox = topRow?.getBoundingClientRect();
+          const backs = [...(topRow?.querySelectorAll('.tile-back') || [])];
+          const insideFelt = box => box.left >= felt.left && box.right <= felt.right
+            && box.top >= felt.top && box.bottom <= felt.bottom;
+          const topInside = !!topBox && backs.length > 0 && insideFelt(topBox)
+            && backs.every(back => insideFelt(back.getBoundingClientRect()));
           return {count: tiles.length, outside: outside.length,
-            scrollWidth: document.documentElement.scrollWidth};
+            scrollWidth: document.documentElement.scrollWidth,
+            chips: chips.length, overflowingChips: overflowingChips.length,
+            sideChips: sideChips.length, sideChildren: sideChildren.length,
+            hiddenSideChildren: hiddenSideChildren.length,
+            topBacks: backs.length, topInside};
         }""")
         if screenshot:
             page.screenshot(path=str(screenshot), full_page=True)
         passed = result["count"] > 0 and result["outside"] == 0 and result["scrollWidth"] <= width
+        if route == "trainer":
+            passed = (passed and result["chips"] == 4
+                      and result["overflowingChips"] == 0
+                      and result["sideChips"] == 2 and result["sideChildren"] > 0
+                      and result["hiddenSideChildren"] == 0
+                      and result["topBacks"] == 16 and result["topInside"])
         status = "PASS" if passed else "FAIL"
         print(f"{width}x{height} #/{route}: {status} "
               f"tiles={result['count']} outside={result['outside']} "
-              f"scrollWidth={result['scrollWidth']}", flush=True)
+              f"scrollWidth={result['scrollWidth']}"
+              + (f" chips={result['chips']} overflowingChips={result['overflowingChips']} "
+                 f"sideChildren={result['sideChildren']} hiddenSideChildren={result['hiddenSideChildren']} "
+                 f"topBacks={result['topBacks']} topInside={result['topInside']}"
+                 if route == "trainer" else ""), flush=True)
         return passed
     finally:
         context.close()
