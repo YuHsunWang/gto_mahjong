@@ -213,6 +213,7 @@ def _view(player: Player, seat: int) -> OpponentView:
         is_dealer=seat == DEALER_SEAT,
         dealer_streak=player.dealer_streak if seat == DEALER_SEAT else 0,
         hand_count=sum(player.hand),
+        discard_count=player.discards,
     )
 
 
@@ -392,7 +393,7 @@ def _default_calibration() -> Calibration | None:
 def _tenpai_factor(opponent: OpponentView) -> float:
     if opponent.declared_at is not None:
         return DECLARED_FACTOR
-    score = tenpai_score(opponent, len(opponent.river)).score
+    score = tenpai_score(opponent).score
     return min(3.0, max(0.25, score / BASELINE_TENPAI_RATE))
 
 

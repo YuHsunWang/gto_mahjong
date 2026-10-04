@@ -309,7 +309,7 @@ def opponent_hazards(
             for entry in other.river
         )
         folded = fold_score(opponent, others) >= FOLD_HAZARD_CUTOFF
-        tenpai = 1.0 if opponent.declared_at is not None else tenpai_score(opponent, len(opponent.river)).score
+        tenpai = 1.0 if opponent.declared_at is not None else tenpai_score(opponent).score
         multiplier = min(3.0, max(0.25, tenpai / BASELINE_TENPAI_RATE))
         hazards.append(0.0 if folded else BASE_OPPONENT_HAZARD * multiplier)
     return tuple(hazards)
@@ -526,7 +526,7 @@ def deal_in_ev(
     elif opponent.declared_at is not None:
         factor = DECLARED_FACTOR
     else:
-        factor = min(3.0, max(0.25, tenpai_score(opponent, len(opponent.river)).score / BASELINE_TENPAI_RATE))
+        factor = min(3.0, max(0.25, tenpai_score(opponent).score / BASELINE_TENPAI_RATE))
     return probability * factor * opponent_value_estimate(opponent, scheme)
 
 
@@ -771,6 +771,7 @@ def _copy_view_player(view: OpponentView | None) -> Player:
     return Player(
         "attack",
         river=list(view.river),
+        discards=view.discard_count,
         melds=list(view.melds),
         declared_at=view.declared_at,
         dealer_streak=view.dealer_streak if view.is_dealer else 0,
@@ -1027,7 +1028,7 @@ def _sampled_tenpai_rate(
     the fallback when no table or no well-observed cell exists; it ran 3-20x
     above the table early in the hand.  A migi declaration is tenpai by rule.
     """
-    turn = len(opponent.river)
+    turn = opponent.lookup_turn
     if opponent.declared_at is None and calibration is not None:
         rate = calibration.tenpai_probability(
             len(opponent.melds), turn, _trailing_tsumogiri_run(opponent.river),
@@ -1116,7 +1117,7 @@ def _sample_production_world(
                     else shanten_quantiles[opponent_ordinal]
                 )
                 target = model.sample(
-                    public_state, len(public_state.river), shanten_draw,
+                    public_state, None, shanten_draw,
                 )
                 if target is not None:
                     sampled = _construct_shanten_hand(
@@ -1344,6 +1345,7 @@ def _calibrated_ron(
                 for entry in player.river[river_lengths[seat]:]:
                     public_counts[entry.tile] += 1
                     public_views[seat].river.append(entry)
+                public_views[seat].discard_count = player.discards
                 river_lengths[seat] = len(player.river)
         public = tuple(public_counts)
         # Calibration rows were recorded from each discarder against every

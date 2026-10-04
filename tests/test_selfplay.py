@@ -24,7 +24,7 @@ from taimahjong.calibration import (
     write_merged_table,
 )
 from taimahjong.config import DEFAULT_RULES, resolve_ron_claims
-from taimahjong.danger import OpponentView, danger_score
+from taimahjong.danger import OpponentView, danger_score, tenpai_score
 from taimahjong.selfplay import (
     KONG_DEAD_WALL_BACKFILL_TILES,
     Player,
@@ -211,6 +211,18 @@ def test_cautious_avoids_feeding_the_dealer(monkeypatch):
     monkeypatch.setattr(selfplay, "CAUTIOUS_DEALER_BONUS", 0.0)
     without_weight, _ = _choose_discard(1, None, players)
     assert without_weight == one_m
+
+
+def test_tenpai_factor_counts_called_away_discards():
+    # Six discards with two called away leave four river tiles, but the
+    # risk factor must use the next-discard (turn 7) key, not river length.
+    opponent = OpponentView([0, 1, 2, 3], [], discard_count=6)
+    assert opponent.lookup_turn == 7
+    assert tenpai_score(opponent, len(opponent.river)).score == pytest.approx(0.072)
+    assert tenpai_score(opponent, 7).score == pytest.approx(0.126)
+    assert selfplay._tenpai_factor(opponent) == pytest.approx(
+        0.126 / selfplay.BASELINE_TENPAI_RATE
+    )
 
 
 def test_ev_aware_is_deterministic_and_chooses_the_safe_known_case(monkeypatch):

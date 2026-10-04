@@ -767,3 +767,20 @@ def test_kong_table_refines_all_actions_and_keeps_missing_uncertainty_visible(mo
     assert evaluation.best_index is None
     assert evaluation.ranking_state == "uncertain"
     assert evaluation.indistinguishable_indices == (None, 0)
+
+
+def test_trainer_position_preserves_discards_called_out_of_river():
+    from taimahjong.danger import RiverEntry
+    from taimahjong.selfplay import Player
+    from taimahjong.tiles import parse_tiles
+    from taimahjong.trainer import _trainer_position
+
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand = list(parse_tiles("123m123p123s11122233z"))
+    players[1].river = [RiverEntry(tile) for tile in (3, 4, 5, 6)]
+    players[1].discards = 6
+    position = _trainer_position(0, 0, players, 40, 7)
+    opponent = next(opponent for opponent in position.opponents if opponent.seat == 1)
+    assert opponent.discard_count == 6
+    assert len(opponent.river) == 4
+    assert opponent.view().lookup_turn == 7

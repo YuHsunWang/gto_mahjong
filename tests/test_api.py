@@ -360,7 +360,7 @@ def test_ev_rank_endpoint_accepts_three_opponents(client, monkeypatch):
         "hand": "123m123p123s11122233z",
         "opponents": [
             {"river": "9m"},
-            {"river": "9p", "melds": "111p"},
+            {"river": "9p", "melds": "111p", "discard_count": 6},
             {"river": "1z", "is_dealer": True, "dealer_streak": 2},
         ],
         "turns": 1,
@@ -370,6 +370,8 @@ def test_ev_rank_endpoint_accepts_three_opponents(client, monkeypatch):
     assert response.status_code == 200
     assert len(captured["opponents"]) == 3
     assert captured["opponents"][1].melds
+    assert captured["opponents"][0].discard_count == 1
+    assert captured["opponents"][1].discard_count == 6
     assert captured["opponents"][2].is_dealer
     assert len(response.json()["opponents"]) == 3
 
@@ -694,3 +696,23 @@ def test_trainer_option_payload_reports_refinement_and_uncertainty(client, monke
     assert feedback["ranking_state"] == ("marginal" if kind == "call" else "uncertain")
     assert feedback["ranking_uncertain"] is True
     assert feedback["indistinguishable_indices"] == [None, 0]
+
+
+@pytest.mark.parametrize("discard_count,status", [(6, 200), (3, 422)])
+def test_ev_rank_legacy_discard_count(client, monkeypatch, discard_count, status):
+    captured = []
+
+    def capture_rank(_hand, opponents, _visible, **_kwargs):
+        captured.extend(opponents)
+        return []
+
+    monkeypatch.setattr(api, "ev_rank", capture_rank)
+    response = client.post("/api/ev/rank", json={
+        "hand": "123m123p123s11122233z",
+        "river": "3456m", "discard_count": discard_count,
+        "turns": 1, "sims": 1,
+    })
+    assert response.status_code == status
+    if status == 200:
+        assert captured[0].discard_count == 6
+        assert captured[0].lookup_turn == 7

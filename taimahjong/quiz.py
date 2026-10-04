@@ -179,6 +179,7 @@ class QuizOpponent:
     fold_estimate: float
     dealer_streak: int = 0  # nonzero only when this opponent is the dealer
     hand_count: int = 0
+    discard_count: int | None = None
 
     @property
     def declared(self) -> bool:
@@ -193,6 +194,7 @@ class QuizOpponent:
             list(self.river), list(self.melds), self.declared_at,
             is_dealer=self.is_dealer, dealer_streak=self.dealer_streak,
             hand_count=self.hand_count,
+            discard_count=self.discard_count,
         )
 
 
@@ -328,17 +330,21 @@ def _opponents_from(snapshot: DecisionSnapshot) -> tuple[QuizOpponent, ...]:
     for seat, view in snapshot.opponents:
         frozen_river = tuple(entry if isinstance(entry, RiverEntry) else RiverEntry(entry) for entry in view.river)
         frozen_melds = tuple(view.melds)
-        frozen_view = OpponentView(list(frozen_river), list(frozen_melds), view.declared_at)
+        frozen_view = OpponentView(
+            list(frozen_river), list(frozen_melds), view.declared_at,
+            discard_count=view.discard_count,
+        )
         opponents.append(
             QuizOpponent(
                 seat,
                 frozen_river,
                 frozen_melds,
                 view.declared_at,
-                tenpai_score(frozen_view, snapshot.turn).score,
+                tenpai_score(frozen_view).score,
                 fold_score(frozen_view, _river_counts(snapshot.opponents, seat, snapshot.river)),
                 dealer_streak=snapshot.dealer_streak if seat == DEALER_SEAT else 0,
                 hand_count=view.hand_count,
+                discard_count=view.discard_count,
             )
         )
     return tuple(opponents)

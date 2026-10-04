@@ -229,3 +229,50 @@ def test_the_sampler_still_works_with_no_document(monkeypatch):
     world = _sample_production_world(hand, seen, views, 8, None, 99)
     for player in world.players:
         assert sum(player.hand) + 3 * len(player.melds) == 16
+
+
+def test_called_discards_use_turn_seven_cell_matching_selfplay():
+    # Six discards were made, two were called away: river length is only four.
+    opponent = OpponentView(parse_river("1234m"), [], discard_count=6)
+    assert view_key(opponent) == cell_key(0, 6 + 1, 0) == "0|7-12|0"
+    model = OpponentShanten(document({
+        "0|1-6|0": {"4": MIN_CELL_COUNT},
+        "0|7-12|0": {"1": MIN_CELL_COUNT},
+    }))
+    assert model.distribution(opponent) == ((1, 1.0),)
+    assert model.sample(opponent, None, 0.5) == 1
+
+
+def test_world_sampler_uses_discard_count_for_both_opponent_models(monkeypatch):
+    from taimahjong import ev
+    from taimahjong.danger import tenpai_score
+
+    opponent = OpponentView(parse_river("1234m"), [], discard_count=6)
+    observed_turns = []
+    model = OpponentShanten(document({"0|7-12|0": {"1": MIN_CELL_COUNT}}))
+    original_distribution = model.distribution
+
+    def capture_distribution(view, turn=None):
+        observed_turns.append(view_key(view, turn))
+        return original_distribution(view, turn)
+
+    tenpai_turns = []
+
+    def capture_tenpai(view, turn=None):
+        tenpai_turns.append(view.lookup_turn if turn is None else turn)
+        return tenpai_score(view, turn)
+
+    monkeypatch.setattr(ev, "tenpai_score", capture_tenpai)
+    monkeypatch.setattr(ev, "_default_opponent_shanten", lambda: model)
+    monkeypatch.setattr(model, "distribution", capture_distribution)
+    monkeypatch.setattr(ev, "_construct_shanten_hand", lambda *_args: None)
+    hand = parse_tiles("123456789p1234567z")
+    seen = tuple(sum(entry.tile == tile for entry in opponent.river) for tile in range(34))
+    world = ev._sample_production_world(
+        hand, seen, (opponent,), 1, None, 7,
+        tenpai_quantiles=(1.0, 1.0, 1.0),
+        shanten_quantiles=(0.5, 0.5, 0.5),
+    )
+    assert tenpai_turns[0] == 7
+    assert observed_turns[0] == "0|7-12|0"
+    assert world.players[0].discards == 6
