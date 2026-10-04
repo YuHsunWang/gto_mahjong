@@ -822,6 +822,7 @@ def play_trainer(
         player = players[current]
         drawn_tile = pending_drawn_tile
         pending_drawn_tile = None
+        live_draw = False
 
         if needs_draw:
             if not wall:
@@ -834,12 +835,14 @@ def play_trainer(
                 )
                 return
             drawn_tile = wall.pop()
+            live_draw = True
             player.hand[drawn_tile] += 1
             if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                 winning_hand = tuple(player.hand)
                 deltas, _ = _settlement(
                     "tsumo", current, None, players, winning_hand, drawn_tile,
                     dealer_streak, scheme,
+                    wall_remaining=len(wall), rules=rules,
                 )
                 yield _outcome(
                     "tsumo", current, None, human_seat, deltas, actions,
@@ -875,6 +878,7 @@ def play_trainer(
                                 dealer_streak,
                                 scheme,
                                 robbed_kong=True,
+                                rules=rules,
                             )
                             robber = robbers[0]
                             yield _outcome(
@@ -884,11 +888,12 @@ def play_trainer(
                             )
                             return
                     drawn_tile = _declare_kong(player, option.tile, option.kind == "concealed", dead, wall)
+                    live_draw = False
                     if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                         winning_hand = tuple(player.hand)
                         deltas, _ = _settlement(
                             "tsumo", current, None, players, winning_hand, drawn_tile,
-                            dealer_streak, scheme, kong_bloom=True,
+                            dealer_streak, scheme, kong_bloom=True, rules=rules,
                         )
                         yield _outcome(
                             "tsumo", current, None, human_seat, deltas, actions,
@@ -934,6 +939,7 @@ def play_trainer(
             deltas, _ = _settle_ron_winners(
                 winners, current, players, winning_hands, tile,
                 dealer_streak, scheme,
+                wall_remaining=len(wall) if live_draw else None, rules=rules,
             )
             winner = winners[0]
             yield _outcome(
@@ -1028,6 +1034,7 @@ def play_trainer(
                     deltas, _ = _settlement(
                         "tsumo", human_seat, None, players, winning_hand,
                         replacement, dealer_streak, scheme,
+                        rules=rules,
                     )
                     yield _outcome(
                         "tsumo", human_seat, None, human_seat, deltas, actions,

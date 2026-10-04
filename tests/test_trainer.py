@@ -27,6 +27,54 @@ def _discard_drawn(position):
     return next(tile for tile, count in enumerate(position.hand) if count)
 
 
+@pytest.mark.parametrize("menqing_three", [False, True])
+@pytest.mark.parametrize("outcome", ["tsumo", "ron"])
+def test_trainer_last_live_win_reports_one_extra_tai(monkeypatch, menqing_three, outcome):
+    from dataclasses import replace
+    from random import Random
+
+    from taimahjong.tiles import parse_tiles
+
+    tile = 19  # 2s
+    waiting = list(parse_tiles("111m456789p234s55789s"))
+    waiting[tile] -= 1
+    hand_tiles = [index for index, copies in enumerate(waiting) for _ in range(copies)]
+    scattered = parse_tiles("147m147p147s1234567z")
+    scattered_tiles = [index for index, copies in enumerate(scattered) for _ in range(copies)]
+    winner = 0 if outcome == "tsumo" else 1
+    hands = [hand_tiles if seat == winner else scattered_tiles for seat in range(4)]
+    rules = replace(DEFAULT_RULES, menqing_self_draw_three=menqing_three)
+
+    def run(live_tiles, configured_rules=rules):
+        def fixed_wall(_rng, tiles):
+            # Deal the waiting hand to the winner; reserve 14 dead tiles.
+            dealt = [hands[seat][index] for index in range(16) for seat in range(4)]
+            tiles[:] = [tile] * live_tiles + [0] * 14 + list(reversed(dealt))
+
+        monkeypatch.setattr(Random, "shuffle", fixed_wall)
+        game = play_trainer(1, human_seat=winner, rules=configured_rules)
+        return next(game)
+
+    # The bot discards its draw, allowing seat 1 to win immediately by ron.
+    if outcome == "ron":
+        import taimahjong.trainer as trainer
+
+        monkeypatch.setattr(
+            trainer, "_choose_discard", lambda _seat, drawn, *_: (drawn, False),
+        )
+
+    ordinary = run(2)
+    last = run(1)
+    default = run(1, DEFAULT_RULES)
+    assert isinstance(last, TrainerOutcome)
+    assert last.outcome == ordinary.outcome == outcome
+    assert last.human_won
+    payment_legs = 3 if outcome == "tsumo" else 1
+    assert last.point_delta == ordinary.point_delta + payment_legs
+    menqing_bonus = 3 * int(menqing_three) if outcome == "tsumo" else 0
+    assert last.point_delta == default.point_delta + menqing_bonus
+
+
 def _play(seed, pick, call_pick=lambda decision: None):
     """Drive one game; ``pick`` chooses each discard, ``call_pick`` each call
     (default: pass every call, so the human stays concealed)."""
