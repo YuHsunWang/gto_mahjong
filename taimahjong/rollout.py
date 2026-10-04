@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from random import Random
 from typing import Callable, Sequence
 
 from .config import DEFAULT_RULES, RulesConfig, resolve_ron_claims
-from .danger import RiverEntry
+from .danger import KongLike, MeldLike, RiverEntry
 from .scoring import DEFAULT_SCHEME, ScoringScheme
 from .selfplay import (
     Player,
@@ -344,6 +345,29 @@ def _winner_distribution(
     return distribution
 
 
+@lru_cache(maxsize=8192)
+def _cached_ron_settlement(
+    winner: int,
+    discarder: int,
+    winning_hand: tuple[int, ...],
+    winning_tile: int,
+    melds: tuple[MeldLike, ...],
+    kongs: tuple[KongLike, ...],
+    declared: bool,
+    dealer_streak: int,
+    scheme: ScoringScheme,
+) -> tuple[PaymentDeltas, int]:
+    """Cache every input read by a RON settlement, including the dealer leg."""
+    players = [Player("attack") for _ in range(4)]
+    players[winner].melds = list(melds)
+    players[winner].kongs = list(kongs)
+    players[winner].declared_at = 0 if declared else None
+    return _settlement(
+        "ron", winner, discarder, players, winning_hand, winning_tile,
+        dealer_streak, scheme,
+    )
+
+
 def _calibrated_ron_terminal(
     players: list[Player],
     winners: tuple[int, ...],
@@ -375,13 +399,15 @@ def _calibrated_ron_terminal(
         else:
             claim = estimates[winner]
             if claim.winning_hand is not None:
-                payment, value = _settlement(
-                    "ron",
+                player = players[winner]
+                payment, value = _cached_ron_settlement(
                     winner,
                     discarder,
-                    players,
                     claim.winning_hand,
                     claim.scoring_tile,
+                    tuple(player.melds),
+                    tuple(player.kongs),
+                    player.declared,
                     dealer_streak,
                     scheme,
                 )

@@ -188,6 +188,32 @@ def test_world_sampler_takes_tenpai_rates_from_the_calibration_table():
     assert abs(tenpai_share(TableCalibration(None)) - heuristic) < 0.1
 
 
+def test_calibrated_rank_is_exact_with_and_without_settlement_cache(monkeypatch):
+    import taimahjong.rollout as rollout
+
+    class FixedCalibration:
+        def deal_in_probability(self, _danger_score):
+            return 0.2
+
+        def tenpai_probability(self, _melds, _turn, _run):
+            return None
+
+    def rank():
+        return ev_rank(
+            POST_DRAW, (), (0,) * 34, turns=2, sims=4, seed=19,
+            exhaustive=True, calibration=FixedCalibration(),
+        )
+
+    cache = rollout._cached_ron_settlement
+    cache.cache_clear()
+    cached = rank()
+    assert cache.cache_info().hits > 0
+    monkeypatch.setattr(rollout, "_cached_ron_settlement", cache.__wrapped__)
+    # Pin whole entries, including each trial's payment and ranking order.
+    # A rounding tolerance would hide a key that loses settlement state.
+    assert cached == rank()
+
+
 def test_calibrated_ron_prices_every_opponent_and_keeps_actor_physical():
     # The deal-in table counts every discard against every opponent, so its
     # rate already integrates over hidden hands. It must price an opponent

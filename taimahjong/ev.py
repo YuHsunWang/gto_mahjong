@@ -1283,6 +1283,12 @@ def _calibrated_ron(
     from .rollout import CalibratedRonClaim
     from .selfplay import _public_counts, _view
 
+    @lru_cache(maxsize=256)
+    def probability_for_score(score: float) -> float:
+        return min(1.0, max(
+            0.0, calibration.deal_in_probability(score) or 0.0,
+        ))
+
     def claims(
         players: Sequence[Player],
         discarder: int,
@@ -1311,9 +1317,7 @@ def _calibrated_ron(
                 and "declared_safe" in assessment.modifiers
             ):
                 continue
-            probability = min(1.0, max(
-                0.0, calibration.deal_in_probability(assessment.score) or 0.0,
-            ))
+            probability = probability_for_score(assessment.score)
             if not probability:
                 continue
             completed = player.hand.copy()
