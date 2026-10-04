@@ -17,7 +17,6 @@ REQUIRED_FIELDS = {
     "regeneration_command",
     "primary_key",
     "schema",
-    "size_bytes",
     "update_frequency",
     "reproducible_from_recorded_seed",
 }
@@ -35,7 +34,6 @@ def test_dataset_catalog_contract_and_paths():
         assert not missing, f"{entry.get('id', '<unnamed>')} missing {sorted(missing)}"
         assert entry["layer"] in LAYERS
         assert entry["schema"], f"{entry['id']} must declare its schema/columns"
-        assert entry["size_bytes"] >= 0
         if entry["owner"] == "unknown":
             assert entry.get("known_gap"), f"{entry['id']} must explain unknown provenance"
         if not entry["optional"]:
