@@ -24,7 +24,8 @@ from .analysis import AnalysisContext, DEFAULT_ANALYSIS_CONTEXT
 from .calibration import Calibration
 from .config import DEFAULT_RULES, RulesConfig, resolve_ron_claims
 from .danger import DeclaredKong, DeclaredMeld, KongLike, MeldLike, kong_tiles, meld_tiles
-from .ev import FLOWERLESS_DEAD_WALL_TILES, WinValueContext, declaration_ev, evaluate_discard, evaluate_pass, ev_rank
+from .ev import EVRankEntry, FLOWERLESS_DEAD_WALL_TILES, WinValueContext, paired_delta_moments, declaration_ev, evaluate_discard, evaluate_pass, ev_rank
+from .moments import SampleMoments
 from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
 from .scoring import DEFAULT_SCHEME, ScoreResult, ScoringScheme, WinContext
 from .selfplay import (
@@ -111,16 +112,13 @@ class CallVerdict(quiz.Verdict):
 class CallEvaluation:
     """EV of each call option plus passing, analysis-tool style.
 
-    ``pass_ev`` and ``option_evs`` are the cheap EV_SIMS estimates that rank the
-    actions and populate the table. ``best_ev`` is the *best* action re-estimated
-    at REFINE_SIMS; :meth:`verdict_for` re-estimates the chosen action at the
-    same budget and CRN base seed, escalating both to ESCALATE_SIMS when the
-    ev_delta lands on a verdict boundary — the same adaptive scheme as the
-    discard grader. ``decision``/``base_seed`` are carried so the chosen action
-    can be refined on demand."""
+    ``pass_ev`` and ``option_evs`` use REFINE_SIMS, as does the best action.
+    The cheap stage selects only each option's post-call discard. Grading can
+    escalate the best/chosen pair near a verdict boundary.
+    """
 
     pass_ev: float
-    option_evs: tuple[float, ...]  # cheap EV_SIMS estimates, aligned with options
+    option_evs: tuple[float, ...]  # REFINE_SIMS estimates, aligned with options
     best_index: int | None  # index into options, or None if passing ranks best
     best_ev: float  # best action re-estimated at ``best_ev_sims``
     best_ev_sims: int  # budget that produced ``best_ev``
@@ -132,6 +130,20 @@ class CallEvaluation:
     option_best_discards: tuple[int | None, ...] = ()
     scheme: ScoringScheme = DEFAULT_SCHEME
     analysis: AnalysisContext = field(default=DEFAULT_ANALYSIS_CONTEXT, compare=False, repr=False)
+
+    action_estimates: tuple[EVRankEntry | None, ...] = field(default=(), compare=False, repr=False)
+
+    @property
+    def indistinguishable_indices(self) -> tuple[int | None, ...]:
+        return _option_uncertainty(self)[0]
+
+    @property
+    def ranking_state(self) -> str:
+        return _option_uncertainty(self)[1]
+
+    @property
+    def ranking_uncertain(self) -> bool:
+        return self.ranking_state != "clear"
 
     def _action_ev(self, choice: int | None, sims: int) -> float:
         """Re-estimate one action (pass or an option) at ``sims`` under the seed."""
@@ -175,7 +187,10 @@ class CallEvaluation:
         def estimate(sims: int) -> tuple[float, float]:
             # Reuse only the budget that actually produced self.best_ev.
             best_ev = self.best_ev if sims == self.best_ev_sims else self._action_ev(self.best_index, sims)
-            return best_ev - self._action_ev(choice, sims), best_ev
+            return best_ev - (
+                (self.pass_ev if choice is None else self.option_evs[choice])
+                if sims == self.best_ev_sims else self._action_ev(choice, sims)
+            ), best_ev
 
         # Gate on whichever refined hand is farther from tenpai, keeping both
         # actions' escalation cheap.
@@ -195,7 +210,7 @@ class KongVerdict(quiz.Verdict):
 class KongEvaluation:
     """EV of declaring each offered kong versus not konging.
 
-    ``pass_ev`` and ``option_evs`` are cheap shared-CRN estimates. The best
+    ``pass_ev`` and ``option_evs`` are refined shared-CRN estimates. The best
     action and the chosen action are refined through :func:`quiz.resolve_adaptive`
     exactly like call grading. A declared kong is valued as the one-step
     expectation over its dead-wall replacement tile, followed by the best
@@ -213,6 +228,20 @@ class KongEvaluation:
     base_seed: int = 0
     scheme: ScoringScheme = DEFAULT_SCHEME
     analysis: AnalysisContext = field(default=DEFAULT_ANALYSIS_CONTEXT, compare=False, repr=False)
+
+    action_estimates: tuple[EVRankEntry | None, ...] = field(default=(), compare=False, repr=False)
+
+    @property
+    def indistinguishable_indices(self) -> tuple[int | None, ...]:
+        return _option_uncertainty(self)[0]
+
+    @property
+    def ranking_state(self) -> str:
+        return _option_uncertainty(self)[1]
+
+    @property
+    def ranking_uncertain(self) -> bool:
+        return self.ranking_state != "clear"
 
     def _action_ev(self, choice: int | None, sims: int) -> float:
         if choice is None:
@@ -236,7 +265,10 @@ class KongEvaluation:
 
         def estimate(sims: int) -> tuple[float, float]:
             best_ev = self.best_ev if sims == self.best_ev_sims else self._action_ev(self.best_index, sims)
-            return best_ev - self._action_ev(choice, sims), best_ev
+            return best_ev - (
+                (self.pass_ev if choice is None else self.option_evs[choice])
+                if sims == self.best_ev_sims else self._action_ev(choice, sims)
+            ), best_ev
 
         gate_shanten = max(self._action_shanten(self.best_index), self._action_shanten(choice))
         outcome, best_ev = quiz.resolve_adaptive(estimate, gate_shanten, self.scheme)
@@ -481,19 +513,20 @@ def _post_call(
     assert option.kind in ("pon", "chi")
     post = list(position.hand)
     public = list(position.public_counts)
+    # The claimed discard is already public in the discarder's river.
     for consumed in option.consumed:
         post[consumed] -= 1
         public[consumed] += 1
     return tuple(post), position.own_melds + (option.meld,), tuple(public)
 
 
-def _pass_ev(
+def _pass_estimate(
     decision: TrainerCallDecision,
     base_seed: int,
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
-) -> float:
+) -> EVRankEntry:
     """Signed net payment of declining the call and keeping the concealed hand.
 
     Passing owes no discard this turn, so it cannot be priced as a discard EV.
@@ -513,7 +546,17 @@ def _pass_ev(
         replace(_score_template(position), opening_live_draw=False),
         calibration=calibration,
         scheme=scheme,
-    ).net_ev
+    )
+
+
+def _pass_ev(
+    decision: TrainerCallDecision,
+    base_seed: int,
+    sims: int,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    calibration: Calibration | None = None,
+) -> float:
+    return _pass_estimate(decision, base_seed, sims, scheme, calibration).net_ev
 
 
 def _refine_pass(
@@ -573,16 +616,29 @@ def _refine_option(
         )
     if discard is None:
         return 0.0
+    return _refine_call_discard(
+        decision, option, discard, base_seed, sims, scheme, calibration,
+    ).net_ev
+
+
+def _refine_call_discard(
+    decision: TrainerCallDecision,
+    option: CallOption,
+    discard: int,
+    base_seed: int,
+    sims: int,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    calibration: Calibration | None = None,
+) -> EVRankEntry:
     position = decision.position
     post, melds, public = _post_call(position, option)
-    entry = evaluate_discard(
+    return evaluate_discard(
         post, discard, [opponent.view() for opponent in position.opponents],
         public, len(melds) + len(position.own_kongs), position.draws_remaining,
         sims, base_seed, replace(_score_template(position, melds), opening_live_draw=False),
         calibration=calibration,
         scheme=scheme,
     )
-    return entry.net_ev
 
 
 def _best_discard_ev(
@@ -734,13 +790,9 @@ def evaluate_call(
 ) -> CallEvaluation:
     """EV of each call option and of passing, under shared random numbers.
 
-    Two-stage, mirroring the discard grader: every action is ranked cheaply at
-    EV_SIMS (CRN base seed) to pick the best and each option's best post-call
-    discard, then only the two actions a verdict depends on — the best and the
-    chosen (via :meth:`CallEvaluation.verdict_for`) — are re-estimated at
-    REFINE_SIMS under the same seed by re-scoring that one deciding discard. This
-    cuts verdict noise ~sqrt(EV_SIMS/REFINE_SIMS) without paying the high budget
-    on every option.
+    EV_SIMS selects each option's post-call discard. All actions are then
+    estimated at REFINE_SIMS under the same seed for display and selection.
+    Grading reuses those estimates before optionally escalating the pair.
 
     Approximations (documented, Phase 2a): pon/chi opens the hand (loses 門清
     and the migi option) and lets the player act now; its value is the best
@@ -756,26 +808,31 @@ def evaluate_call(
     calibration = context.calibration.calibration
     base_seed = _evaluation_seed(decision.position) if seed is None else seed
 
-    pass_ev = _pass_ev(decision, base_seed, quiz.EV_SIMS, scheme, calibration)
     ranked = [
         _option_rank(decision, option, base_seed, quiz.EV_SIMS, scheme, calibration)
         for option in decision.options
     ]
-    option_evs = tuple(ev for ev, _ in ranked)
     option_best_discards = tuple(tile for _, tile in ranked)
-
+    pass_estimate = _pass_estimate(decision, base_seed, quiz.REFINE_SIMS, scheme, calibration)
+    estimates = tuple(
+        _refine_call_discard(decision, option, discard, base_seed, quiz.REFINE_SIMS, scheme, calibration)
+        if option.kind != "kong" and discard is not None else None
+        for option, discard in zip(decision.options, option_best_discards)
+    )
+    pass_ev = pass_estimate.net_ev
+    option_evs = tuple(
+        estimate.net_ev if estimate is not None else _refine_option(
+            decision, option, discard, base_seed, quiz.REFINE_SIMS, scheme, calibration,
+        )
+        for option, discard, estimate in zip(decision.options, option_best_discards, estimates)
+    )
     best_option_ev = max(option_evs, default=float("-inf"))
     best_index = option_evs.index(best_option_ev) if best_option_ev > pass_ev else None
-    if best_index is None:
-        best_ev = _refine_pass(decision, base_seed, quiz.REFINE_SIMS, scheme, calibration)
-    else:
-        best_ev = _refine_option(
-            decision, decision.options[best_index], option_best_discards[best_index],
-            base_seed, quiz.REFINE_SIMS, scheme, calibration,
-        )
+    best_ev = pass_ev if best_index is None else option_evs[best_index]
     return CallEvaluation(
         pass_ev, option_evs, best_index, best_ev, quiz.REFINE_SIMS,
         decision, base_seed, option_best_discards, scheme, context,
+        (pass_estimate, *estimates),
     )
 
 
@@ -799,25 +856,42 @@ def evaluate_kong(
     scheme = context.game.scheme
     calibration = context.calibration.calibration
     base_seed = _evaluation_seed(decision.position) if seed is None else seed
-    pass_ev = _kong_pass_ev(decision, base_seed, quiz.EV_SIMS, scheme, calibration)
+    pass_ev = _kong_pass_ev(decision, base_seed, quiz.REFINE_SIMS, scheme, calibration)
     option_evs = tuple(
-        _kong_option_ev(decision, option, base_seed, quiz.EV_SIMS, scheme, calibration)
+        _kong_option_ev(decision, option, base_seed, quiz.REFINE_SIMS, scheme, calibration)
         for option in decision.options
     )
     best_option_ev = max(option_evs, default=float("-inf"))
     best_index = option_evs.index(best_option_ev) if best_option_ev > pass_ev else None
-    best_ev = (
-        _kong_pass_ev(decision, base_seed, quiz.REFINE_SIMS, scheme, calibration)
-        if best_index is None
-        else _kong_option_ev(
-            decision, decision.options[best_index], base_seed, quiz.REFINE_SIMS,
-            scheme, calibration,
-        )
-    )
+    best_ev = pass_ev if best_index is None else option_evs[best_index]
+
     return KongEvaluation(
         pass_ev, option_evs, best_index, best_ev, quiz.REFINE_SIMS,
         decision, base_seed, scheme, context,
     )
+
+
+def _option_uncertainty(evaluation: CallEvaluation | KongEvaluation) -> tuple[tuple[int | None, ...], str]:
+    """Reuse discard paired-gap uncertainty; missing trial paths stay uncertain."""
+    indices = (None, *range(len(evaluation.option_evs)))
+    estimates = evaluation.action_estimates
+    best_slot = indices.index(evaluation.best_index)
+    unresolved = []
+    state = "clear"
+    for slot, index in enumerate(indices):
+        if slot == best_slot:
+            continue
+        gap = (
+            paired_delta_moments(estimates[best_slot], estimates[slot])
+            if estimates and estimates[best_slot] is not None and estimates[slot] is not None
+            else SampleMoments(post_selection=True)
+        )
+        wording = gap.payload(quiz.EV_EFFECT_SIZE_MIN)["wording"]
+        if wording != "clear":
+            unresolved.append(index)
+            if wording == "uncertain" or state == "clear":
+                state = wording
+    return ((evaluation.best_index, *unresolved) if unresolved else (), state)
 
 
 def play_trainer(

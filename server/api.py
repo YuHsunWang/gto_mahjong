@@ -664,6 +664,10 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
                 "best_index": evaluation.best_index,
                 "pass_ev": evaluation.pass_ev,
                 "option_evs": list(evaluation.option_evs),
+                "table_sims": evaluation.best_ev_sims,
+                "ranking_state": evaluation.ranking_state,
+                "ranking_uncertain": evaluation.ranking_uncertain,
+                "indistinguishable_indices": list(evaluation.indistinguishable_indices),
             }
             next_item = _engine(_advance_session, session, choice)
         elif isinstance(item, TrainerCallDecision):
@@ -684,6 +688,10 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
                 "best_index": evaluation.best_index,
                 "pass_ev": evaluation.pass_ev,
                 "option_evs": list(evaluation.option_evs),
+                "table_sims": evaluation.best_ev_sims,
+                "ranking_state": evaluation.ranking_state,
+                "ranking_uncertain": evaluation.ranking_uncertain,
+                "indistinguishable_indices": list(evaluation.indistinguishable_indices),
             }
             next_item = _engine(_advance_session, session, choice)
         else:  # pragma: no cover - the isinstance set above is exhaustive
