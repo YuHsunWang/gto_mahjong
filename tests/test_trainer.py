@@ -513,3 +513,55 @@ def test_streak_raises_dealer_opponent_value_in_a_trainer_position():
     view0, view2 = first_dealer_view(0), first_dealer_view(2)
     assert view0.dealer_streak == 0 and view2.dealer_streak == 2
     assert opponent_value_estimate(view2) > opponent_value_estimate(view0)
+
+
+def test_call_table_uses_refined_values_and_marks_only_unresolved_actions(monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    import taimahjong.trainer as trainer
+
+    decision = _first_call()
+    decision = replace(decision, options=(decision.options[0],) * 2)
+    estimate = lambda ev: SimpleNamespace(net_ev=ev, trial_values=(ev,) * 4, trial_strata=())
+    monkeypatch.setattr(trainer, "_option_rank", lambda *_args: (10.0, 0))
+    monkeypatch.setattr(trainer, "_pass_estimate", lambda *_args: estimate(1.0))
+    calls = []
+
+    def refine(_decision, _option, _discard, _seed, sims, *_args):
+        calls.append(sims)
+        return estimate(0.95 if len(calls) == 1 else -2.0)
+
+    monkeypatch.setattr(trainer, "_refine_call_discard", refine)
+    evaluation = evaluate_call(decision)
+    assert calls == [trainer.quiz.REFINE_SIMS] * 2
+    assert evaluation.pass_ev == 1.0
+    assert evaluation.option_evs == (0.95, -2.0)
+    assert evaluation.best_index is None  # Cheap max would have chosen calling.
+    assert evaluation.best_ev == evaluation.pass_ev
+    assert evaluation.ranking_state == "marginal"
+    assert evaluation.indistinguishable_indices == (None, 0)
+    # Grading reuses the estimates already displayed.
+    monkeypatch.setattr(evaluation.__class__, "_action_ev", lambda *_args: pytest.fail("duplicate refinement"))
+    assert evaluation.verdict_for(0).verdict == "good"
+
+
+def test_kong_table_refines_all_actions_and_keeps_missing_uncertainty_visible(monkeypatch):
+    import taimahjong.trainer as trainer
+
+    position = next(play_trainer(1)).position
+    decision = TrainerKongDecision(position, (KongOption("concealed", 0, 3),))
+    budgets = []
+
+    def value(ev, sims):
+        budgets.append(sims)
+        return ev
+
+    monkeypatch.setattr(trainer, "_kong_pass_ev", lambda _d, _seed, sims, *_args: value(2.0, sims))
+    monkeypatch.setattr(trainer, "_kong_option_ev", lambda _d, _o, _seed, sims, *_args: value(1.0, sims))
+    evaluation = evaluate_kong(decision)
+    assert budgets == [trainer.quiz.REFINE_SIMS] * 2
+    assert evaluation.pass_ev == evaluation.best_ev == 2.0
+    assert evaluation.option_evs == (1.0,)
+    assert evaluation.best_index is None
+    assert evaluation.ranking_state == "uncertain"
+    assert evaluation.indistinguishable_indices == (None, 0)

@@ -541,3 +541,41 @@ def test_static_spa_is_served_at_root(client):
     assert "台灣麻將教室" in response.text
     assert client.get("/js/main.js").status_code == 200
     assert client.get("/style.css").status_code == 200
+
+
+@pytest.mark.parametrize("kind", ["call", "kong"])
+def test_trainer_option_payload_reports_refinement_and_uncertainty(client, monkeypatch, kind):
+    from types import SimpleNamespace
+    from taimahjong import trainer
+    from taimahjong.analysis import AnalysisContext
+
+    position = next(trainer.play_trainer(1)).position
+    if kind == "call":
+        decision = trainer.TrainerCallDecision(position, 0, 1, (trainer.CallOption("pon", (0, 0, 0), (0, 0)),))
+        estimate = lambda ev: SimpleNamespace(net_ev=ev, trial_values=(ev,) * 4, trial_strata=())
+        monkeypatch.setattr(trainer, "_option_rank", lambda *_args: (10.0, 0))
+        monkeypatch.setattr(trainer, "_pass_estimate", lambda *_args: estimate(1.0))
+        monkeypatch.setattr(trainer, "_refine_call_discard", lambda *_args: estimate(0.95))
+    else:
+        decision = trainer.TrainerKongDecision(position, (trainer.KongOption("concealed", 0, 3),))
+        monkeypatch.setattr(trainer, "_kong_pass_ev", lambda *_args: 1.0)
+        monkeypatch.setattr(trainer, "_kong_option_ev", lambda *_args: 0.95)
+
+    def game():
+        yield decision
+        yield trainer.TrainerDecision(position)
+
+    generator = game()
+    assert next(generator) is decision
+    session = api._TrainerSession(1, 0, 0, generator, decision, AnalysisContext())
+    api._store_session("refined-options", session)
+    response = client.post("/api/trainer/refined-options/act", json={"step": 0, "action": kind, "option": None})
+    assert response.status_code == 200
+    feedback = response.json()["feedback"]
+    assert feedback["pass_ev"] == 1.0
+    assert feedback["option_evs"] == [0.95]
+    assert feedback["table_sims"] == trainer.quiz.REFINE_SIMS
+    assert feedback["best_index"] is None
+    assert feedback["ranking_state"] == ("marginal" if kind == "call" else "uncertain")
+    assert feedback["ranking_uncertain"] is True
+    assert feedback["indistinguishable_indices"] == [None, 0]

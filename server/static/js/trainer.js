@@ -239,9 +239,11 @@ export function trainerScreen(root) {
     rows.forEach((row) => {
       const tr = document.createElement('tr');
       if (row.index === feedback.choice) tr.classList.add('chosen-row');
-      if (row.index === feedback.best_index) tr.classList.add('model-leader-row');
+      const indistinguishable = feedback.indistinguishable_indices?.includes(row.index);
+      if (indistinguishable) tr.classList.add('indistinguishable-row');
+      if (!feedback.ranking_uncertain && row.index === feedback.best_index) tr.classList.add('model-leader-row');
       const name = document.createElement('td');
-      name.textContent = row.label;
+      name.textContent = `${indistinguishable ? '≈ ' : ''}${row.label}`;
       const ev = document.createElement('td');
       ev.textContent = row.ev.toFixed(1);
       tr.append(name, ev);
