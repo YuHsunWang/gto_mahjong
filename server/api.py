@@ -581,10 +581,19 @@ def trainer_get(session_id: str) -> dict[str, Any]:
         return _session_payload(session_id, session)
 
 
-def _record(session: _TrainerSession, verdict: str, ev_loss: float) -> None:
+def _record(session: _TrainerSession, feedback: dict[str, Any]) -> None:
+    top_pair = feedback.get("top1_vs_top2")
+    chosen = feedback.get("chosen")
+    # Match the UI's ≈ marker: uncertainty applies only to the top pair.
+    tied = (
+        feedback.get("ranking_state", "clear") != "clear"
+        and top_pair is not None
+        and chosen is not None
+        and chosen["discard"] in (top_pair["top_discard"], top_pair["runner_up_discard"])
+    )
     session.score["decisions"] += 1
-    session.score["best"] += int(verdict == "best")
-    session.score["loss"] += ev_loss
+    session.score["best"] += int(feedback["verdict"] == "best" or tied)
+    session.score["loss"] += 0.0 if tied else feedback["ev_loss"]
 
 
 def _validate_option(options, option: int | None) -> int | None:
@@ -681,7 +690,7 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
             raise HTTPException(status_code=500, detail="unknown decision type")
 
         session.current = next_item
-        _record(session, result.verdict, result.ev_loss)
+        _record(session, feedback)
         session.feedback = feedback
         session.step += 1
         return _session_payload(session_id, session)
