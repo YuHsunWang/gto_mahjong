@@ -212,6 +212,11 @@ python3 -m taimahjong "123m123p123s11122233z" --danger --opp-river "456m789p" --
 小四喜／五暗刻 8、字一色／大四喜 16、圈風／門風／三元牌刻 1。一底等於 3 台。天胡／
 地胡是 16／8 台。它會把所有胡牌拆法都試過，取台數最高的那種算給你。
 
+海底撈月（最後一張活牌自摸）與河底撈魚（摸完最後一張活牌後的棄牌胡牌）各加 1 台，固定啟用。
+門清自摸預設共 2 台（門清 1＋自摸 1）；`RulesConfig.menqing_self_draw_three` 開啟時共 3 台。
+算台工具可用 CLI `--last-tile`、`--menqing-self-draw-three`，或 `/api/score` 的
+`last_tile`、`menqing_self_draw_three` 輸入這些條件。活牌不含 14 張死牌，槓補牌也不算海底。
+
 幾條有記錄的家規判斷：
 
 - **風位**：自我對局、EV rollout 與練習結算的圈風固定為東；莊家（座位 0）是東，

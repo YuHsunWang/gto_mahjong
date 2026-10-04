@@ -27,6 +27,69 @@ from taimahjong.selfplay import Player
 from taimahjong.tiles import parse_tiles
 
 
+@pytest.mark.parametrize("menqing_three", [False, True])
+def test_rollout_last_live_tsumo_scores_one_extra_tai(menqing_three):
+    rules = replace(DEFAULT_RULES, menqing_self_draw_three=menqing_three)
+    waiting = list(parse_tiles("111m456789p234s55789s"))
+    tile = 19  # 2s
+    waiting[tile] -= 1
+    players = [
+        Player("attack", list(parse_tiles("147m147p147s1234567z")))
+        for _ in range(4)
+    ]
+    players[1].hand = waiting
+
+    def run(wall, configured_rules=rules):
+        return resolve_terminal(
+            players, wall, 1, 1, None, _policy_discard, Random(1),
+            rules=configured_rules,
+        )
+
+    ordinary = run((tile, tile))
+    last = run((tile,))
+    default = run((tile,), DEFAULT_RULES)
+    assert ordinary.kind == last.kind == "self_tsumo"
+    assert last.value_units == ordinary.value_units + 1
+    assert last.deltas[1] == ordinary.deltas[1] + 3
+    assert last.value_units == default.value_units + int(menqing_three)
+
+
+@pytest.mark.parametrize("calibrated", [False, True])
+@pytest.mark.parametrize("acting_seat", [0, 1])
+def test_rollout_last_live_discard_scores_river_bottom(calibrated, acting_seat):
+    winning = parse_tiles("111m456789p234s55789s")
+    tile = 19
+    waiting = list(winning)
+    waiting[tile] -= 1
+    players = [
+        Player("attack", list(parse_tiles("147m147p147s1234567z")))
+        for _ in range(4)
+    ]
+    players[1].hand = waiting
+
+    def claims(_players, _discarder, discarded):
+        if discarded != tile:
+            return ()
+        return (CalibratedRonClaim(1, 1.0, winning_hand=winning, scoring_tile=tile),)
+
+    def run(wall, opening=None):
+        return resolve_terminal(
+            players, wall, acting_seat, 0, opening, lambda *_: tile, Random(1),
+            calibrated_ron=claims if calibrated else None,
+        )
+
+    ordinary = run((tile, tile))
+    last = run((tile,))
+    expected_kind = "self_ron" if acting_seat == 1 else "opponent_ron"
+    assert last.kind == ordinary.kind == expected_kind
+    assert last.value_units == ordinary.value_units + 1
+    assert last.deltas[1] == ordinary.deltas[1] + 1
+    # An opening discard has no preceding normal draw in this rollout.
+    if acting_seat == 0:
+        players[0].hand[tile] = 1
+        assert run((), tile).value_units == ordinary.value_units
+
+
 FIRST_CHARACTER = 0  # 1m, the opening discard in the priced-claim tests
 TRIALS_PER_CANDIDATE = 2_048
 STANDARD_ERROR_MULTIPLIER = 4.0

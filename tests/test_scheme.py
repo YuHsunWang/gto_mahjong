@@ -185,3 +185,15 @@ def test_ev_rank_default_matches_scheme_3_1_and_differs_for_5_2():
     assert _top_net(five_two) != pytest.approx(_top_net(three_one))
     # 底5台2 weights tai more heavily, so a positive win EV grows.
     assert _top_net(five_two) > _top_net(three_one)
+
+
+@pytest.mark.parametrize('self_draw, name', [(True, '海底撈月'), (False, '河底撈魚')])
+def test_cli_score_accepts_last_tile_and_menqing_option(self_draw, name):
+    args = [sys.executable, '-B', '-m', 'taimahjong', '111m456789p234s55789s',
+            '--score', '--win-tile', '2s', '--last-tile', '--menqing-self-draw-three']
+    if self_draw:
+        args.append('--self-draw')
+    result = subprocess.run(args, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert name in result.stdout
+    assert ('concealed self-draw bonus (門清自摸)' in result.stdout) == self_draw

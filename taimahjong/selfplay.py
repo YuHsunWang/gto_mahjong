@@ -618,8 +618,8 @@ def _cached_score_hand(
     (hand, tile) pairs recur across trials.  ``score_hand`` is a pure function
     of these four arguments, so the cache changes cost only.
 
-    ``WinContext.rules`` is ``compare=False`` and therefore outside the key;
-    every caller here leaves it unset.
+    ``WinContext.rules`` participates in the key because house options can
+    change the hand value.
     """
     return score_hand(winning_hand, melds, context, kongs=kongs)
 
@@ -635,12 +635,16 @@ def _settlement(
     scheme: ScoringScheme = DEFAULT_SCHEME,
     kong_bloom: bool = False,
     robbed_kong: bool = False,
+    wall_remaining: int | None = None,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> tuple[tuple[int, int, int, int], int]:
     """Score a terminal game using M5a, with deliberate bot-table omissions.
 
     No heavenly/earthly values or dealer payment doubling are
     modeled.  Ron is paid solely by the actual discarder; tsumo uses
-    Taiwanese three-opponent equal payments.
+    Taiwanese three-opponent equal payments. ``wall_remaining`` counts live
+    tiles after a normal draw (excluding the dead wall); omit it for kong
+    replacements and discards following calls rather than a live draw.
 
     The dealer premium (莊 + 連莊拉莊) is bilateral: a dealer winner bakes it
     into the hand value via ``score_hand`` (every payment leg involves the
@@ -666,6 +670,8 @@ def _settlement(
             migi_declared=players[winner].declared,
             kong_bloom=kong_bloom,
             robbed_kong=robbed_kong,
+            last_tile=wall_remaining == 0 and not kong_bloom and not robbed_kong,
+            rules=rules,
         ),
         tuple(players[winner].kongs),
     ).value_in(scheme)
@@ -694,6 +700,8 @@ def _settle_ron_winners(
     scheme: ScoringScheme = DEFAULT_SCHEME,
     *,
     robbed_kong: bool = False,
+    wall_remaining: int | None = None,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> tuple[tuple[int, int, int, int], tuple[int, ...]]:
     """Settle every resolved ron claim; the discarder pays each winner."""
     if not winners:
@@ -711,6 +719,8 @@ def _settle_ron_winners(
             dealer_streak,
             scheme,
             robbed_kong=robbed_kong,
+            wall_remaining=wall_remaining,
+            rules=rules,
         )
         combined = [total + delta for total, delta in zip(combined, deltas)]
         values.append(value)
@@ -837,16 +847,18 @@ def play_game(
         assert actions < 1000, "game did not terminate"
         player = players[current]
         drawn_tile: int | None = None
+        live_draw = False
         if needs_draw:
             if not wall:
                 points, value = _settlement("draw", None, None, players, None, None, dealer_streak, config.scheme)
                 return GameResult(events, "draw", None, None, actions, point_deltas=points, value_units=value, dealer_streak=dealer_streak, kong_log=tuple(kong_log))
             drawn_tile = wall.pop()
+            live_draw = True
             player.hand[drawn_tile] += 1
             _assert_conservation(players, wall, dead)
             if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                 winning_hand = tuple(player.hand)
-                points, value = _settlement("tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme)
+                points, value = _settlement("tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme, wall_remaining=len(wall), rules=rules)
                 return GameResult(
                     events, "tsumo", current, None, actions, winning_hand, _declared(player), points, value,
                     dealer_streak, _dealer_leg_premium("tsumo", current, None, dealer_streak, config.scheme),
@@ -877,6 +889,7 @@ def play_game(
                             dealer_streak,
                             config.scheme,
                             robbed_kong=True,
+                            rules=rules,
                         )
                         robber = robbers[0]
                         winning = winning_hands[robber]
@@ -887,11 +900,12 @@ def play_game(
                         )
                 kong_log.append((current, kind_tile, concealed))
                 drawn_tile = _declare_kong(player, kind_tile, concealed, dead, wall)
+                live_draw = False
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                     winning_hand = tuple(player.hand)
                     points, value = _settlement(
-                        "tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme, kong_bloom=True,
+                        "tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme, kong_bloom=True, rules=rules,
                     )
                     return GameResult(
                         events, "tsumo", current, None, actions, winning_hand, _declared(player), points, value,
@@ -976,6 +990,7 @@ def play_game(
                 winning_hands[ron_winner] = winning
             points, values = _settle_ron_winners(
                 winners, current, players, winning_hands, tile, dealer_streak, config.scheme,
+                wall_remaining=len(wall) if live_draw else None, rules=rules,
             )
             winning = winning_hands[winner]
             return GameResult(
@@ -1004,7 +1019,7 @@ def play_game(
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(players[big_caller].hand), _declared(players[big_caller])) == -1:
                     winning_hand = tuple(players[big_caller].hand)
-                    points, value = _settlement("tsumo", big_caller, None, players, winning_hand, replacement, dealer_streak, config.scheme)
+                    points, value = _settlement("tsumo", big_caller, None, players, winning_hand, replacement, dealer_streak, config.scheme, rules=rules)
                     return GameResult(
                         events, "tsumo", big_caller, None, actions, winning_hand, _declared(players[big_caller]), points, value,
                         dealer_streak, _dealer_leg_premium("tsumo", big_caller, None, dealer_streak, config.scheme),

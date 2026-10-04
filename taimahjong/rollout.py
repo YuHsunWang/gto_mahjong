@@ -234,6 +234,9 @@ def _ron_terminal(
     acting_seat: int,
     dealer_streak: int,
     scheme: ScoringScheme,
+    *,
+    wall_remaining: int | None = None,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> TerminalResult:
     winners = tuple(winner for winner, _ in claims)
     winning_hands = dict(claims)
@@ -245,6 +248,8 @@ def _ron_terminal(
         winning_tile,
         dealer_streak,
         scheme,
+        wall_remaining=wall_remaining,
+        rules=rules,
     )
     return _terminal(
         "self_ron" if acting_seat in winners else "opponent_ron",
@@ -337,6 +342,9 @@ def _calibrated_ron_terminal(
     acting_seat: int,
     dealer_streak: int,
     scheme: ScoringScheme,
+    *,
+    wall_remaining: int | None = None,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> TerminalResult:
     """Settle one already-decided calibrated RON winner set."""
     deltas = [0, 0, 0, 0]
@@ -354,6 +362,8 @@ def _calibrated_ron_terminal(
                 winning_tile,
                 dealer_streak,
                 scheme,
+                wall_remaining=wall_remaining,
+                rules=rules,
             )
             deltas = [total + delta for total, delta in zip(deltas, payment)]
         else:
@@ -368,6 +378,8 @@ def _calibrated_ron_terminal(
                     claim.scoring_tile,
                     dealer_streak,
                     scheme,
+                    wall_remaining=wall_remaining,
+                    rules=rules,
                 )
                 deltas = [
                     total + delta
@@ -441,7 +453,7 @@ def resolve_terminal_distribution(
     outcomes: list[tuple[float, TerminalResult]] = []
     survival = 1.0
 
-    def claim_ron(current: int, tile: int) -> bool:
+    def claim_ron(current: int, tile: int, wall_remaining: int | None = None) -> bool:
         """Take the RON branches of one discard; True once no mass survives."""
         nonlocal survival
         if calibrated_ron is None:
@@ -458,6 +470,8 @@ def resolve_terminal_distribution(
                     acting_seat,
                     dealer_streak,
                     scheme,
+                    wall_remaining=wall_remaining,
+                    rules=rules,
                 ),
             ))
             survival = 0.0
@@ -481,6 +495,8 @@ def resolve_terminal_distribution(
                     acting_seat,
                     dealer_streak,
                     scheme,
+                    wall_remaining=wall_remaining,
+                    rules=rules,
                 ),
             ))
         survival *= distribution.get((), 0.0)
@@ -528,6 +544,8 @@ def resolve_terminal_distribution(
                 tile,
                 dealer_streak,
                 scheme,
+                wall_remaining=sum(remaining),
+                rules=rules,
             )
             outcomes.append((
                 survival,
@@ -563,7 +581,7 @@ def resolve_terminal_distribution(
         if discarded not in range(34) or not player.hand[discarded]:
             raise ValueError("discard policy returned a tile absent from the hand")
         player.hand[discarded] -= 1
-        if claim_ron(current, discarded):
+        if claim_ron(current, discarded, wall_remaining=sum(remaining)):
             return TerminalMixture(tuple(outcomes))
         if records_river:
             origin = "tsumogiri" if discarded == tile else "tedashi"
