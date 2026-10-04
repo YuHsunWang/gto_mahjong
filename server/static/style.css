@@ -816,6 +816,31 @@ details.evwrap summary {
     aspect-ratio: 2 / 3;
     grid-template-rows: 15% 7% minmax(0, 1fr) 7% 24%;
   }
+  .seat--left .seat-identity, .seat--right .seat-identity {
+    left: 2px;
+    right: 2px;
+    max-width: calc(100% - 4px);
+    flex-direction: column;
+    gap: 1px;
+    padding: 2px;
+    font-size: 11px;
+    line-height: 14px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: center;
+  }
+  .seat--left .seat-identity > *, .seat--right .seat-identity > * {
+    max-width: 100%;
+    flex-shrink: 0;
+  }
+  .seat--left .dealer-chip, .seat--right .dealer-chip { padding-inline: 2px; }
+  .seat--top .concealed-hand { width: 100%; justify-content: center; }
+  .seat--top .concealed-hand .tile-back {
+    flex: 0 1 18px;
+    min-width: 0;
+    width: 18px;
+    height: 25px;
+  }
   .seat--bottom .table-hand { width: 100%; flex-wrap: wrap; gap: 2px; }
   .seat--bottom .table-hand > .tile { flex-basis: 28px; width: 28px; height: 38px; }
   .seat--bottom .table-hand .gap { flex-basis: 5px; }
