@@ -230,7 +230,7 @@ export function trainerScreen(root) {
     const table = document.createElement('table');
     table.className = 'evtable';
     const head = document.createElement('tr');
-    ['選項', 'EV（分）'].forEach((label) => {
+    ['選項', '預期淨得分'].forEach((label) => {
       const th = document.createElement('th');
       th.textContent = label;
       head.append(th);
@@ -260,7 +260,7 @@ export function trainerScreen(root) {
     const delta = document.createElement('div');
     delta.className = `delta ${decision.point_delta > 0 ? 'win' : decision.point_delta < 0 ? 'lose' : ''}`;
     const streakIn = decision.dealer_streak_in ? `（連莊 ${decision.dealer_streak_in}）` : '';
-    delta.textContent = `你的收支 ${decision.point_delta > 0 ? '+' : ''}${decision.point_delta} 籌碼單位 · ${decision.turns} 手${streakIn}`;
+    delta.textContent = `你的收支 ${decision.point_delta > 0 ? '+' : ''}${decision.point_delta} 分 · ${decision.turns} 手${streakIn}`;
     wrap.append(headline, delta);
 
     const next = document.createElement('div');
