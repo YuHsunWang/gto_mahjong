@@ -534,9 +534,9 @@ def test_kong_verdict_is_adaptive_and_deterministic(monkeypatch):
     calls = []
     original = trainer.quiz.resolve_adaptive
 
-    def traced(estimate, shanten):
+    def traced(estimate, shanten, scheme):
         calls.append(shanten)
-        return original(estimate, shanten)
+        return original(estimate, shanten, scheme)
 
     monkeypatch.setattr(trainer.quiz, "resolve_adaptive", traced)
     a = evaluate_kong(decision, seed=41)
