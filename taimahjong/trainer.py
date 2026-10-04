@@ -296,8 +296,9 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
              rules: RulesConfig = DEFAULT_RULES,
              winners: tuple[int, ...] = ()) -> TrainerOutcome:
     # 流局連莊: the dealer (seat 0) keeps dealership and the streak grows on a
-    # draw or a dealer win; otherwise dealership passes, which we emulate by
-    # rotating the human one seat downstream and resetting the streak.
+    # draw or a dealer win; otherwise dealership passes to the dealer's 下家
+    # (seat 1, next in turn order). The new dealer is renumbered seat 0, so
+    # every seat index, the human's included, drops by one; the streak resets.
     terminal_winners = winners or (() if winner is None else (winner,))
     dealer_keeps = (
         outcome == "draw" and rules.dealer_continues_on_draw
@@ -314,7 +315,7 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
         turns=turns,
         dealer_streak_in=dealer_streak,
         next_dealer_streak=dealer_streak + 1 if dealer_keeps else 0,
-        next_human_seat=human_seat if dealer_keeps else (human_seat + 1) % 4,
+        next_human_seat=human_seat if dealer_keeps else (human_seat - 1) % 4,
         robbed_kong=robbed_kong,
     )
 

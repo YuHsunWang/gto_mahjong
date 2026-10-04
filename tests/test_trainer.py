@@ -542,11 +542,17 @@ def test_streak_increments_on_dealer_win_and_draw():
 
 
 def test_streak_resets_and_rotates_human_on_dealer_loss():
-    # A non-dealer win passes dealership; the engine keeps the dealer on seat 0
-    # and instead rotates the human one seat downstream, resetting the streak —
-    # this is how the player comes to sit in each relation to the dealer.
-    out = _outcome("ron", 1, 2, human_seat=3, deltas=(0, 5, -5, 0), turns=12, dealer_streak=3)
-    assert out.next_dealer_streak == 0 and out.next_human_seat == 0
+    # A non-dealer win passes dealership to the dealer's 下家 (seat 1, next in
+    # turn order). The engine keeps the dealer on seat 0, so the human's index
+    # drops by one: 下家 deals next, the old dealer becomes the new 上家.
+    def next_seat(human_seat):
+        out = _outcome("ron", 1, 2, human_seat=human_seat, deltas=(0, 5, -5, 0), turns=12, dealer_streak=3)
+        assert out.next_dealer_streak == 0
+        return out.next_human_seat
+
+    assert next_seat(1) == 0
+    assert next_seat(0) == 3
+    assert next_seat(3) == 2
 
 
 def test_dealer_continuation_rules_are_explicit_and_applied():
@@ -565,7 +571,7 @@ def test_dealer_continuation_rules_are_explicit_and_applied():
     )
 
     assert drawn.next_dealer_streak == dealer_win.next_dealer_streak == 0
-    assert drawn.next_human_seat == dealer_win.next_human_seat == 3
+    assert drawn.next_human_seat == dealer_win.next_human_seat == 1
     assert DEFAULT_RULES.dealer_continues_on_draw
     assert DEFAULT_RULES.dealer_continues_on_win
 
