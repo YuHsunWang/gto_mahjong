@@ -926,7 +926,7 @@ def play_trainer(
                 raise ValueError("sent discard is not in the hand")
             tile = chosen
         else:
-            tile, _ = _choose_discard(current, drawn_tile, players, scheme)
+            tile, _ = _choose_discard(current, drawn_tile, players, scheme, rules=rules)
 
         origin = "tsumogiri" if drawn_tile == tile else "tedashi"
         player.hand[tile] -= 1

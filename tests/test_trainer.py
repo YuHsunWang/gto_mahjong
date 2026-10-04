@@ -60,7 +60,7 @@ def test_trainer_last_live_win_reports_one_extra_tai(monkeypatch, menqing_three,
         import taimahjong.trainer as trainer
 
         monkeypatch.setattr(
-            trainer, "_choose_discard", lambda _seat, drawn, *_: (drawn, False),
+            trainer, "_choose_discard", lambda _seat, drawn, *_, **_kwargs: (drawn, False),
         )
 
     ordinary = run(2)

@@ -273,11 +273,13 @@ def test_valuable_hands_have_higher_attack_value(shanten_after):
     )
 
 
+@pytest.mark.parametrize("menqing_three", [False, True])
 @pytest.mark.parametrize("seat,streak", [(0, 0), (0, 2), (1, 0), (1, 2)])
 @pytest.mark.parametrize("scheme", [selfplay.DEFAULT_SCHEME, selfplay.ScoringScheme(5, 2)])
-def test_own_win_estimate_matches_weighted_settlement_income(seat, streak, scheme):
+def test_own_win_estimate_matches_weighted_settlement_income(seat, streak, scheme, menqing_three):
     # Winner income includes all three tsumo payments and the bilateral
     # dealer leg; score-hand's one-leg value alone would underprice attack.
+    rules = replace(DEFAULT_RULES, menqing_self_draw_three=menqing_three)
     post = parse_tiles("123456m123p1178s222z")
     players = [Player("ev_aware") for _ in range(4)]
     players[seat].hand = list(post)
@@ -288,13 +290,13 @@ def test_own_win_estimate_matches_weighted_settlement_income(seat, streak, schem
         completed = list(post)
         completed[tile] += 1
         ron = sum(
-            _settlement("ron", seat, payer, players, tuple(completed), tile, streak, scheme)[0][seat]
+            _settlement("ron", seat, payer, players, tuple(completed), tile, streak, scheme, rules=rules)[0][seat]
             for payer in range(4) if payer != seat
         ) / 3
-        tsumo = _settlement("tsumo", seat, None, players, tuple(completed), tile, streak, scheme)[0][seat]
+        tsumo = _settlement("tsumo", seat, None, players, tuple(completed), tile, streak, scheme, rules=rules)[0][seat]
         expected += remaining * (0.5 * ron + 0.5 * tsumo)
     expected /= analysis.total
-    assert selfplay._own_win_value(seat, players[seat], post, analysis, streak, scheme) == pytest.approx(expected)
+    assert selfplay._own_win_value(seat, players[seat], post, analysis, streak, scheme, rules=rules) == pytest.approx(expected)
 
 
 def test_own_win_estimate_ignores_exhausted_waits():
@@ -712,3 +714,31 @@ def test_empty_live_wall_does_not_make_kong_win_a_last_tile(outcome, flags):
     hand = parse_tiles('111m456789p234s55789s')
     args = (outcome, 1, 2 if outcome == 'ron' else None, players, hand, 19)
     assert _settlement(*args, **flags, wall_remaining=0) == _settlement(*args, **flags)
+
+
+@pytest.mark.parametrize("shanten_after", [0, 1])
+def test_own_win_value_concealed_self_draw_option_increases_income(shanten_after):
+    post = parse_tiles("123456m123p1178s222z")
+    player = Player("ev_aware", hand=list(post))
+    waits = dict(selfplay._cached_ukeire(post, 0, (0,) * 34))
+    analysis = selfplay.DiscardAnalysis(0, shanten_after, waits, sum(waits.values()))
+    ordinary = selfplay._own_win_value(1, player, post, analysis, 0, selfplay.DEFAULT_SCHEME)
+    enabled = selfplay._own_win_value(
+        1, player, post, analysis, 0, selfplay.DEFAULT_SCHEME,
+        rules=replace(DEFAULT_RULES, menqing_self_draw_three=True),
+    )
+    assert enabled - ordinary == pytest.approx(1.5 * selfplay.DEFAULT_SCHEME.tai_units)
+
+
+def test_play_game_passes_active_rules_to_own_win_value(monkeypatch):
+    rules = replace(DEFAULT_RULES, menqing_self_draw_three=True)
+    original = selfplay._own_win_value
+    seen = []
+
+    def capture(*args, **kwargs):
+        seen.append(kwargs.get("rules", args[6] if len(args) > 6 else DEFAULT_RULES))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(selfplay, "_own_win_value", capture)
+    play_game(7, policies=("ev_aware",) * 4, rules=rules)
+    assert seen and all(configured == rules for configured in seen)

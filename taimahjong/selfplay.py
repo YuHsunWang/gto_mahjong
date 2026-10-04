@@ -403,6 +403,7 @@ def _own_win_value(
     analysis: DiscardAnalysis,
     dealer_streak: int,
     scheme: ScoringScheme,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> float:
     """Expected winner income, not just one payment leg.
 
@@ -429,6 +430,7 @@ def _own_win_value(
                 round_wind=SUIT_OFFSETS["z"],
                 seat_wind=SUIT_OFFSETS["z"] + (player_index - DEALER_SEAT) % 4,
                 migi_declared=player.declared,
+                rules=rules,
             )
             ron_value += remaining * _cached_score_hand(
                 completed, melds, WinContext(**context), kongs,
@@ -447,7 +449,8 @@ def _own_win_value(
         triplets = {tile for tile, count in enumerate(post) if count >= 3}
         triplets.update(meld[0] for meld in melds if meld[0] == meld[1] == meld[2])
         triplets.update(tile for tile, _ in kongs)
-        tai = scoring.MENQING_TAI if not melds and all(concealed for _, concealed in kongs) else 0
+        concealed_hand = not melds and all(concealed for _, concealed in kongs)
+        tai = scoring.MENQING_TAI if concealed_hand else 0
         suits = {tile // 9 for tile in tiles if tile < 27}
         if tiles and not suits:
             tai += scoring.ALL_HONORS_TAI
@@ -459,7 +462,10 @@ def _own_win_value(
         if dealer:
             tai += DEALER_TAI + STREAK_TAI_PER_WIN * dealer_streak
         ron_value = scheme.value(tai)
-        tsumo_value = scheme.value(tai + scoring.SELF_DRAW_TAI)
+        tsumo_tai = tai + scoring.SELF_DRAW_TAI
+        if concealed_hand and rules.menqing_self_draw_three:
+            tsumo_tai += scoring.MENQING_SELF_DRAW_TAI - scoring.MENQING_TAI - scoring.SELF_DRAW_TAI
+        tsumo_value = scheme.value(tsumo_tai)
     tsumo_rate = EXPECTED_SELF_DRAW_RATE
     income = (1 - tsumo_rate) * ron_value + tsumo_rate * 3 * tsumo_value
     if not dealer:
@@ -477,11 +483,12 @@ def _attack_value(
     best_ukeire: int,
     dealer_streak: int,
     scheme: ScoringScheme,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> float:
     relative_ukeire = analysis.total / best_ukeire if best_ukeire else 0.0
     weight = SHANTEN_WIN_WEIGHT.get(analysis.shanten_after, SHANTEN_FALLBACK_WEIGHT)
     return weight * relative_ukeire * _own_win_value(
-        player_index, player, post, analysis, dealer_streak, scheme,
+        player_index, player, post, analysis, dealer_streak, scheme, rules=rules,
     )
 
 
@@ -491,6 +498,7 @@ def _ev_aware_discard(
     players: list[Player],
     scheme: ScoringScheme = DEFAULT_SCHEME,
     consume_calibration: bool = True,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> int:
     """Choose from M2's top candidates plus the raw minimum-danger discard."""
     player = players[player_index]
@@ -516,7 +524,7 @@ def _ev_aware_discard(
         post[analysis.discard] -= 1
         attack = _attack_value(
             player_index, player, tuple(post), analysis, best_ukeire,
-            players[DEALER_SEAT].dealer_streak, scheme,
+            players[DEALER_SEAT].dealer_streak, scheme, rules=rules,
         )
         risk = 0.0
         for index, opponent in opponents:
@@ -536,6 +544,7 @@ def _choose_discard(
     players: list[Player],
     scheme: ScoringScheme = DEFAULT_SCHEME,
     consume_calibration: bool = True,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> tuple[int, bool]:
     player = players[player_index]
     if player.declared:
@@ -551,6 +560,7 @@ def _choose_discard(
             players,
             scheme,
             consume_calibration=consume_calibration,
+            rules=rules,
         ), False
     fold_active = (
         player.policy == "cautious"
@@ -921,6 +931,7 @@ def play_game(
             players,
             config.scheme,
             consume_calibration=consume_calibration,
+            rules=rules,
         )
         assert player.hand[tile] > 0
         origin = "tsumogiri" if drawn_tile == tile else "tedashi"
