@@ -210,3 +210,65 @@ def test_production_ev_rank_passes_reference_corpus_gate(
     result = corpus_gate(comparison)
 
     assert result.passed, "; ".join(result.failures)
+
+
+@pytest.mark.parametrize("menqing_three", [False, True])
+@pytest.mark.parametrize("live_remaining", [1, 2])
+def test_oracle_last_draw_payment_matches_rollout(menqing_three, live_remaining):
+    from random import Random
+    from taimahjong.reference_ev import _policy_discard
+    from taimahjong.rollout import resolve_terminal
+    from taimahjong.selfplay import Player
+
+    state = standard_small_wall_state(wall=(32,))
+    rules = replace(DEFAULT_RULES, menqing_self_draw_three=menqing_three)
+    exact = (
+        evaluate_candidate(state, 31, rules) if live_remaining == 1
+        else evaluate_candidate(state, 31, rules, wall_remaining=live_remaining)
+    )
+    rollout = resolve_terminal(
+        [Player("attack", list(p.hand)) for p in state.players],
+        state.wall, state.acting_seat, state.next_seat, 31,
+        _policy_discard, Random(1), rules=rules, wall_remaining=live_remaining,
+    )
+    outcome = exact.outcomes[0].outcome
+    assert outcome.kind == rollout.kind == "opponent_tsumo"
+    assert outcome.payment.deltas == rollout.deltas
+    assert outcome.payment.value_units == rollout.value_units
+
+
+@pytest.mark.parametrize("opening_live_draw", [False, True])
+def test_oracle_opening_discard_source_matches_rollout(opening_live_draw):
+    from random import Random
+    from taimahjong.reference_ev import _policy_discard
+    from taimahjong.rollout import resolve_terminal
+    from taimahjong.selfplay import Player
+
+    state = standard_small_wall_state(wall=())
+    exact = evaluate_candidate(state, 32, opening_live_draw=opening_live_draw)
+    rollout = resolve_terminal(
+        [Player("attack", list(p.hand)) for p in state.players],
+        state.wall, state.acting_seat, state.next_seat, 32,
+        _policy_discard, Random(1), opening_live_draw=opening_live_draw,
+    )
+    assert exact.outcomes[0].outcome.payment.deltas == rollout.deltas
+
+
+@pytest.mark.parametrize("live_remaining", [1, 2])
+def test_oracle_last_draw_discard_ron_matches_rollout(live_remaining):
+    from random import Random
+    from taimahjong.reference_ev import _policy_discard
+    from taimahjong.rollout import resolve_terminal
+    from taimahjong.selfplay import Player
+
+    state = replace(standard_small_wall_state(wall=(32,)), next_seat=2)
+    exact = evaluate_candidate(state, 31, wall_remaining=live_remaining)
+    rollout = resolve_terminal(
+        [Player("attack", list(p.hand)) for p in state.players],
+        state.wall, state.acting_seat, state.next_seat, 31,
+        _policy_discard, Random(1), wall_remaining=live_remaining,
+    )
+    outcome = exact.outcomes[0].outcome
+    assert outcome.kind == rollout.kind == "self_ron"
+    assert outcome.payment.deltas == rollout.deltas
+    assert outcome.payment.value_units == rollout.value_units
