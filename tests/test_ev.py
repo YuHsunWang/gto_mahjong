@@ -530,8 +530,12 @@ def test_declared_context_reaches_ev_rollout_scores_migi_and_locks_tsumogiri(mon
     _, value = _settlement(
         "tsumo", actor, None, list(world.players), POST_DRAW, _tile("3z"), 0,
     )
+    # Seat 1 is South in an East round; settlement scores both winds (DEV-245).
     undeclared = score_hand(
-        POST_DRAW, (), WinContext(_tile("3z"), self_draw=True),
+        POST_DRAW, (), WinContext(
+            _tile("3z"), self_draw=True,
+            round_wind=_tile("1z"), seat_wind=_tile("2z"),
+        ),
     ).value_units
     assert value == undeclared + 8
 

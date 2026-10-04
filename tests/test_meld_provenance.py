@@ -83,9 +83,10 @@ def test_bare_triples_keep_public_scoring_danger_and_ev_results():
     # Re-baselined for DEV-120: non-tenpai opponents are now drawn at an
     # observed shanten instead of uniformly from the unseen pool, so the two
     # sampled worlds are different worlds. The subject of this test is the
-    # bare-versus-rich equality below, which is unaffected.
+    # bare-versus-rich equality below, which is unaffected. DEV-245 re-baseline:
+    # settlement now scores the East round wind and seat wind, so 0 rises 10->14.
     assert [(entry.discard, entry.net_ev) for entry in bare_ev] == [
-        (0, 10.0),
+        (0, 14.0),
         (2, 0.0),
         (27, 0.0),
         (27, 0.0),

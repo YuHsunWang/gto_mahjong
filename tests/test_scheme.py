@@ -67,7 +67,7 @@ def test_known_four_tai_hand_is_7_or_13_in_core_settlement_and_cli(scheme, expec
         (0, 1, 2),
         (12, 13, 14),
         (24, 25, 26),
-        (27, 27, 27),
+        (29, 29, 29),
         (31, 31, 31),
     ]
     hand = parse_tiles("22z")
@@ -77,12 +77,14 @@ def test_known_four_tai_hand_is_7_or_13_in_core_settlement_and_cli(scheme, expec
     assert score.value_in(scheme) == expected
 
     players = [Player("attack") for _ in range(4)]
-    players[1].melds = melds
+    # Winner sits North (seat 3): the South and West triplets match neither
+    # the seat wind nor the East round wind, so settlement adds no wind tai.
+    players[3].melds = melds
     deltas, value = _settlement(
-        "ron", 1, 2, players, hand, tile, scheme=scheme,
+        "ron", 3, 1, players, hand, tile, scheme=scheme,
     )
     assert value == expected
-    assert deltas == (0, expected, -expected, 0)
+    assert deltas == (0, -expected, 0, expected)
 
     result = subprocess.run(
         [
@@ -93,7 +95,7 @@ def test_known_four_tai_hand_is_7_or_13_in_core_settlement_and_cli(scheme, expec
             "22z",
             "--score",
             "--my-melds",
-            "123m;456p;789s;111z;555z",
+            "123m;456p;789s;333z;555z",
             "--win-tile",
             "2z",
             "--scheme",
