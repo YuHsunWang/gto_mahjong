@@ -51,6 +51,7 @@ def _full_rank(
         _evaluation_seed(position),
         _score_template(position),
         calibration=analysis.calibration.calibration,
+        opponent_shanten=analysis.calibration.opponent_shanten,
         top_k=EV_TOP_K,
         scheme=analysis.game.scheme,
     )

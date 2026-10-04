@@ -769,6 +769,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
             counts, opponents, visible,
             turns=turns, sims=request.sims, seed=request.seed,
             calibration=analysis.calibration.calibration,
+            opponent_shanten=analysis.calibration.opponent_shanten,
             scheme=analysis.game.scheme,
             exhaustive=request.exhaustive,
         )

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from random import Random
+from typing import Literal
 
 from . import quiz  # budget/adaptive constants read live (quiz.*) so tests can monkeypatch them
 from .analysis import AnalysisContext, DEFAULT_ANALYSIS_CONTEXT
@@ -25,6 +26,7 @@ from .calibration import Calibration
 from .config import DEFAULT_RULES, RulesConfig, resolve_ron_claims
 from .danger import DeclaredKong, DeclaredMeld, KongLike, MeldLike, kong_tiles, meld_tiles
 from .ev import FLOWERLESS_DEAD_WALL_TILES, WinValueContext, declaration_ev, evaluate_discard, evaluate_pass, ev_rank
+from .opponent_shanten import OpponentShanten
 from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
 from .scoring import DEFAULT_SCHEME, ScoringScheme
 from .selfplay import (
@@ -138,11 +140,13 @@ class CallEvaluation:
             return _refine_pass(
                 self.decision, self.base_seed, sims, self.scheme,
                 self.analysis.calibration.calibration,
+                self.analysis.calibration.opponent_shanten,
             )
         return _refine_option(
             self.decision, self.decision.options[choice],
             self.option_best_discards[choice], self.base_seed, sims, self.scheme,
             self.analysis.calibration.calibration,
+            self.analysis.calibration.opponent_shanten,
         )
 
     def _action_shanten(self, choice: int | None) -> int:
@@ -218,10 +222,12 @@ class KongEvaluation:
             return _kong_pass_ev(
                 self.decision, self.base_seed, sims, self.scheme,
                 self.analysis.calibration.calibration,
+                self.analysis.calibration.opponent_shanten,
             )
         return _kong_option_ev(
             self.decision, self.decision.options[choice], self.base_seed, sims,
             self.scheme, self.analysis.calibration.calibration,
+            self.analysis.calibration.opponent_shanten,
         )
 
     def _action_shanten(self, choice: int | None) -> int:
@@ -438,6 +444,7 @@ def _pass_ev(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> float:
     """Signed net payment of declining the call and keeping the concealed hand.
 
@@ -456,7 +463,7 @@ def _pass_ev(
         sims,
         base_seed,
         _score_template(position),
-        calibration=calibration,
+        calibration=calibration, opponent_shanten=opponent_shanten,
         scheme=scheme,
     ).net_ev
 
@@ -467,9 +474,10 @@ def _refine_pass(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> float:
     """Re-estimate the pass action at ``sims`` under the shared CRN seed."""
-    return _pass_ev(decision, base_seed, sims, scheme, calibration)
+    return _pass_ev(decision, base_seed, sims, scheme, calibration, opponent_shanten)
 
 
 def _option_rank(
@@ -479,11 +487,12 @@ def _option_rank(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> tuple[float, int | None]:
     """Cheap best post-call discard EV of declaring ``option``, and its tile."""
     if option.kind == "kong":
         return _open_kong_call_ev(
-            decision, option, base_seed, sims, scheme, calibration,
+            decision, option, base_seed, sims, scheme, calibration, opponent_shanten,
         ), None
     position = decision.position
     post, melds = _post_call(position, option)
@@ -491,6 +500,7 @@ def _option_rank(
         post, [opponent.view() for opponent in position.opponents], position.public_counts,
         len(melds) + len(position.own_kongs), position.draws_remaining, sims, base_seed,
         _score_template(position, melds), calibration=calibration, top_k=EV_TOP_K,
+        opponent_shanten=opponent_shanten,
         scheme=scheme,
     )
     playable = [entry for entry in ranked if not entry.is_fold]
@@ -508,13 +518,14 @@ def _refine_option(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> float:
     """Re-estimate declaring ``option`` at ``sims`` by re-scoring just its
     cheap-best post-call discard — the single deciding candidate, exactly as the
     discard grader refines one tile rather than re-ranking the whole set."""
     if option.kind == "kong":
         return _open_kong_call_ev(
-            decision, option, base_seed, sims, scheme, calibration,
+            decision, option, base_seed, sims, scheme, calibration, opponent_shanten,
         )
     if discard is None:
         return 0.0
@@ -524,7 +535,7 @@ def _refine_option(
         post, discard, [opponent.view() for opponent in position.opponents],
         position.public_counts, len(melds) + len(position.own_kongs), position.draws_remaining,
         sims, base_seed, _score_template(position, melds),
-        calibration=calibration,
+        calibration=calibration, opponent_shanten=opponent_shanten,
         scheme=scheme,
     )
     return entry.net_ev
@@ -540,12 +551,14 @@ def _best_discard_ev(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> float:
     """Best non-fold discard EV for one post-draw hand under the shared seed."""
     ranked = ev_rank(
         hand, [opponent.view() for opponent in position.opponents], public_counts,
         len(melds) + len(kongs), position.draws_remaining, sims, base_seed,
         _score_template(position, melds, kongs), calibration=calibration, top_k=EV_TOP_K,
+        opponent_shanten=opponent_shanten,
         scheme=scheme,
     )
     playable = [entry.net_ev for entry in ranked if not entry.is_fold]
@@ -559,6 +572,7 @@ def _open_kong_call_ev(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> float:
     """Replacement-draw expectation for one legal 大明槓 call."""
     position = decision.position
@@ -582,7 +596,7 @@ def _open_kong_call_ev(
         post[replacement] += 1
         expected += copies * _best_discard_ev(
             position, tuple(post), position.own_melds, kongs, public_counts,
-            base_seed, sims, scheme, calibration,
+            base_seed, sims, scheme, calibration, opponent_shanten,
         )
     return expected / total
 
@@ -625,12 +639,13 @@ def _kong_pass_ev(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> float:
     """EV of declining a kong and taking the ordinary current-hand discard."""
     position = decision.position
     return _best_discard_ev(
         position, position.hand, position.own_melds, position.own_kongs,
-        position.public_counts, base_seed, sims, scheme, calibration,
+        position.public_counts, base_seed, sims, scheme, calibration, opponent_shanten,
     )
 
 
@@ -641,6 +656,7 @@ def _kong_option_ev(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> float:
     """One-step replacement-draw expectation for declaring ``option``.
 
@@ -662,7 +678,7 @@ def _kong_option_ev(
         replacement[tile] += 1
         expected += copies * _best_discard_ev(
             position, tuple(replacement), melds, kongs, public, base_seed, sims,
-            scheme, calibration,
+            scheme, calibration, opponent_shanten,
         )
     return expected / total
 
@@ -695,11 +711,12 @@ def evaluate_call(
     context = quiz._analysis_context(scheme, analysis)
     scheme = context.game.scheme
     calibration = context.calibration.calibration
+    opponent_shanten = context.calibration.opponent_shanten
     base_seed = _evaluation_seed(decision.position) if seed is None else seed
 
-    pass_ev = _pass_ev(decision, base_seed, quiz.EV_SIMS, scheme, calibration)
+    pass_ev = _pass_ev(decision, base_seed, quiz.EV_SIMS, scheme, calibration, opponent_shanten)
     ranked = [
-        _option_rank(decision, option, base_seed, quiz.EV_SIMS, scheme, calibration)
+        _option_rank(decision, option, base_seed, quiz.EV_SIMS, scheme, calibration, opponent_shanten)
         for option in decision.options
     ]
     option_evs = tuple(ev for ev, _ in ranked)
@@ -708,11 +725,14 @@ def evaluate_call(
     best_option_ev = max(option_evs, default=float("-inf"))
     best_index = option_evs.index(best_option_ev) if best_option_ev > pass_ev else None
     if best_index is None:
-        best_ev = _refine_pass(decision, base_seed, quiz.REFINE_SIMS, scheme)
+        best_ev = _refine_pass(
+            decision, base_seed, quiz.REFINE_SIMS, scheme,
+            opponent_shanten=opponent_shanten,
+        )
     else:
         best_ev = _refine_option(
             decision, decision.options[best_index], option_best_discards[best_index],
-            base_seed, quiz.REFINE_SIMS, scheme, calibration,
+            base_seed, quiz.REFINE_SIMS, scheme, calibration, opponent_shanten,
         )
     return CallEvaluation(
         pass_ev, option_evs, best_index, best_ev, quiz.REFINE_SIMS,
@@ -739,20 +759,21 @@ def evaluate_kong(
     context = quiz._analysis_context(scheme, analysis)
     scheme = context.game.scheme
     calibration = context.calibration.calibration
+    opponent_shanten = context.calibration.opponent_shanten
     base_seed = _evaluation_seed(decision.position) if seed is None else seed
-    pass_ev = _kong_pass_ev(decision, base_seed, quiz.EV_SIMS, scheme, calibration)
+    pass_ev = _kong_pass_ev(decision, base_seed, quiz.EV_SIMS, scheme, calibration, opponent_shanten)
     option_evs = tuple(
-        _kong_option_ev(decision, option, base_seed, quiz.EV_SIMS, scheme, calibration)
+        _kong_option_ev(decision, option, base_seed, quiz.EV_SIMS, scheme, calibration, opponent_shanten)
         for option in decision.options
     )
     best_option_ev = max(option_evs, default=float("-inf"))
     best_index = option_evs.index(best_option_ev) if best_option_ev > pass_ev else None
     best_ev = (
-        _kong_pass_ev(decision, base_seed, quiz.REFINE_SIMS, scheme, calibration)
+        _kong_pass_ev(decision, base_seed, quiz.REFINE_SIMS, scheme, calibration, opponent_shanten)
         if best_index is None
         else _kong_option_ev(
             decision, decision.options[best_index], base_seed, quiz.REFINE_SIMS,
-            scheme, calibration,
+            scheme, calibration, opponent_shanten,
         )
     )
     return KongEvaluation(

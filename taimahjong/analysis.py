@@ -7,6 +7,7 @@ from hashlib import sha256
 import json
 import logging
 from pathlib import Path
+from typing import Literal
 
 from .calibration import Calibration
 from .config import DEFAULT_GAME_CONFIG, GameConfig
@@ -18,11 +19,23 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class CalibrationContext:
-    """One immutable calibration identity plus its loaded lookup facade."""
+    """One immutable model identity plus both loaded lookup facades.
+
+    ``default`` preserves default-table loading for callers without a provider;
+    provider fallbacks explicitly carry ``None`` instead.
+    """
 
     calibration_id: str
     calibration: Calibration | None = field(compare=False, hash=False, repr=False)
     domain: str = "bot"
+    opponent_shanten: OpponentShanten | None | Literal["default"] = field(
+        default="default", compare=False, hash=False, repr=False,
+    )
+    _default_opponent: bool = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # Default-table analyses must not share cached ranks with explicit fallback.
+        object.__setattr__(self, "_default_opponent", self.opponent_shanten == "default")
 
     @property
     def fallback_used(self) -> bool:
@@ -36,7 +49,9 @@ class CalibrationContext:
         }
 
 
-HEURISTIC_FALLBACK = CalibrationContext("heuristic-fallback", None)
+HEURISTIC_FALLBACK = CalibrationContext(
+    "heuristic-fallback", None, opponent_shanten=None,
+)
 
 
 @dataclass(frozen=True)
@@ -44,7 +59,7 @@ class AnalysisContext:
     """Game rules and model provenance shared by one analysis path."""
 
     game: GameConfig = DEFAULT_GAME_CONFIG
-    calibration: CalibrationContext = HEURISTIC_FALLBACK
+    calibration: CalibrationContext = CalibrationContext("heuristic-fallback", None)
 
     def payload(self) -> dict[str, object]:
         return {
@@ -94,8 +109,10 @@ class CalibrationProvider:
         opponent = _load_opponent_shanten(self.path.with_name("opponent-shanten.json"))
         if opponent is None:
             return HEURISTIC_FALLBACK
-        opponent_content, _ = opponent
+        opponent_content, opponent_model = opponent
         # Frame the first table so different byte boundaries cannot share an ID.
         combined = len(content).to_bytes(8, "big") + content + opponent_content
         calibration_id = f"sha256:{sha256(combined).hexdigest()}"
-        return CalibrationContext(calibration_id, calibration)
+        return CalibrationContext(
+            calibration_id, calibration, opponent_shanten=opponent_model,
+        )

@@ -333,3 +333,111 @@ def test_default_opponent_loader_declines_missing_or_unusable_table(
         assert ev._default_opponent_shanten() is None
     finally:
         ev._default_opponent_shanten.cache_clear()
+
+
+@pytest.mark.parametrize("entrypoint", ["api", "pass", "discard"])
+def test_provider_snapshot_is_the_model_used_by_sampler(
+    model_tables, monkeypatch, entrypoint,
+):
+    from hashlib import sha256
+    from types import SimpleNamespace
+    from taimahjong import ev
+    from taimahjong.opponent_shanten import OpponentShanten, document
+    from taimahjong.tiles import parse_tiles
+
+    calibration, opponent = model_tables
+    opponent.write_text(json.dumps(document({"0|7-12|0": {"1": 100}})))
+    content, opponent_content = calibration.read_bytes(), opponent.read_bytes()
+    context = CalibrationProvider(calibration).load()
+    expected_id = "sha256:" + sha256(
+        len(content).to_bytes(8, "big") + content + opponent_content
+    ).hexdigest()
+    # Replacing the files cannot change a previously loaded analysis snapshot.
+    opponent.write_text(json.dumps(document({"0|7-12|0": {"3": 100}})))
+    monkeypatch.setattr(api, "_calibration_context", lambda: context)
+    # Simulate the process default having been cached while its table was absent.
+    monkeypatch.setattr(ev, "_default_opponent_shanten", lambda: None)
+    monkeypatch.setattr(ev, "tenpai_score", lambda *_: SimpleNamespace(score=0.0))
+    used = []
+    original_sample = OpponentShanten.sample
+
+    def sample(model, *args):
+        target = original_sample(model, *args)
+        used.append((model, target))
+        return target
+
+    monkeypatch.setattr(OpponentShanten, "sample", sample)
+    hand = parse_tiles("123m123p123s11122233z")
+    if entrypoint == "api":
+        result = api.ev_rank_endpoint(api.EvRankRequest(
+            hand="123m123p123s11122233z", turns=1, sims=1, seed=268,
+        ))
+        assert result["calibration_id"] == expected_id
+        assert result["fallback_used"] is False
+    else:
+        kwargs = dict(
+            turns=1, sims=1, seed=268, calibration=context.calibration,
+            opponent_shanten=context.opponent_shanten,
+        )
+        if entrypoint == "pass":
+            post = list(hand)
+            post[0] -= 1
+            ev.evaluate_pass(post, (), (0,) * 34, **kwargs)
+        else:
+            ev.evaluate_discard(hand, 0, (), (0,) * 34, **kwargs)
+    assert used
+    assert all(model is context.opponent_shanten and target == 1 for model, target in used)
+    assert context.calibration_id == expected_id
+
+
+def test_explicit_missing_opponent_does_not_use_default(model_tables, monkeypatch):
+    from taimahjong import ev
+    from taimahjong.tiles import parse_tiles
+
+    calibration, opponent = model_tables
+    opponent.unlink()
+    context = CalibrationProvider(calibration).load()
+
+    def unexpected_default():
+        pytest.fail("an explicit fallback must not reload another opponent table")
+
+    monkeypatch.setattr(ev, "_default_opponent_shanten", unexpected_default)
+    ev._sample_production_world(
+        parse_tiles("123m123p123s11122233z"), (0,) * 34, (), 1, None, 268,
+        tenpai_quantiles=(1.0, 1.0, 1.0),
+        opponent_shanten=context.opponent_shanten,
+    )
+    assert context.fallback_used
+
+
+def test_default_opponent_preserves_ev_values():
+    from taimahjong import ev
+    from taimahjong.tiles import parse_tiles
+
+    model = ev._default_opponent_shanten()
+    assert model is not None
+    args = (parse_tiles("123m123p123s11122233z"), (), (0,) * 34)
+    kwargs = dict(turns=1, sims=2, seed=268)
+    assert ev.ev_rank(*args, **kwargs) == ev.ev_rank(
+        *args, **kwargs, opponent_shanten=model,
+    )
+
+
+def test_default_table_and_provider_fallback_do_not_share_quiz_cache(monkeypatch):
+    from taimahjong.analysis import DEFAULT_ANALYSIS_CONTEXT, HEURISTIC_FALLBACK
+
+    used = []
+
+    def rank(*args, **kwargs):
+        used.append(kwargs["opponent_shanten"])
+        return []
+
+    monkeypatch.setattr(quiz, "ev_rank", rank)
+    position = next(api.play_trainer(1)).position
+    quiz._display_rank_cached.cache_clear()
+    try:
+        quiz._display_rank_cached(position, DEFAULT_ANALYSIS_CONTEXT)
+        quiz._display_rank_cached(position, AnalysisContext(calibration=HEURISTIC_FALLBACK))
+        assert used == ["default", None]
+    finally:
+        quiz._display_rank_cached.cache_clear()

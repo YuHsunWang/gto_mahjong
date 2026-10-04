@@ -319,6 +319,7 @@ def main() -> None:
                 counts, opponents, ev_visible, args.melds, turns,
                 args.sims or 400, args.seed, template,
                 analysis.calibration.calibration, scheme=config.scheme,
+                opponent_shanten=analysis.calibration.opponent_shanten,
             )
             print(f"Hand: {format_tiles(counts)}")
             print(scheme_line)
