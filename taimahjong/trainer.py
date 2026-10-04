@@ -716,7 +716,7 @@ def evaluate_call(
     best_option_ev = max(option_evs, default=float("-inf"))
     best_index = option_evs.index(best_option_ev) if best_option_ev > pass_ev else None
     if best_index is None:
-        best_ev = _refine_pass(decision, base_seed, quiz.REFINE_SIMS, scheme)
+        best_ev = _refine_pass(decision, base_seed, quiz.REFINE_SIMS, scheme, calibration)
     else:
         best_ev = _refine_option(
             decision, decision.options[best_index], option_best_discards[best_index],

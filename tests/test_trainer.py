@@ -277,6 +277,34 @@ def test_call_ev_treats_the_consumed_hand_tiles_as_public(monkeypatch):
         ]
 
 
+def test_call_grading_prices_pass_and_options_with_the_same_calibration(monkeypatch):
+    # A call verdict subtracts the chosen action's EV from the best action's.
+    # When passing is best it must be refined under the same calibration as
+    # the options; a pass refined without it compared two different models
+    # and flipped verdicts (inaccuracy -> best in the 10/4 review).
+    import taimahjong.trainer as trainer
+    from taimahjong.analysis import AnalysisContext, CalibrationContext
+
+    calibration = object()
+    analysis = AnalysisContext(calibration=CalibrationContext("test-table", calibration))
+    pass_calibrations = []
+
+    def fake_pass_ev(decision, base_seed, sims, scheme, used=None):
+        pass_calibrations.append(used)
+        return 0.0
+
+    monkeypatch.setattr(trainer, "_pass_ev", fake_pass_ev)
+    monkeypatch.setattr(trainer, "_option_rank", lambda *args, **kwargs: (-1.0, None))
+    decision = _first_call()
+    assert decision is not None, "expected a call decision in seeds 1-19"
+
+    evaluation = evaluate_call(decision, analysis=analysis)
+
+    assert evaluation.best_index is None
+    assert len(pass_calibrations) == 2  # the cheap rank and the REFINE_SIMS best
+    assert all(used is calibration for used in pass_calibrations)
+
+
 def test_call_ev_credits_dealer_tai_for_dealer_seat():
     # Seat 0 is the dealer, so every payment leg between the dealer and anyone
     # else carries the 莊 premium. The call-EV path (pass/option value) must
