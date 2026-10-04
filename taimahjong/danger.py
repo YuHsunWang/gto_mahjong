@@ -8,6 +8,7 @@ probability of a deal-in.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from math import ceil, sqrt
 
 from .tiles import validate_counts
@@ -546,6 +547,36 @@ def danger_score(
     return assess_validated_danger(tile, opponent, seen, hand)
 
 
+@lru_cache(maxsize=32768)
+def _danger_public_read(
+    tile: int,
+    river: tuple[int | RiverEntry, ...],
+    melds: tuple[MeldTiles, ...],
+    declared_at: int | None,
+) -> tuple[bool, tuple[WaitShape, ...], float, tuple[tuple[str, float], ...]]:
+    """Hoist shape weights and suit reads independent of private blockers."""
+    opponent = OpponentView(list(river), list(melds), declared_at)
+    if declared_at is not None and any(
+        _river_tile(entry) == tile for entry in river[declared_at + 1 :]
+    ):
+        return True, (), 1.0, (("declared_safe", 1.0),)
+    shapes = []
+    for name, required, base_weight in _wait_shapes(tile):
+        multiplier = _shape_river_multiplier(required, opponent.river)
+        shapes.append(WaitShape(name, required, base_weight, multiplier, base_weight * multiplier))
+    suit_name, suit_multiplier = _suit_void_multiplier(tile, opponent.river)
+    flush_name, flush_multiplier = _flush_multiplier(tile, opponent)
+    modifiers = {}
+    if suit_name:
+        modifiers[suit_name] = suit_multiplier
+    if flush_name:
+        modifiers[flush_name] = flush_multiplier
+    global_multiplier = max(suit_multiplier, flush_multiplier)
+    if suit_name and flush_name:
+        modifiers["suit_flush_max"] = global_multiplier
+    return False, tuple(shapes), global_multiplier, tuple(modifiers.items())
+
+
 def assess_validated_danger(
     tile: int,
     opponent: OpponentView,
@@ -560,36 +591,49 @@ def assess_validated_danger(
     more than the assessment it guards.  Callers taking counts from outside the
     engine must go through :func:`danger_score` instead.
     """
-    if opponent.declared_at is not None and any(
-        _river_tile(entry) == tile for entry in opponent.river[opponent.declared_at + 1 :]
-    ):
-        return DangerAssessment(0.0, [], {"declared_safe": 1.0})
-    unseen = [4 - seen[index] - hand[index] - (1 if index == tile else 0) for index in range(34)]
-    feasible: list[WaitShape] = []
-    for name, required, base_weight in _wait_shapes(tile):
-        need = 2 if name == "shanpon" else 1
-        if len(required) == 1:
-            is_feasible = unseen[required[0]] >= need
-        else:
-            is_feasible = all(unseen[required_tile] >= 1 for required_tile in required)
-        if is_feasible:
-            river_multiplier = _shape_river_multiplier(required, opponent.river)
-            feasible.append(WaitShape(name, required, base_weight, river_multiplier, base_weight * river_multiplier))
+    # Only the discard kind and its same-suit neighbours can block a wait.
+    # Other public/private tile counts cannot affect this assessment.
+    first = tile if tile >= 27 else max(tile // 9 * 9, tile - 2)
+    last = tile + 1 if tile >= 27 else min(tile // 9 * 9 + 9, tile + 3)
+    unseen = tuple(
+        4 - seen[index] - hand[index] - (1 if index == tile else 0)
+        for index in range(first, last)
+    )
+    score, feasible, modifiers = _danger_result(
+        tile, tuple(opponent.river), tuple(meld_tiles(meld) for meld in opponent.melds),
+        opponent.declared_at, first, unseen,
+    )
+    # The diagnostic containers remain private to each caller.
+    return DangerAssessment(score, list(feasible), dict(modifiers))
 
-    suit_name, suit_multiplier = _suit_void_multiplier(tile, opponent.river)
-    flush_name, flush_multiplier = _flush_multiplier(tile, opponent)
-    modifiers: dict[str, float] = {}
-    if suit_name:
-        modifiers[suit_name] = suit_multiplier
-    if flush_name:
-        modifiers[flush_name] = flush_multiplier
-    # A shared suit inference and flush commitment express the same broad
-    # signal, so use their maximum rather than multiplying the confidence.
-    global_multiplier = max(suit_multiplier, flush_multiplier)
-    if suit_name and flush_name:
-        modifiers["suit_flush_max"] = global_multiplier
+
+@lru_cache(maxsize=32768)
+def _danger_result(
+    tile: int,
+    river: tuple[int | RiverEntry, ...],
+    melds: tuple[MeldTiles, ...],
+    declared_at: int | None,
+    first: int,
+    unseen: tuple[int, ...],
+) -> tuple[float, tuple[WaitShape, ...], tuple[tuple[str, float], ...]]:
+    """Memoize the exact public read plus the wait's local tile blockers."""
+    safe, shapes, global_multiplier, modifier_items = _danger_public_read(
+        tile, river, melds, declared_at,
+    )
+    if safe:
+        return 0.0, (), modifier_items
+    feasible = []
+    for shape in shapes:
+        required = shape.required_tiles
+        need = 2 if shape.name == "shanpon" else 1
+        if len(required) == 1:
+            is_feasible = unseen[required[0] - first] >= need
+        else:
+            is_feasible = all(unseen[index - first] >= 1 for index in required)
+        if is_feasible:
+            feasible.append(shape)
     score = sum(shape.weight for shape in feasible) * global_multiplier
-    return DangerAssessment(score, feasible, modifiers)
+    return score, tuple(feasible), modifier_items
 
 
 def _trailing_tsumogiri_run(river: list[int | RiverEntry]) -> int:

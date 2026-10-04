@@ -214,6 +214,32 @@ def test_calibrated_rank_is_exact_with_and_without_settlement_cache(monkeypatch)
     assert cached == rank()
 
 
+def test_calibrated_ron_incremental_public_state_matches_fresh_callback():
+    class FixedCalibration:
+        def deal_in_probability(self, score):
+            return min(0.3, score / 100)
+
+    hand = parse_tiles("123m123p123s1112223z")
+    value_hand = (parse_tiles("123m123p123s11122233z"), _tile("3z"))
+    value_hands = (None, value_hand, value_hand, value_hand)
+    players = [Player("attack", list(hand)) for _ in range(4)]
+    players[2].declared_at = 0
+    players[2].river = parse_river("9m")
+    calibration = FixedCalibration()
+    cached = ev._calibrated_ron(calibration, 0, value_hands)
+    for step in range(12):
+        discarder = step % 4
+        tile = step % 9
+        fresh = ev._calibrated_ron(calibration, 0, value_hands)
+        assert cached(players, discarder, tile) == fresh(players, discarder, tile)
+        # Terminal continuations append one public discard after each claim.
+        players[discarder].river.append(ev.RiverEntry(tile))
+    # The callback must reset when handed a new trial's player sequence.
+    players = [Player("attack", list(hand)) for _ in range(4)]
+    fresh = ev._calibrated_ron(calibration, 0, value_hands)
+    assert cached(players, 0, 4) == fresh(players, 0, 4)
+
+
 def test_calibrated_ron_prices_every_opponent_and_keeps_actor_physical():
     # The deal-in table counts every discard against every opponent, so its
     # rate already integrates over hidden hands. It must price an opponent

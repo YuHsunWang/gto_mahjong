@@ -1289,12 +1289,32 @@ def _calibrated_ron(
             0.0, calibration.deal_in_probability(score) or 0.0,
         ))
 
+    trial_players = None
+    public_counts: list[int] = []
+    public_views: list[OpponentView] = []
+    river_lengths: list[int] = []
+
     def claims(
         players: Sequence[Player],
         discarder: int,
         tile: int,
     ) -> tuple[CalibratedRonClaim, ...]:
-        public = _public_counts(list(players))
+        nonlocal trial_players, public_counts, public_views, river_lengths
+        # A terminal trial only appends rivers; melds, kongs and declarations
+        # are invariant. Retain its views and count each new river tile once.
+        # A new players sequence starts a fresh trial and rebuilds the state.
+        if players is not trial_players:
+            trial_players = players
+            public_counts = list(_public_counts(list(players)))
+            public_views = [_view(player, seat) for seat, player in enumerate(players)]
+            river_lengths = [len(player.river) for player in players]
+        else:
+            for seat, player in enumerate(players):
+                for entry in player.river[river_lengths[seat]:]:
+                    public_counts[entry.tile] += 1
+                    public_views[seat].river.append(entry)
+                river_lengths[seat] = len(player.river)
+        public = tuple(public_counts)
         # Calibration rows were recorded from each discarder against every
         # other seat, with that discarder's post-discard hand as the private
         # tile blockers.  Reproduce those semantics here for every seat.  Using
@@ -1305,7 +1325,7 @@ def _calibrated_ron(
         for seat, player in enumerate(players):
             if seat in (discarder, acting_seat):
                 continue
-            opponent = _view(player, seat)
+            opponent = public_views[seat]
             # Both count vectors are built inside the rollout, so the public
             # entry point's argument checks would only re-prove what this loop
             # already guarantees, once per seat per discard.
