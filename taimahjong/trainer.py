@@ -906,7 +906,7 @@ def _option_uncertainty(evaluation: CallEvaluation | KongEvaluation) -> tuple[tu
             if estimates and estimates[best_slot] is not None and estimates[slot] is not None
             else SampleMoments(post_selection=True)
         )
-        wording = gap.payload(quiz.EV_EFFECT_SIZE_MIN)["wording"]
+        wording = gap.payload(quiz.scaled_threshold(quiz.EV_EFFECT_SIZE_MIN, evaluation.scheme))["wording"]
         if wording != "clear":
             unresolved.append(index)
             if wording == "uncertain" or state == "clear":

@@ -206,6 +206,7 @@ def test_post_call_world_counts_consumed_tiles_and_claimed_discard_once(monkeypa
     )
     players = [Player("attack", hand=list(hand))] + [Player("attack") for _ in range(3)]
     players[1].river.append(RiverEntry(offered, "tedashi"))
+    players[1].discards = 1
     position = trainer._trainer_position(0, offered, players, 4, 1)
     decision = TrainerCallDecision(position, offered, 1, (option,))
     assert position.public_counts[offered] == 1
@@ -219,7 +220,7 @@ def test_post_call_world_counts_consumed_tiles_and_claimed_discard_once(monkeypa
     class WorldChecked(Exception):
         pass
 
-    def check_world(post, public, *_args):
+    def check_world(post, public, *_args, **_kwargs):
         assert public == expected_public
         assert post == tuple(players[0].hand)
         if kind == "pon":
@@ -408,11 +409,19 @@ def test_call_grading_prices_pass_and_options_with_the_same_calibration(monkeypa
     analysis = AnalysisContext(calibration=CalibrationContext("test-table", calibration))
     pass_calibrations = []
 
-    def fake_pass_ev(decision, base_seed, sims, scheme, used=None):
+    def fake_pass_estimate(decision, base_seed, sims, scheme, used=None, *_args):
+        from types import SimpleNamespace
         pass_calibrations.append(used)
-        return 0.0
+        return SimpleNamespace(net_ev=0.0, trial_values=(), trial_strata=())
 
-    monkeypatch.setattr(trainer, "_pass_ev", fake_pass_ev)
+    option_calibrations = []
+
+    def fake_option(decision, option, discard, base_seed, sims, scheme, used=None, *_args):
+        option_calibrations.append(used)
+        return -1.0
+
+    monkeypatch.setattr(trainer, "_pass_estimate", fake_pass_estimate)
+    monkeypatch.setattr(trainer, "_refine_option", fake_option)
     monkeypatch.setattr(trainer, "_option_rank", lambda *args, **kwargs: (-1.0, None))
     decision = _first_call()
     assert decision is not None, "expected a call decision in seeds 1-19"
@@ -420,8 +429,9 @@ def test_call_grading_prices_pass_and_options_with_the_same_calibration(monkeypa
     evaluation = evaluate_call(decision, analysis=analysis)
 
     assert evaluation.best_index is None
-    assert len(pass_calibrations) == 2  # the cheap rank and the REFINE_SIMS best
-    assert all(used is calibration for used in pass_calibrations)
+    assert len(pass_calibrations) == 1  # DEV-249 reuses the refined table estimate.
+    assert option_calibrations
+    assert all(used is calibration for used in pass_calibrations + option_calibrations)
 
 
 def test_call_ev_credits_dealer_tai_for_dealer_seat():

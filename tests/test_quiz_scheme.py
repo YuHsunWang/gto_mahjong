@@ -88,7 +88,7 @@ def test_trainer_passes_scheme_to_shared_adaptive_grader(evaluation_type, monkey
     monkeypatch.setattr(evaluation_type, "_action_ev", lambda self, choice, sims: 0.2)
     monkeypatch.setattr(evaluation_type, "_action_shanten", lambda self, choice: 2)
     evaluation = evaluation_type(
-        pass_ev=0.0, option_evs=(0.7,), best_index=0, best_ev=0.7,
+        pass_ev=0.2, option_evs=(0.7,), best_index=0, best_ev=0.7,
         best_ev_sims=quiz.REFINE_SIMS, decision=None, scheme=SCHEME_5_2,
     )
     # A 0.5-chip loss is good at 5/2 (boundary 0.525), inaccurate at default.

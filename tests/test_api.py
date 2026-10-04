@@ -217,7 +217,7 @@ def test_trainer_payload_tells_player_when_hand_is_auto_locked(client, monkeypat
     # Grading is unrelated to declaration visibility; run the real game and
     # advice rule while avoiding the discard EV calculation.
     monkeypatch.setattr(api, "grade", lambda *_args: SimpleNamespace(verdict="best", ev_loss=0.0))
-    monkeypatch.setattr(api, "_grade_payload", lambda _result: {"verdict": "best"})
+    monkeypatch.setattr(api, "_grade_payload", lambda _result: {"verdict": "best", "ev_loss": 0.0})
     state = client.post("/api/trainer/new", json={"seed": 2419, "human_seat": 0}).json()
     position = state["decision"]["position"]
     assert state["migi_declared"] is False
