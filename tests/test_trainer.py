@@ -231,6 +231,52 @@ def test_evaluate_call_is_deterministic_and_refines_best_and_chosen():
     assert best.verdict == "best" and best.ev_delta == 0.0 and best.marginal is False
 
 
+def test_call_ev_treats_the_consumed_hand_tiles_as_public(monkeypatch):
+    # After a pon/chi the two hand tiles in the meld are public. If the EV call
+    # leaves them out of the visible counts, the world sampler deals those
+    # copies again; the actor can then draw a fifth copy and score_hand raises,
+    # which left trainer seeds 5, 6 and 8 (human seat 1) stuck on a call.
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    import taimahjong.trainer as trainer
+    from taimahjong.tiles import parse_tiles
+
+    one_man, east = 0, 27
+    position = replace(
+        next(play_trainer(1)).position,
+        hand=parse_tiles("11234567m123p123s12z"),
+        own_melds=(),
+        own_kongs=(),
+        public_counts=tuple(1 if tile == one_man else 0 for tile in range(34)),
+    )
+    option = CallOption("pon", (one_man,) * 3, (one_man,) * 2)
+    decision = TrainerCallDecision(position, one_man, discarder=3, options=(option,))
+    seen = []
+
+    def capture_rank(counts, opponents, visible, *args, **kwargs):
+        seen.append((tuple(counts), tuple(visible)))
+        return []
+
+    def capture_discard(counts, discard, opponents, visible, *args, **kwargs):
+        seen.append((tuple(counts), tuple(visible)))
+        return SimpleNamespace(net_ev=0.0)
+
+    monkeypatch.setattr(trainer, "ev_rank", capture_rank)
+    monkeypatch.setattr(trainer, "evaluate_discard", capture_discard)
+    trainer._option_rank(decision, option, 1, 1)
+    trainer._refine_option(decision, option, east, 1, 1)
+
+    assert len(seen) == 2
+    for counts, visible in seen:
+        # Two copies moved from the hand into the meld and the offered copy is
+        # already public: three 一萬 are accounted for, one is unseen.
+        assert counts[one_man] + visible[one_man] == 3
+        assert [h + v for h, v in zip(counts, visible)] == [
+            h + v for h, v in zip(position.hand, position.public_counts)
+        ]
+
+
 def test_call_ev_credits_dealer_tai_for_dealer_seat():
     # Seat 0 is the dealer, so every payment leg between the dealer and anyone
     # else carries the 莊 premium. The call-EV path (pass/option value) must
