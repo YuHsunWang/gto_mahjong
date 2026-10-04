@@ -107,7 +107,7 @@ button {
 }
 
 .topbar .mode-tag {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-dim);
   border: 1px solid rgba(217, 194, 230, .3);
   border-radius: 999px;
@@ -274,7 +274,7 @@ button {
   border-radius: 6px;
   background: rgba(15, 8, 20, .7);
   color: var(--ink-dim);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 15px;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -298,7 +298,7 @@ button {
 
 .concealed-hand { display: flex; gap: 1px; min-width: 0; min-height: 0; }
 .concealed-hand--landscape { flex-direction: column; }
-.concealed-hand--unknown { color: var(--ink-faint); font-size: 10px; }
+.concealed-hand--unknown { color: var(--ink-faint); font-size: 12px; }
 
 .seat-melds { display: flex; gap: 7px; }
 .seat--left .seat-melds, .seat--right .seat-melds { flex-direction: column; }
@@ -319,7 +319,7 @@ button {
   border-radius: 4px;
   background: #765bbe;
   color: #fff;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   line-height: 13px;
   white-space: nowrap;
@@ -330,7 +330,7 @@ button {
 .wall-band--right { grid-area: wr; flex-direction: column; }
 .wall-band--bottom { grid-area: wb; }
 .wall-band--left { grid-area: wl; flex-direction: column; }
-.wall-band--unknown { color: var(--ink-faint); font-size: 9px; }
+.wall-band--unknown { color: var(--ink-faint); font-size: 12px; }
 
 .wall-stack { position: relative; width: 21px; height: 17px; flex: 0 0 auto; }
 .wall-tile {
@@ -387,9 +387,9 @@ button {
 .center-stats { display: flex; justify-content: center; gap: 13px; }
 .center-stats span { display: grid; }
 .center-stats strong { font-size: 18px; font-variant-numeric: tabular-nums; line-height: 1.1; }
-.center-stats small, .center-note { color: var(--ink-dim); font-size: 9px; }
-.center-box .noflower { color: var(--ink-faint); font-size: 10px; margin-top: 3px; }
-.center-box .offered { display: flex; justify-content: center; align-items: center; gap: 5px; margin-top: 4px; color: var(--ink-dim); font-size: 9px; }
+.center-stats small, .center-note { color: var(--ink-dim); font-size: 12px; }
+.center-box .noflower { color: var(--ink-faint); font-size: 12px; margin-top: 3px; }
+.center-box .offered { display: flex; justify-content: center; align-items: center; gap: 5px; margin-top: 4px; color: var(--ink-dim); font-size: 12px; }
 .center-box .offered .tile.sm { width: 20px; height: 27px; }
 
 /* ---------- own hand ---------- */
@@ -632,7 +632,7 @@ details.evwrap summary {
 .review-head { display: flex; align-items: center; gap: 8px; padding: 12px 13px 10px; border-bottom: 1px solid rgba(217, 194, 230, .15); }
 .review-head h2 { flex: 1; margin: 0; font-size: 14px; }
 .review-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 8px; background: rgba(217, 194, 230, .08); }
-.review-tab { padding: 5px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-dim); font-size: 11px; }
+.review-tab { padding: 5px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-dim); font-size: 12px; }
 .review-tab.active { background: #7254a1; color: #fff; }
 .review-tab:disabled { cursor: default; opacity: .4; }
 .review-tab:focus-visible { outline: 2px solid var(--gold); }
@@ -647,7 +647,7 @@ details.evwrap summary {
   background: repeating-linear-gradient(135deg, rgba(165, 139, 226, .19) 0 7px, rgba(165, 139, 226, .08) 7px 14px);
 }
 .ranking-banner b { color: #ddcffb; }
-.ranking-banner p { margin: 4px 0 0; color: #cbbede; font-size: 11px; }
+.ranking-banner p { margin: 4px 0 0; color: #cbbede; font-size: 12px; }
 .ranking-banner--marginal { border-style: dashed; background: rgba(165, 139, 226, .1); }
 
 .review-panels { min-width: 0; }
@@ -655,7 +655,7 @@ details.evwrap summary {
 .review-panel.active { display: block; }
 .quality-headline { display: grid; grid-template-columns: 1.15fr .85fr; gap: 8px; }
 .current-evidence { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
-.current-evidence > div { display: flex; justify-content: space-between; gap: 6px; padding: 6px 7px; border-radius: 7px; background: rgba(217, 194, 230, .05); font-size: 10px; }
+.current-evidence > div { display: flex; justify-content: space-between; gap: 6px; padding: 6px 7px; border-radius: 7px; background: rgba(217, 194, 230, .05); font-size: 12px; }
 .current-evidence span { color: var(--ink-dim); }
 .current-evidence b { font-variant-numeric: tabular-nums; }
 .quality-score-card, .quality-minis > div {
@@ -665,7 +665,7 @@ details.evwrap summary {
   background: rgba(217, 194, 230, .06);
 }
 .quality-score-card strong { display: block; font-size: 32px; line-height: 1; font-variant-numeric: tabular-nums; }
-.quality-score-card span, .quality-minis span { display: block; margin-top: 3px; color: var(--ink-dim); font-size: 10px; }
+.quality-score-card span, .quality-minis span { display: block; margin-top: 3px; color: var(--ink-dim); font-size: 12px; }
 .quality-minis { display: grid; gap: 7px; }
 .quality-minis strong { font-size: 17px; font-variant-numeric: tabular-nums; }
 
@@ -681,10 +681,10 @@ details.evwrap summary {
 .quality-swatch { width: 9px; height: 9px; border-radius: 3px; }
 .quality-row b { font-size: 12px; font-weight: 600; }
 .quality-count { font-weight: 800; font-variant-numeric: tabular-nums; }
-.quality-note { margin: 8px 0 0; color: var(--ink-faint); font-size: 10px; }
+.quality-note { margin: 8px 0 0; color: var(--ink-faint); font-size: 12px; }
 .loss-card { display: flex; align-items: baseline; gap: 9px; margin-top: 10px; padding: 9px 10px; border: 1px solid rgba(217, 194, 230, .14); border-radius: 10px; background: rgba(217, 194, 230, .06); }
 .loss-card strong { font-size: 21px; font-variant-numeric: tabular-nums; }
-.loss-card span { color: var(--ink-dim); font-size: 10px; }
+.loss-card span { color: var(--ink-dim); font-size: 12px; }
 .review-panel .model-scope { margin-top: 11px; padding-top: 9px; border-top: 1px solid rgba(217, 194, 230, .12); }
 
 .option-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
@@ -708,12 +708,12 @@ details.evwrap summary {
 .option-cell.chosen { box-shadow: inset 0 0 0 2px var(--gold); }
 .option-cell.selected { outline: 2px solid var(--gold); outline-offset: 1px; }
 .option-cell:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
-.option-rank { position: absolute; top: 5px; right: 6px; color: var(--ink-faint); font-size: 9px; }
+.option-rank { position: absolute; top: 5px; right: 6px; color: var(--ink-faint); font-size: 12px; }
 .option-tile { display: block; width: fit-content; }
 .option-cell > strong { display: block; margin-top: 3px; font-size: 15px; font-variant-numeric: tabular-nums; }
-.option-band { display: block; color: var(--ink-dim); font-size: 9px; }
+.option-band { display: block; color: var(--ink-dim); font-size: 12px; }
 .option-detail { margin-top: 9px; padding: 9px 10px; border: 1px solid rgba(217, 194, 230, .14); border-radius: 9px; background: rgba(217, 194, 230, .05); }
-.option-detail > div { display: flex; justify-content: space-between; gap: 8px; margin: 3px 0; font-size: 11px; }
+.option-detail > div { display: flex; justify-content: space-between; gap: 8px; margin: 3px 0; font-size: 12px; }
 .option-detail span { color: var(--ink-dim); }
 .review-empty { color: var(--ink-faint); font-size: 12px; }
 
@@ -774,7 +774,7 @@ details.evwrap summary {
 
 .footnote {
   color: var(--ink-faint);
-  font-size: 11.5px;
+  font-size: 12px;
   margin-top: 18px;
   border-top: 1px solid rgba(217, 194, 230, .12);
   padding-top: 10px;
@@ -870,7 +870,7 @@ details.evwrap summary {
 
 .card .card-head { display: flex; align-items: baseline; gap: 10px; }
 .card .card-name { font-family: var(--serif); font-size: 19px; font-weight: 800; letter-spacing: 1px; }
-.card .card-en { color: var(--ink-faint); font-size: 11px; }
+.card .card-en { color: var(--ink-faint); font-size: 12px; }
 .card .card-desc { color: var(--ink-dim); font-size: 12.5px; margin-top: 3px; }
 
 .card .card-stats {
@@ -888,7 +888,7 @@ details.evwrap summary {
 .card .spark svg { vertical-align: middle; }
 
 .teach-card { margin-top: 10px; }
-.teach-card .card-en { color: var(--ink-faint); font-size: 11px; margin-left: 8px; }
+.teach-card .card-en { color: var(--ink-faint); font-size: 12px; margin-left: 8px; }
 
 /* teaching lesson screen */
 .lesson-card {
@@ -945,7 +945,7 @@ details.evwrap summary {
   border-radius: 50%;
   background: var(--gold);
   color: #241300;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   display: inline-flex;
   align-items: center;
