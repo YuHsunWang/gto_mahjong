@@ -260,6 +260,7 @@ class TrainerOutcome:
     next_dealer_streak: int = 0
     next_human_seat: int = 0
     robbed_kong: bool = False
+    migi_declared: bool = False
 
     @property
     def headline(self) -> str:
@@ -294,7 +295,8 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
              human_seat: int, deltas: tuple[int, int, int, int], turns: int,
              dealer_streak: int = 0, robbed_kong: bool = False,
              rules: RulesConfig = DEFAULT_RULES,
-             winners: tuple[int, ...] = ()) -> TrainerOutcome:
+             winners: tuple[int, ...] = (),
+             migi_declared: bool = False) -> TrainerOutcome:
     # 流局連莊: the dealer (seat 0) keeps dealership and the streak grows on a
     # draw or a dealer win; otherwise dealership passes, which we emulate by
     # rotating the human one seat downstream and resetting the streak.
@@ -316,6 +318,7 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
         next_dealer_streak=dealer_streak + 1 if dealer_keeps else 0,
         next_human_seat=human_seat if dealer_keeps else (human_seat + 1) % 4,
         robbed_kong=robbed_kong,
+        migi_declared=migi_declared,
     )
 
 
@@ -831,6 +834,7 @@ def play_trainer(
                 yield _outcome(
                     "draw", None, None, human_seat, deltas, actions,
                     dealer_streak, rules=rules,
+                    migi_declared=players[human_seat].declared,
                 )
                 return
             drawn_tile = wall.pop()
@@ -844,6 +848,7 @@ def play_trainer(
                 yield _outcome(
                     "tsumo", current, None, human_seat, deltas, actions,
                     dealer_streak, rules=rules,
+                    migi_declared=players[human_seat].declared,
                 )
                 return
 
@@ -881,6 +886,7 @@ def play_trainer(
                                 "ron", robber, current, human_seat, deltas, actions,
                                 dealer_streak, robbed_kong=True, rules=rules,
                                 winners=robbers,
+                                migi_declared=players[human_seat].declared,
                             )
                             return
                     drawn_tile = _declare_kong(player, option.tile, option.kind == "concealed", dead, wall)
@@ -893,6 +899,7 @@ def play_trainer(
                         yield _outcome(
                             "tsumo", current, None, human_seat, deltas, actions,
                             dealer_streak, rules=rules,
+                            migi_declared=players[human_seat].declared,
                         )
                         return
                 else:
@@ -939,6 +946,7 @@ def play_trainer(
             yield _outcome(
                 "ron", winner, current, human_seat, deltas, actions,
                 dealer_streak, rules=rules, winners=winners,
+                migi_declared=players[human_seat].declared,
             )
             return
 
@@ -1032,6 +1040,7 @@ def play_trainer(
                     yield _outcome(
                         "tsumo", human_seat, None, human_seat, deltas, actions,
                         dealer_streak, rules=rules,
+                        migi_declared=players[human_seat].declared,
                     )
                     return
                 pending_drawn_tile = replacement

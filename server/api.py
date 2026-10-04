@@ -187,6 +187,7 @@ def _position_payload(position: QuizPosition) -> dict[str, Any]:
         "drawn_tile": position.drawn_tile,
         "hand": list(position.hand),
         "own_river": _river_payload(position.own_river),
+        "migi_declared": position.migi_declared,
         "own_melds": [list(meld_tiles(meld)) for meld in position.own_melds],
         "own_meld_details": [
             _meld_detail_payload(meld) for meld in position.own_melds
@@ -485,6 +486,7 @@ def _decision_payload(item: Any) -> dict[str, Any]:
             "dealer_streak_in": item.dealer_streak_in,
             "next_dealer_streak": item.next_dealer_streak,
             "next_human_seat": item.next_human_seat,
+            "migi_declared": item.migi_declared,
         }
     if isinstance(item, TrainerKongDecision):
         return {
@@ -518,6 +520,11 @@ def _session_payload(session_id: str, session: _TrainerSession) -> dict[str, Any
         "seed": session.seed,
         "human_seat": session.human_seat,
         "dealer_streak": session.dealer_streak,
+        "migi_declared": (
+            session.current.migi_declared
+            if isinstance(session.current, TrainerOutcome)
+            else session.current.position.migi_declared
+        ),
         "scorecard": dict(session.score),
         "decision": _decision_payload(session.current),
         "feedback": session.feedback,

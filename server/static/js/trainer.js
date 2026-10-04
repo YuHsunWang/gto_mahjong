@@ -373,6 +373,13 @@ export function trainerScreen(root) {
       root.append(setupScreen());
       return;
     }
+    if (state.migi_declared) {
+      const notice = document.createElement('div');
+      notice.className = 'note';
+      notice.setAttribute('role', 'status');
+      notice.textContent = '已自動宣告聽牌（之後自動摸切）';
+      root.append(notice);
+    }
     if (phase === 'acting') {
       const decision = frozen;
       const board = document.createElement('section');

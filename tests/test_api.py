@@ -209,6 +209,38 @@ def test_trainer_session_flow_discard_scorecard_and_reload(client):
     assert client.post(f"/api/trainer/{session_id}/act", json=stale).status_code == 409
 
 
+def test_trainer_payload_tells_player_when_hand_is_auto_locked(client, monkeypatch):
+    from types import SimpleNamespace
+
+    from taimahjong.ukeire import discard_analysis
+
+    # Grading is unrelated to declaration visibility; run the real game and
+    # advice rule while avoiding the discard EV calculation.
+    monkeypatch.setattr(api, "grade", lambda *_args: SimpleNamespace(verdict="best", ev_loss=0.0))
+    monkeypatch.setattr(api, "_grade_payload", lambda _result: {"verdict": "best"})
+    state = client.post("/api/trainer/new", json={"seed": 2419, "human_seat": 0}).json()
+    position = state["decision"]["position"]
+    assert state["migi_declared"] is False
+    assert position["migi_declared"] is False
+    tile = discard_analysis(
+        tuple(position["hand"]), len(position["own_melds"]) + len(position["own_kong_details"]),
+        (0,) * 34,
+    )[0].discard
+
+    response = client.post(f"/api/trainer/{state['session_id']}/act", json={
+        "step": state["step"], "action": "discard", "tile": tile,
+    })
+    assert response.status_code == 200
+    after = response.json()
+    assert after["decision"]["type"] == "outcome"
+    # A player whose hand is auto-locked must be told even if the next payload
+    # is the outcome rather than another decision. Reload must retain it too.
+    assert after["migi_declared"] is True
+    assert after["decision"]["migi_declared"] is True
+    reloaded = client.get(f"/api/trainer/{state['session_id']}").json()
+    assert reloaded["migi_declared"] is True
+
+
 def test_trainer_rejects_mid_session_scheme_switch(client):
     state = client.post("/api/trainer/new", json={"seed": 1, "scheme": "3-1"}).json()
     decision = state["decision"]
