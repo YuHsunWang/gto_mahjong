@@ -101,6 +101,16 @@ class WinValueContext:
     context: WinContext
     melds: tuple[MeldLike, ...] = ()
     kongs: tuple[KongLike, ...] = ()
+    wall_remaining: int | None = None
+    opening_live_draw: bool = False
+
+    def __post_init__(self) -> None:
+        if self.wall_remaining is not None and (
+            not isinstance(self.wall_remaining, int)
+            or isinstance(self.wall_remaining, bool)
+            or self.wall_remaining < 0
+        ):
+            raise ValueError("wall_remaining must be a non-negative integer")
 
 
 @dataclass(frozen=True)
@@ -628,6 +638,7 @@ class _TrialWorld:
         tuple[tuple[int, ...], int] | None,
         tuple[tuple[int, ...], int] | None,
     ] = (None, None, None, None)
+    wall_remaining: int | None = None
 
 
 class _OrderedWallRandom:
@@ -770,7 +781,11 @@ def _production_seats(
     context_template: WinContext | WinValueContext | None,
 ) -> tuple[int, tuple[OpponentView | None, ...], int]:
     context, _, _ = _template(context_template)
-    acting_seat = 0 if context.dealer else 1
+    acting_seat = (
+        context.seat_wind - 27
+        if context.seat_wind is not None
+        else (0 if context.dealer else 1)
+    )
     seats: list[OpponentView | None] = [None] * 4
     remaining_seats = [seat for seat in range(4) if seat != acting_seat]
     dealer_view = next((view for view in views if view.is_dealer), None)
@@ -1131,12 +1146,21 @@ def _sample_production_world(
         for _ in range(count)
     ]
     rng.shuffle(pool)
-    wall = tuple(pool[:min(4 * turns, len(pool))])
+    # The unseen pool includes the retained dead wall; the horizon does not
+    # determine whether a normal draw is the last live tile.
+    live_remaining = (
+        context_template.wall_remaining
+        if isinstance(context_template, WinValueContext)
+        and context_template.wall_remaining is not None
+        else max(0, len(pool) - FLOWERLESS_DEAD_WALL_TILES)
+    )
+    wall = tuple(pool[:min(4 * turns, live_remaining)])
     return _TrialWorld(
         tuple(players),
         wall,
         terminal_seed=rng.randrange(2**64),
         ron_value_hands=ron_value_hands,
+        wall_remaining=live_remaining,
     )
 
 
@@ -1514,6 +1538,7 @@ def evaluate_pass(
                 else None
             ),
             visible=seen,
+            wall_remaining=world.wall_remaining,
         )
         for world in worlds
     ]
@@ -1644,6 +1669,11 @@ def ev_rank(
                         injected_players,
                         wall,
                         wall_order=orders[(offset + trial) % len(orders)],
+                        wall_remaining=(
+                            context_template.wall_remaining
+                            if isinstance(context_template, WinValueContext)
+                            else None
+                        ),
                     ))
             else:
                 rng = random.Random(world_seed)
@@ -1652,6 +1682,11 @@ def ev_rank(
                         injected_players,
                         wall,
                         terminal_seed=rng.randrange(2**64),
+                        wall_remaining=(
+                            context_template.wall_remaining
+                            if isinstance(context_template, WinValueContext)
+                            else None
+                        ),
                     )
                     for _ in range(sims)
                 ]
@@ -1719,6 +1754,11 @@ def ev_rank(
                 calibrated_ron=calibrated_ron,
                 acting_discard_policy=acting_discard_policy,
                 visible=seen,
+                wall_remaining=world.wall_remaining,
+                opening_live_draw=(
+                    isinstance(context_template, WinValueContext)
+                    and context_template.opening_live_draw
+                ),
             ))
         hidden_strata = tuple(
             world.hidden_stratum

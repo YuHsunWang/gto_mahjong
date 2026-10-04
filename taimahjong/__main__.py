@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .analysis import AnalysisContext, CalibrationProvider
 from .calibration import counts_from_games, format_report, load_table, write_merged_table
-from .config import GameConfig
+from .config import GameConfig, RulesConfig
 from .danger import OpponentView, fold_score, meld_tiles, parse_river, rank_discards
 from .ev import TileAccounting, declaration_ev, ev_rank, remaining_draws
 from .quiz import best_discard, explain, generate_position, grade
@@ -183,6 +183,8 @@ def main() -> None:
     parser.add_argument("--my-melds", help="semicolon-separated declared melds of the scored hand, e.g. 123s;777z")
     parser.add_argument("--win-tile", help="winning tile for --score, e.g. 3z")
     parser.add_argument("--self-draw", action="store_true", help="the win was by self-draw (自摸)")
+    parser.add_argument("--last-tile", action="store_true", help="last live draw or its immediate discard (海底撈月/河底撈魚)")
+    parser.add_argument("--menqing-self-draw-three", action="store_true", help="score 門清自摸 as 3 tai total (default: 2)")
     parser.add_argument("--dealer", action="store_true", help="the winner is the dealer (莊家)")
     parser.add_argument("--streak", type=int, default=0, help="dealer repeat count for 連莊拉莊 (default: 0)")
     parser.add_argument("--migi", action="store_true", help="the winner had declared tenpai (migi)")
@@ -450,6 +452,8 @@ def main() -> None:
             context = WinContext(
                 winning_tile=winning[0],
                 self_draw=args.self_draw,
+                last_tile=args.last_tile,
+                rules=RulesConfig(menqing_self_draw_three=args.menqing_self_draw_three),
                 dealer=args.dealer,
                 dealer_streak=args.streak,
                 migi_declared=args.migi,

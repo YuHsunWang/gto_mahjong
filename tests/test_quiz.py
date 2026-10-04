@@ -321,3 +321,43 @@ def test_quiz_cli_noninteractive_prints_best_verdict(position):
     )
     assert result.returncode == 0, result.stderr
     assert "Verdict: best" in result.stdout
+
+
+@pytest.mark.parametrize("rank", [_rank_cached, _display_rank_cached])
+@pytest.mark.parametrize("wall_remaining,last_tile_bonus", [(17, 0), (1, 1)])
+@pytest.mark.parametrize("seat,ordinary_value", [(1, 5), (2, 6)])
+def test_quiz_rank_preserves_west_wind_and_real_wall_end(monkeypatch, rank, wall_remaining, last_tile_bonus, seat, ordinary_value):
+    from taimahjong import ev
+    from taimahjong.analysis import DEFAULT_ANALYSIS_CONTEXT
+    from taimahjong.selfplay import Player
+
+    hand = parse_tiles("123m456m123p789s333z55p")
+    position = quiz._position_from(
+        DecisionSnapshot(seat, hand, (), (), (), (0,) * 34, 17, 0, wall_remaining=wall_remaining),
+        seed=13,
+    )
+    real_rank = ev.ev_rank
+
+    def known_final_draw(*args, **kwargs):
+        # Keep the real quiz template and terminal scoring; fix hidden hands
+        # and the last simulated draw so the wind/海底 values are deterministic.
+        actor, _, _ = ev._production_seats((), args[7])
+        assert actor == seat
+        players = [Player("attack", list(parse_tiles("147m147p147s1234567z"))) for _ in range(4)]
+        players[actor].hand = list(hand)
+        kwargs.update(
+            rollout_players=players, rollout_wall=(0,), acting_seat=actor,
+            next_seat=actor, calibration=None, _target_discard=0,
+        )
+        args = list(args)
+        args[5] = 1
+        return real_rank(*args, **kwargs)
+
+    monkeypatch.setattr(quiz, "ev_rank", known_final_draw)
+    rank.cache_clear()
+    try:
+        entry = next(entry for entry in rank(position, DEFAULT_ANALYSIS_CONTEXT) if not entry.is_fold)
+        assert entry.p_win == 1.0
+        assert entry.mean_win_value == ordinary_value + last_tile_bonus
+    finally:
+        rank.cache_clear()

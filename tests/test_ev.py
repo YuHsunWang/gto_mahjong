@@ -690,8 +690,12 @@ def test_declared_context_reaches_ev_rollout_scores_migi_and_locks_tsumogiri(mon
     _, value = _settlement(
         "tsumo", actor, None, list(world.players), POST_DRAW, _tile("3z"), 0,
     )
+    # Seat 1 is South in an East round; settlement scores both winds (DEV-245).
     undeclared = score_hand(
-        POST_DRAW, (), WinContext(_tile("3z"), self_draw=True),
+        POST_DRAW, (), WinContext(
+            _tile("3z"), self_draw=True,
+            round_wind=_tile("1z"), seat_wind=_tile("2z"),
+        ),
     ).value_units
     assert value == undeclared + 8
 
@@ -1043,3 +1047,44 @@ def test_defensive_policy_buys_safety_with_win_equity_when_nothing_threatens():
             measured[label] = live_waits(after, belief)
 
         assert measured["defensive"] < measured["production"], case.name
+
+
+@pytest.mark.parametrize("seat", [1, 2, 3])
+def test_production_world_preserves_actor_seat_wind(seat):
+    context = WinContext(0, seat_wind=27 + seat)
+    opponents = tuple(OpponentView([], [], is_dealer=i == 0) for i in range(3))
+    acting, views, _ = ev._production_seats(opponents, context)
+    assert acting == seat
+    assert tuple(view for view in views if view is not None) == opponents
+    hand = parse_tiles("123m456m123p789s333z55p")
+    world = ev._sample_production_world(hand, (0,) * 34, opponents, 0, context, 13)
+    assert tuple(world.players[seat].hand) == hand
+    _, value = _settlement("tsumo", acting, None, list(world.players), hand, 0)
+    assert value == (6 if seat == 2 else 5)
+
+
+def test_production_world_keeps_real_wall_end_beyond_horizon():
+    template = ev.WinValueContext(WinContext(0), wall_remaining=17)
+    world = ev._sample_production_world(POST_DRAW, (0,) * 34, (), 4, template, 13)
+    assert len(world.wall) == 16
+    assert world.wall_remaining == 17
+
+
+@pytest.mark.parametrize("live_draw", [False, True])
+def test_ev_opening_draw_context_reaches_terminal(live_draw):
+    winning = parse_tiles("111m456789p234s55789s")
+    tile = 19
+    players = [Player("attack", list(parse_tiles("147m147p147s1234567z"))) for _ in range(4)]
+    players[1].hand = list(winning)
+    players[1].hand[tile] -= 1
+    players[0].hand[tile] = 1
+    ranked = ev_rank(
+        tuple(players[0].hand), (), (0,) * 34, sims=1,
+        rollout_players=players, rollout_wall=(), acting_seat=0,
+        context_template=ev.WinValueContext(
+            WinContext(0), wall_remaining=0, opening_live_draw=live_draw,
+        ),
+        _target_discard=tile,
+    )
+    ordinary, _ = _settlement("ron", 1, 0, players, winning, tile)
+    assert ranked[0].net_ev == ordinary[0] - int(live_draw)

@@ -236,6 +236,8 @@ def terminal_payment(
     *,
     winning_hand: tuple[int, ...] | None = None,
     winning_tile: int | None = None,
+    wall_remaining: int | None = None,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> ReferencePayment:
     """Apply the written outcome contract through the shared house settlement."""
     if kind not in OUTCOME_KINDS:
@@ -268,6 +270,8 @@ def terminal_payment(
         winning_tile,
         state.dealer_streak,
         state.scheme if scheme is None else scheme,
+        wall_remaining=wall_remaining,
+        rules=rules,
     )
     return ReferencePayment(deltas, value)
 
@@ -332,6 +336,9 @@ def _terminal(
     winning_hand: tuple[int, ...] | None = None,
     payment: ReferencePayment | None = None,
     ron_winners: tuple[int, ...] = (),
+    *,
+    wall_remaining: int | None = None,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> ReferenceOutcome:
     return ReferenceOutcome(
         kind,
@@ -341,6 +348,7 @@ def _terminal(
         payment if payment is not None else terminal_payment(
             state, kind, winner, discarder,
             winning_hand=winning_hand, winning_tile=winning_tile,
+            wall_remaining=wall_remaining, rules=rules,
         ),
         ron_winners,
     )
@@ -351,6 +359,9 @@ def _ron_terminal(
     claims: tuple[tuple[int, tuple[int, ...]], ...],
     discarder: int,
     winning_tile: int,
+    *,
+    wall_remaining: int | None = None,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> ReferenceOutcome:
     winners = tuple(winner for winner, _ in claims)
     winning_hands = dict(claims)
@@ -362,6 +373,8 @@ def _ron_terminal(
         winning_tile,
         state.dealer_streak,
         state.scheme,
+        wall_remaining=wall_remaining,
+        rules=rules,
     )
     primary = winners[0]
     return _terminal(
@@ -380,8 +393,22 @@ def evaluate_candidate(
     state: ReferenceState,
     discard: int,
     rules: RulesConfig = DEFAULT_RULES,
+    *,
+    wall_remaining: int | None = None,
+    opening_live_draw: bool = False,
 ) -> ExactEvaluation:
-    """Exhaust every physical order of ``state.wall`` after one legal discard."""
+    """Exhaust every physical order of ``state.wall`` after one legal discard.
+
+    As in rollout, ``wall_remaining`` counts real live tiles before future
+    draws, and ``opening_live_draw`` marks a discard after a normal live draw.
+    """
+    live_remaining = len(state.wall) if wall_remaining is None else wall_remaining
+    if (
+        not isinstance(live_remaining, int)
+        or isinstance(live_remaining, bool)
+        or live_remaining < len(state.wall)
+    ):
+        raise ValueError("wall_remaining must be an integer at least the simulated wall size")
     if discard not in state.legal_discards:
         raise ValueError("reference discard must be present in the acting hand")
     hands = [player.hand for player in state.players]
@@ -395,6 +422,8 @@ def evaluate_candidate(
     if immediate:
         outcome = _ron_terminal(
             state, immediate, state.acting_seat, discard,
+            wall_remaining=live_remaining if opening_live_draw else None,
+            rules=rules,
         )
         return ExactEvaluation(
             discard,
@@ -415,6 +444,7 @@ def evaluate_candidate(
         remaining: tuple[int, ...],
         seat: int,
         probability: Fraction,
+        live_remaining: int,
     ) -> None:
         total = sum(remaining)
         if not total:
@@ -437,6 +467,8 @@ def evaluate_candidate(
                     None,
                     tile,
                     drawn_hand,
+                    wall_remaining=live_remaining - 1,
+                    rules=rules,
                 ), next_probability)
                 continue
             discard_tile = (
@@ -455,7 +487,10 @@ def evaluate_candidate(
             )
             if ron:
                 add(
-                    _ron_terminal(state, ron, seat, discard_tile),
+                    _ron_terminal(
+                        state, ron, seat, discard_tile,
+                        wall_remaining=live_remaining - 1, rules=rules,
+                    ),
                     next_probability,
                 )
             else:
@@ -464,9 +499,13 @@ def evaluate_candidate(
                     tuple(next_remaining),
                     (seat + 1) % 4,
                     next_probability,
+                    live_remaining - 1,
                 )
 
-    branch(frozen_hands, tuple(wall_counts), state.next_seat, Fraction(1))
+    branch(
+        frozen_hands, tuple(wall_counts), state.next_seat, Fraction(1),
+        live_remaining,
+    )
     outcomes = tuple(
         OutcomeProbability(outcome, probability)
         for outcome, probability in sorted(

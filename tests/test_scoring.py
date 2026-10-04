@@ -319,3 +319,58 @@ def test_kong_size_validation_and_context_rules():
             parse_tiles("234567m234p234s55s"), (), WinContext(winning_tile=_tile("2s")),
             kongs=((_tile("1z"), 1),),
         )
+
+
+@pytest.mark.parametrize('self_draw, name', [
+    (True, 'last live tile (海底撈月)'),
+    (False, 'last discard (河底撈魚)'),
+])
+def test_last_tile_adds_one_tai_only_when_flagged(self_draw, name):
+    hand = parse_tiles('123456789m123p11678s')
+    context = WinContext(_tile('6s'), self_draw=self_draw)
+    ordinary = score_hand(hand, (), context)
+    last = score_hand(hand, (), replace(context, last_tile=True))
+    assert name not in _names(ordinary)
+    assert dict(last.items)[name] == 1
+    assert last.total_tai == ordinary.total_tai + 1
+
+
+def test_menqing_self_draw_is_two_by_default_three_when_enabled():
+    hand = parse_tiles('111m456789p234s55789s')
+    context = WinContext(_tile('2s'), self_draw=True)
+    default = score_hand(hand, (), context)
+    enabled = score_hand(hand, (), replace(
+        context, rules=replace(DEFAULT_RULES, menqing_self_draw_three=True),
+    ))
+    assert default.total_tai == 2
+    assert enabled.total_tai == 3
+    ron = score_hand(hand, (), replace(context, self_draw=False))
+    assert score_hand(hand, (), replace(
+        context, self_draw=False,
+        rules=replace(DEFAULT_RULES, menqing_self_draw_three=True),
+    )) == ron
+
+
+def test_open_hand_does_not_receive_menqing_self_draw_bonus():
+    hand = parse_tiles('456789p234s55789s')
+    context = WinContext(_tile('2s'), self_draw=True)
+    melds = ((0, 1, 2),)
+    assert score_hand(hand, melds, context) == score_hand(hand, melds, replace(
+        context, rules=replace(DEFAULT_RULES, menqing_self_draw_three=True),
+    ))
+
+
+def test_menqing_self_draw_option_requires_boolean():
+    with pytest.raises(ValueError, match='menqing_self_draw_three must be a boolean'):
+        replace(DEFAULT_RULES, menqing_self_draw_three=1)
+
+
+def test_concealed_kong_keeps_menqing_self_draw_bonus():
+    hand = parse_tiles('456789p234s55789s')
+    context = WinContext(_tile('2s'), self_draw=True)
+    kongs = ((_tile('1m'), True),)
+    plain = score_hand(hand, (), context, kongs=kongs)
+    enabled = score_hand(hand, (), replace(
+        context, rules=replace(DEFAULT_RULES, menqing_self_draw_three=True),
+    ), kongs=kongs)
+    assert enabled.total_tai == plain.total_tai + 1

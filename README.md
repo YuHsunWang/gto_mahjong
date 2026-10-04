@@ -212,8 +212,15 @@ python3 -m taimahjong "123m123p123s11122233z" --danger --opp-river "456m789p" --
 小四喜／五暗刻 8、字一色／大四喜 16、圈風／門風／三元牌刻 1。一底等於 3 台。天胡／
 地胡是 16／8 台。它會把所有胡牌拆法都試過，取台數最高的那種算給你。
 
+海底撈月（最後一張活牌自摸）與河底撈魚（摸完最後一張活牌後的棄牌胡牌）各加 1 台，固定啟用。
+門清自摸預設共 2 台（門清 1＋自摸 1）；`RulesConfig.menqing_self_draw_three` 開啟時共 3 台。
+算台工具可用 CLI `--last-tile`、`--menqing-self-draw-three`，或 `/api/score` 的
+`last_tile`、`menqing_self_draw_three` 輸入這些條件。活牌不含 14 張死牌，槓補牌也不算海底。
+
 幾條有記錄的家規判斷：
 
+- **風位**：自我對局、EV rollout 與練習結算的圈風固定為東；莊家（座位 0）是東，
+  依逆時針出牌順序，座位 1／2／3 是南／西／北。圈風刻與門風刻各計 1 台，可疊加。
 - **槓**本身不計台。只有胡在槓補上來的牌（槓上開花）和搶槓各算 1 台。大明槓其實
   是虧的（不計台、又破門清、還放棄槓上開花）。
 - **全求人**採台灣最常見的解釋：大明槓算一組「靠別人湊成」的面子、可以算，但只要
@@ -324,7 +331,7 @@ python3 -m taimahjong --selfplay-report data/calibration.json
 | **已建模且精確計算** | 給定一個已抽樣的四家世界後，檢查普通牌胡型，依選定家規計台並做四家零和結算；每次 trial 只會產生 `self_tsumo`、`self_ron`、`opponent_ron`、`opponent_tsumo`、`draw` 之一，`net_ev` 精確等於 acting seat 的 terminal payments 樣本平均。 | 「精確」只指該抽樣世界內的規則、結算與 aggregation，不代表終局機率或真人打法精確。流局 payment 目前固定為 0。 |
 | **以 heuristic 近似** | 依公開資訊抽樣隱藏手牌，並用牌效出牌與固定防守 policy 推進後續牌局；牌牆與終局頻率用 fixed-seed Monte Carlo 估計。校準表某一格樣本不足時，對手聽牌比例退回 heuristic 估計。 | 對手不會做完整策略調整；隱藏世界分布與 policy 都是模型假設，有限樣本仍有誤差。 |
 | **由 calibration table 校準** | RON／放槍機率由 `danger_score` 的 per-opponent lookup 提供，套用於當下與後續各次打牌：每位對手每次都按表上機率決定胡不胡，抽到的暗手只決定胡多少；你自己能不能胡則看實際手牌，並遵守最近者優先。對手聽牌的比例取自同一張表的 P(聽牌 \| 副露數、巡目、連續摸切)。非聽牌對手的向聽數則抽自 `data/opponent-shanten.json`（同一份 self-play 觀測到的分布，見 `docs/opponent-shanten.md`），不再是從未見牌池均勻亂抽。兩份資料都來自內建 bot self-play 的 bot ecology。 | 不是人類牌譜校準；校準事件若與抽到的暗手衝突，會重建一個可胡的實體手牌來估值。缺少可用的 calibration table 時改用 heuristic fallback 並回報。 |
-| **未建模** | EV rollout 中未來的吃、碰、槓／補牌與花牌、特殊牌型、完整過水決策，以及各家完整 best response。 | 這些事件不在 terminal rollout 的狀態轉移中；流局也沒有聽牌／未聽罰付。 |
+| **未建模** | EV rollout 中未來的吃、碰、槓／補牌與花牌、特殊牌型、完整過水決策，以及各家完整 best response；圈風推進也未建模（固定東風）。 | 這些事件不在 terminal rollout 的狀態轉移中；流局也沒有聽牌／未聽罰付。 |
 
 **Calibration domain**：只有 RON／放槍機率與對手聽牌比例兩個 lookup 經過校準，且校準來源是內建 bot self-play 的
 bot ecology，不是人類牌譜。缺少可用的 calibration table 時，三條教學路徑一致改用 heuristic
