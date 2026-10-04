@@ -26,7 +26,7 @@ from .config import DEFAULT_RULES, RulesConfig, resolve_ron_claims
 from .danger import DeclaredKong, DeclaredMeld, KongLike, MeldLike, kong_tiles, meld_tiles
 from .ev import FLOWERLESS_DEAD_WALL_TILES, WinValueContext, declaration_ev, evaluate_discard, evaluate_pass, ev_rank
 from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
-from .scoring import DEFAULT_SCHEME, ScoringScheme
+from .scoring import DEFAULT_SCHEME, ScoreResult, ScoringScheme, WinContext
 from .selfplay import (
     DEALER_SEAT,
     Player,
@@ -34,6 +34,7 @@ from .selfplay import (
     _apply_big_kong,
     _best_call,
     _cached_shanten,
+    _cached_score_hand,
     _choose_discard,
     _declare_kong,
     _declared,
@@ -261,6 +262,12 @@ class TrainerOutcome:
     next_human_seat: int = 0
     robbed_kong: bool = False
     migi_declared: bool = False
+    winner_hand: tuple[int, ...] | None = None  # concealed counts, including winning tile
+    winning_tile: int | None = None
+    winner_melds: tuple[MeldLike, ...] = ()
+    winner_kongs: tuple[KongLike, ...] = ()
+    score: ScoreResult | None = None
+    winner_value: int | None = None
 
     @property
     def headline(self) -> str:
@@ -296,7 +303,35 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
              dealer_streak: int = 0, robbed_kong: bool = False,
              rules: RulesConfig = DEFAULT_RULES,
              winners: tuple[int, ...] = (),
-             migi_declared: bool = False) -> TrainerOutcome:
+             migi_declared: bool = False,
+             winning_player: Player | None = None,
+             winning_hand: tuple[int, ...] | None = None,
+             winning_tile: int | None = None,
+             scheme: ScoringScheme = DEFAULT_SCHEME,
+             kong_bloom: bool = False,
+             wall_remaining: int | None = None) -> TrainerOutcome:
+    score = None
+    if winning_player is not None:
+        assert winner is not None and winning_hand is not None and winning_tile is not None
+        # Retrieve the same cached ScoreResult used by settlement, with its
+        # exact context; the displayed value excludes bilateral payment premiums.
+        score = _cached_score_hand(
+            winning_hand, tuple(winning_player.melds),
+            WinContext(
+                winning_tile=winning_tile,
+                self_draw=outcome == "tsumo",
+                round_wind=27,
+                seat_wind=27 + (winner - DEALER_SEAT) % 4,
+                dealer=winner == DEALER_SEAT,
+                dealer_streak=dealer_streak if winner == DEALER_SEAT else 0,
+                migi_declared=winning_player.declared,
+                kong_bloom=kong_bloom,
+                robbed_kong=robbed_kong,
+                last_tile=wall_remaining == 0 and not kong_bloom and not robbed_kong,
+                rules=rules,
+            ),
+            tuple(winning_player.kongs),
+        )
     # 流局連莊: the dealer (seat 0) keeps dealership and the streak grows on a
     # draw or a dealer win; otherwise dealership passes to the dealer's 下家
     # (seat 1, next in turn order). The new dealer is renumbered seat 0, so
@@ -320,6 +355,12 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
         next_human_seat=human_seat if dealer_keeps else (human_seat - 1) % 4,
         robbed_kong=robbed_kong,
         migi_declared=migi_declared,
+        winner_hand=winning_hand,
+        winning_tile=winning_tile,
+        winner_melds=tuple(winning_player.melds) if winning_player is not None else (),
+        winner_kongs=tuple(winning_player.kongs) if winning_player is not None else (),
+        score=score,
+        winner_value=score.value_in(scheme) if score is not None else None,
     )
 
 
@@ -865,7 +906,9 @@ def play_trainer(
                 )
                 yield _outcome(
                     "tsumo", current, None, human_seat, deltas, actions,
-                    dealer_streak, rules=rules,
+                    dealer_streak, rules=rules, winning_player=player,
+                    winning_hand=winning_hand, winning_tile=drawn_tile, scheme=scheme,
+                    wall_remaining=len(wall),
                     migi_declared=players[human_seat].declared,
                 )
                 return
@@ -907,7 +950,9 @@ def play_trainer(
                             yield _outcome(
                                 "ron", robber, current, human_seat, deltas, actions,
                                 dealer_streak, robbed_kong=True, rules=rules,
-                                winners=robbers,
+                                winners=robbers, winning_player=players[robber],
+                                winning_hand=winning_hands[robber],
+                                winning_tile=option.tile, scheme=scheme,
                                 migi_declared=players[human_seat].declared,
                             )
                             return
@@ -921,7 +966,9 @@ def play_trainer(
                         )
                         yield _outcome(
                             "tsumo", current, None, human_seat, deltas, actions,
-                            dealer_streak, rules=rules,
+                            dealer_streak, rules=rules, winning_player=player,
+                            winning_hand=winning_hand, winning_tile=drawn_tile,
+                            scheme=scheme, kong_bloom=True,
                             migi_declared=players[human_seat].declared,
                         )
                         return
@@ -972,6 +1019,9 @@ def play_trainer(
                 "ron", winner, current, human_seat, deltas, actions,
                 dealer_streak, rules=rules, winners=winners,
                 migi_declared=players[human_seat].declared,
+                winning_player=players[winner], winning_hand=winning_hands[winner],
+                winning_tile=tile, scheme=scheme,
+                wall_remaining=len(wall) if live_draw else None,
             )
             return
 
@@ -1065,7 +1115,8 @@ def play_trainer(
                     )
                     yield _outcome(
                         "tsumo", human_seat, None, human_seat, deltas, actions,
-                        dealer_streak, rules=rules,
+                        dealer_streak, rules=rules, winning_player=players[human_seat],
+                        winning_hand=winning_hand, winning_tile=replacement, scheme=scheme,
                         migi_declared=players[human_seat].declared,
                     )
                     return

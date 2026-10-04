@@ -604,3 +604,55 @@ def test_ev_rank_passes_real_position_context(client, monkeypatch, live_draw):
     assert captured[0].context.seat_wind == 29
     assert captured[0].wall_remaining == 17
     assert captured[0].opening_live_draw is live_draw
+
+
+@pytest.mark.parametrize("seed, expected", [(1, "ron"), (7, "tsumo"), (5, "draw")])
+def test_trainer_terminal_payload_reveals_winning_hand_and_tai(client, monkeypatch, seed, expected):
+    from taimahjong import trainer
+    from taimahjong.trainer import TrainerDecision, TrainerOutcome, play_trainer
+
+    cached_score = trainer._cached_score_hand
+    settled_scores = []
+
+    def settlement_score(*args):
+        before = cached_score.cache_info()
+        result = cached_score(*args)
+        assert cached_score.cache_info().misses == before.misses, "outcome must reuse settlement scoring"
+        settled_scores.append(result)
+        return result
+
+    monkeypatch.setattr(trainer, "_cached_score_hand", settlement_score)
+    # Use a real completed trainer hand without paying for per-discard grading.
+    generator = play_trainer(seed)
+    outcome = next(generator)
+    while not isinstance(outcome, TrainerOutcome):
+        position = outcome.position
+        tile = position.drawn_tile
+        if tile is None or not position.hand[tile]:
+            tile = next(tile for tile, count in enumerate(position.hand) if count)
+        outcome = generator.send(tile if isinstance(outcome, TrainerDecision) else None)
+    assert outcome.outcome == expected
+    state = client.post("/api/trainer/new", json={"seed": seed}).json()
+    api._SESSIONS[state["session_id"]].current = outcome
+    response = client.get(f"/api/trainer/{state['session_id']}")
+    assert response.status_code == 200
+    payload = response.json()["decision"]
+    if expected == "draw":
+        assert payload["winner_hand"] is None
+        assert payload["winning_tile"] is None
+        assert payload["score"] is None
+        return
+    if expected == "ron":
+        assert payload["human_dealt_in"] is True
+    assert outcome.score is settled_scores[-1]
+    assert len(payload["winner_hand"]) == 34
+    assert payload["winner_hand"][payload["winning_tile"]] > 0
+    assert payload["winner_melds"], "these wins include exposed sets"
+    assert all(len(meld) == 3 for meld in payload["winner_melds"])
+    assert [detail["tiles"] for detail in payload["winner_meld_details"]] == payload["winner_melds"]
+    declared = len(payload["winner_melds"]) + len(payload["winner_kong_details"])
+    assert sum(payload["winner_hand"]) == 17 - 3 * declared
+    score = payload["score"]
+    assert score["items"] == [{"name": name, "tai": tai} for name, tai in outcome.score.items]
+    assert sum(item["tai"] for item in score["items"]) == score["total_tai"]
+    assert score["value"] == 3 + score["total_tai"]

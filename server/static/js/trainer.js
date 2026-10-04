@@ -4,7 +4,7 @@
 
 import { post, get, showError, randomSeed } from './api.js';
 import { tileEl } from './tiles.js';
-import { feltEl, computingEl, faceText } from './table.js';
+import { feltEl, handEl, computingEl, faceText } from './table.js';
 import { reviewRailEl } from './feedback.js';
 import { record, recordOutcome, summary } from './stats.js';
 import { schemeToggle, schemeParams } from './scheme.js';
@@ -260,8 +260,32 @@ export function trainerScreen(root) {
     const delta = document.createElement('div');
     delta.className = `delta ${decision.point_delta > 0 ? 'win' : decision.point_delta < 0 ? 'lose' : ''}`;
     const streakIn = decision.dealer_streak_in ? `（連莊 ${decision.dealer_streak_in}）` : '';
-    delta.textContent = `你的收支 ${decision.point_delta > 0 ? '+' : ''}${decision.point_delta} 籌碼單位 · ${decision.turns} 手${streakIn}`;
+    delta.textContent = `你的收支 ${decision.point_delta > 0 ? '+' : ''}${decision.point_delta} 籌碼單位${streakIn}`;
     wrap.append(headline, delta);
+
+    if (decision.winner_hand && decision.score) {
+      const title = document.createElement('h2');
+      title.textContent = `胡牌者（座位 ${decision.winner}）· 胡牌張：${faceText(decision.winning_tile)}`;
+      wrap.append(title, handEl(decision.winner_hand, {
+        drawnTile: decision.winning_tile,
+        melds: decision.winner_melds,
+        meldDetails: decision.winner_meld_details,
+        kongDetails: decision.winner_kong_details,
+        ownerSeat: decision.winner,
+        viewerSeat: state.human_seat,
+      }));
+      const items = document.createElement('ul');
+      items.className = 'tai-items';
+      decision.score.items.forEach((item) => {
+        const row = document.createElement('li');
+        const name = item.name.match(/（([^）]+)）|\(([^)]+)\)/);
+        row.textContent = `${name ? name[1] || name[2] : item.name}：${item.tai} 台`;
+        items.append(row);
+      });
+      const total = document.createElement('div');
+      total.textContent = `合計 ${decision.score.total_tai} 台 · 牌值 ${decision.score.value} 籌碼單位`;
+      wrap.append(items, total);
+    }
 
     const next = document.createElement('div');
     next.className = 'nexthand';

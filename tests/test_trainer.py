@@ -588,6 +588,10 @@ def test_human_added_kong_can_be_robbed_and_skip_reaches_discard(monkeypatch):
         trainer, "_settle_ron_winners",
         lambda *args, **kwargs: ((-5, 5, 0, 0), (5,)),
     )
+    # This fixture fabricates a ron on a non-winning hand; fabricate its score
+    # too, since terminal outcomes now expose the settlement's scoring result.
+    from taimahjong.scoring import ScoreResult
+    monkeypatch.setattr(trainer, "_cached_score_hand", lambda *args: ScoreResult((("搶槓", 1),), 1))
     robbed = play_trainer(1)
     item = next(robbed)
     assert isinstance(item, TrainerKongDecision)
