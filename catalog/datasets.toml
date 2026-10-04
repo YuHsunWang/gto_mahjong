@@ -1,5 +1,5 @@
 catalog_version = 1
-as_of = "2026-09-27"
+as_of = "2026-10-05"
 
 [[datasets]]
 id = "production_calibration"
@@ -26,7 +26,7 @@ primary_key = "calibration cells as production_calibration; audit sections keyed
 schema = ["version", "metadata", "counts", "tables", "quality", "audit.shipped_table", "audit.candidate_table", "audit.tail"]
 update_frequency = "one-off audit candidate; no schedule"
 reproducible_from_recorded_seed = false
-known_gap = "DEV-230 regenerated this file under the 7-dun dead wall and kong rules (metadata.rules); its audit block scores the pre-DEV-230 shipped table (calibration_id in audit.shipped_table). Rerunning the recorded command now compares against the regenerated table instead, so the audit block will not match; the calibration tables themselves reproduce."
+known_gap = "Regenerated 2026-10-05 (DEV-245/250/256/269 changed self-play settlement and bot policy) right after data/calibration.json; its audit block scores that table. Rerunning the recorded command reproduces the audit block only against the same shipped calibration.json."
 
 [[datasets]]
 id = "opponent_shanten_distribution"
@@ -38,7 +38,7 @@ owner = "scripts/generate_opponent_shanten.py"
 regeneration_command = "python scripts/generate_opponent_shanten.py --games 4000 --seed-start 60001 --workers 4 --verify-games 12 --out data/opponent-shanten.json"
 primary_key = "melds|turn_bucket|run_bucket, with the pooled back-off cells melds|turn|*, *|turn|* and *|*|*"
 schema = ["version", "metadata", "counts", "tables", "quality"]
-update_frequency = "manual; regenerate when the self-play policies or the shanten engine change"
+update_frequency = "manual; regenerate when the self-play policies or the shanten engine change. Run AFTER data/calibration.json: self-play reads it."
 reproducible_from_recorded_seed = true
 
 [[datasets]]
