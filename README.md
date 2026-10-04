@@ -309,8 +309,9 @@ python3 -m taimahjong --selfplay-report data/calibration.json
 而正式表已經是八格（尾端在 16 分開），接上去會被擋下來。
 
 這張表把每次打牌對每位對手的 `danger_score` 映射成胡牌機率，production rollout 會在
-當下及後續每次打牌使用它。再強調一次：只有這個 RON／放槍機率 lookup 對「這些機器人」
-校準；自摸與牌牆結果來自 Monte Carlo，隱藏手牌及後續策略含 heuristic 假設，更不是對真人。
+當下及後續每次打牌使用它；表裡的 P(聽牌 | 副露數、巡目、連續摸切) 則決定抽樣時對手聽牌的
+比例。再強調一次：只有這兩個 lookup 對「這些機器人」校準；自摸與牌牆結果來自 Monte Carlo，
+隱藏手牌及後續策略含 heuristic 假設，更不是對真人。
 
 ### 方法論卡
 
@@ -321,11 +322,11 @@ python3 -m taimahjong --selfplay-report data/calibration.json
 | 類別 | 本專案實際處理 | 限制 |
 | --- | --- | --- |
 | **已建模且精確計算** | 給定一個已抽樣的四家世界後，檢查普通牌胡型，依選定家規計台並做四家零和結算；每次 trial 只會產生 `self_tsumo`、`self_ron`、`opponent_ron`、`opponent_tsumo`、`draw` 之一，`net_ev` 精確等於 acting seat 的 terminal payments 樣本平均。 | 「精確」只指該抽樣世界內的規則、結算與 aggregation，不代表終局機率或真人打法精確。流局 payment 目前固定為 0。 |
-| **以 heuristic 近似** | 依公開資訊估對手聽牌、抽樣隱藏手牌，並用牌效出牌與固定防守 policy 推進後續牌局；牌牆與終局頻率用 fixed-seed Monte Carlo 估計。 | 對手不會做完整策略調整；隱藏世界分布與 policy 都是模型假設，有限樣本仍有誤差。 |
-| **由 calibration table 校準** | RON／放槍機率由 `danger_score` 的 per-opponent lookup 提供，套用於當下與後續各次打牌。非聽牌對手的向聽數則抽自 `data/opponent-shanten.json`（同一份 self-play 觀測到的分布，見 `docs/opponent-shanten.md`），不再是從未見牌池均勻亂抽。兩份資料都來自內建 bot self-play 的 bot ecology。 | 不是人類牌譜校準；校準事件若與抽到的暗手衝突，會重建一個可胡的實體手牌來估值。缺少可用的 calibration table 時改用 heuristic fallback 並回報。 |
+| **以 heuristic 近似** | 依公開資訊抽樣隱藏手牌，並用牌效出牌與固定防守 policy 推進後續牌局；牌牆與終局頻率用 fixed-seed Monte Carlo 估計。校準表某一格樣本不足時，對手聽牌比例退回 heuristic 估計。 | 對手不會做完整策略調整；隱藏世界分布與 policy 都是模型假設，有限樣本仍有誤差。 |
+| **由 calibration table 校準** | RON／放槍機率由 `danger_score` 的 per-opponent lookup 提供，套用於當下與後續各次打牌：每位對手每次都按表上機率決定胡不胡，抽到的暗手只決定胡多少；你自己能不能胡則看實際手牌，並遵守最近者優先。對手聽牌的比例取自同一張表的 P(聽牌 \| 副露數、巡目、連續摸切)。非聽牌對手的向聽數則抽自 `data/opponent-shanten.json`（同一份 self-play 觀測到的分布，見 `docs/opponent-shanten.md`），不再是從未見牌池均勻亂抽。兩份資料都來自內建 bot self-play 的 bot ecology。 | 不是人類牌譜校準；校準事件若與抽到的暗手衝突，會重建一個可胡的實體手牌來估值。缺少可用的 calibration table 時改用 heuristic fallback 並回報。 |
 | **未建模** | EV rollout 中未來的吃、碰、槓／補牌與花牌、特殊牌型、完整過水決策，以及各家完整 best response。 | 這些事件不在 terminal rollout 的狀態轉移中；流局也沒有聽牌／未聽罰付。 |
 
-**Calibration domain**：只有 RON／放槍機率 lookup 經過校準，且校準來源是內建 bot self-play 的
+**Calibration domain**：只有 RON／放槍機率與對手聽牌比例兩個 lookup 經過校準，且校準來源是內建 bot self-play 的
 bot ecology，不是人類牌譜。缺少可用的 calibration table 時，三條教學路徑一致改用 heuristic
 fallback 並在輸出中回報。
 
@@ -346,7 +347,7 @@ owner 複核。
 ## 老實話（範圍與限制）
 
 - **只做普通牌**：不含花牌、不含特殊牌型。
-- **只有 RON／放槍機率 lookup 是 bot-domain calibration**，不是真人牌局；自摸與牌牆結果
+- **只有 RON／放槍機率與對手聽牌比例是 bot-domain calibration**，不是真人牌局；自摸與牌牆結果
   是 Monte Carlo，隱藏手牌、對手出牌與防守 policy 含 heuristic 假設。
 - **危險度不保證安全**：台灣沒有永久振聽，牌河證據只是打折。
 - **家規可改**：全求人怎麼算、槓的台數、流局要不要罰（`DRAW_VALUE`）、底台方案，

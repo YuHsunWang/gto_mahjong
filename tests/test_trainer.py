@@ -231,6 +231,80 @@ def test_evaluate_call_is_deterministic_and_refines_best_and_chosen():
     assert best.verdict == "best" and best.ev_delta == 0.0 and best.marginal is False
 
 
+def test_call_ev_treats_the_consumed_hand_tiles_as_public(monkeypatch):
+    # After a pon/chi the two hand tiles in the meld are public. If the EV call
+    # leaves them out of the visible counts, the world sampler deals those
+    # copies again; the actor can then draw a fifth copy and score_hand raises,
+    # which left trainer seeds 5, 6 and 8 (human seat 1) stuck on a call.
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    import taimahjong.trainer as trainer
+    from taimahjong.tiles import parse_tiles
+
+    one_man, east = 0, 27
+    position = replace(
+        next(play_trainer(1)).position,
+        hand=parse_tiles("11234567m123p123s12z"),
+        own_melds=(),
+        own_kongs=(),
+        public_counts=tuple(1 if tile == one_man else 0 for tile in range(34)),
+    )
+    option = CallOption("pon", (one_man,) * 3, (one_man,) * 2)
+    decision = TrainerCallDecision(position, one_man, discarder=3, options=(option,))
+    seen = []
+
+    def capture_rank(counts, opponents, visible, *args, **kwargs):
+        seen.append((tuple(counts), tuple(visible)))
+        return []
+
+    def capture_discard(counts, discard, opponents, visible, *args, **kwargs):
+        seen.append((tuple(counts), tuple(visible)))
+        return SimpleNamespace(net_ev=0.0)
+
+    monkeypatch.setattr(trainer, "ev_rank", capture_rank)
+    monkeypatch.setattr(trainer, "evaluate_discard", capture_discard)
+    trainer._option_rank(decision, option, 1, 1)
+    trainer._refine_option(decision, option, east, 1, 1)
+
+    assert len(seen) == 2
+    for counts, visible in seen:
+        # Two copies moved from the hand into the meld and the offered copy is
+        # already public: three 一萬 are accounted for, one is unseen.
+        assert counts[one_man] + visible[one_man] == 3
+        assert [h + v for h, v in zip(counts, visible)] == [
+            h + v for h, v in zip(position.hand, position.public_counts)
+        ]
+
+
+def test_call_grading_prices_pass_and_options_with_the_same_calibration(monkeypatch):
+    # A call verdict subtracts the chosen action's EV from the best action's.
+    # When passing is best it must be refined under the same calibration as
+    # the options; a pass refined without it compared two different models
+    # and flipped verdicts (inaccuracy -> best in the 10/4 review).
+    import taimahjong.trainer as trainer
+    from taimahjong.analysis import AnalysisContext, CalibrationContext
+
+    calibration = object()
+    analysis = AnalysisContext(calibration=CalibrationContext("test-table", calibration))
+    pass_calibrations = []
+
+    def fake_pass_ev(decision, base_seed, sims, scheme, used=None):
+        pass_calibrations.append(used)
+        return 0.0
+
+    monkeypatch.setattr(trainer, "_pass_ev", fake_pass_ev)
+    monkeypatch.setattr(trainer, "_option_rank", lambda *args, **kwargs: (-1.0, None))
+    decision = _first_call()
+    assert decision is not None, "expected a call decision in seeds 1-19"
+
+    evaluation = evaluate_call(decision, analysis=analysis)
+
+    assert evaluation.best_index is None
+    assert len(pass_calibrations) == 2  # the cheap rank and the REFINE_SIMS best
+    assert all(used is calibration for used in pass_calibrations)
+
+
 def test_call_ev_credits_dealer_tai_for_dealer_seat():
     # Seat 0 is the dealer, so every payment leg between the dealer and anyone
     # else carries the 莊 premium. The call-EV path (pass/option value) must
@@ -468,11 +542,17 @@ def test_streak_increments_on_dealer_win_and_draw():
 
 
 def test_streak_resets_and_rotates_human_on_dealer_loss():
-    # A non-dealer win passes dealership; the engine keeps the dealer on seat 0
-    # and instead rotates the human one seat downstream, resetting the streak —
-    # this is how the player comes to sit in each relation to the dealer.
-    out = _outcome("ron", 1, 2, human_seat=3, deltas=(0, 5, -5, 0), turns=12, dealer_streak=3)
-    assert out.next_dealer_streak == 0 and out.next_human_seat == 0
+    # A non-dealer win passes dealership to the dealer's 下家 (seat 1, next in
+    # turn order). The engine keeps the dealer on seat 0, so the human's index
+    # drops by one: 下家 deals next, the old dealer becomes the new 上家.
+    def next_seat(human_seat):
+        out = _outcome("ron", 1, 2, human_seat=human_seat, deltas=(0, 5, -5, 0), turns=12, dealer_streak=3)
+        assert out.next_dealer_streak == 0
+        return out.next_human_seat
+
+    assert next_seat(1) == 0
+    assert next_seat(0) == 3
+    assert next_seat(3) == 2
 
 
 def test_dealer_continuation_rules_are_explicit_and_applied():
@@ -491,7 +571,7 @@ def test_dealer_continuation_rules_are_explicit_and_applied():
     )
 
     assert drawn.next_dealer_streak == dealer_win.next_dealer_streak == 0
-    assert drawn.next_human_seat == dealer_win.next_human_seat == 3
+    assert drawn.next_human_seat == dealer_win.next_human_seat == 1
     assert DEFAULT_RULES.dealer_continues_on_draw
     assert DEFAULT_RULES.dealer_continues_on_win
 

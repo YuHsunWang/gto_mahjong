@@ -52,7 +52,9 @@ import random
 from dataclasses import dataclass
 from fractions import Fraction
 from math import ceil
+from pathlib import Path
 
+from .analysis import CalibrationProvider
 from .calibration import Calibration
 from .config import DEFAULT_RULES, RulesConfig
 from .danger import OpponentView
@@ -169,6 +171,13 @@ class ProductionRankChoice:
     is_fold: bool
 
 
+def _default_calibration() -> Calibration | None:
+    """Mirror the CLI/API analysis context's committed-table default."""
+    return CalibrationProvider(
+        Path(__file__).resolve().parents[1] / "data" / "calibration.json"
+    ).load().calibration
+
+
 def production_rank_policy(
     observation: ActorObservation,
     *,
@@ -189,6 +198,8 @@ def production_rank_policy(
     watched since the root, so four minus those two quantities reconstructs the
     exact visible count without widening :class:`DiscardPolicy`.
     """
+    if calibration is None:
+        calibration = _default_calibration()
     ranked = ev_rank(
         observation.hand,
         observation.views,
@@ -237,15 +248,22 @@ def sample_worlds(
     observation: ActorObservation,
     sims: int,
     seed: int,
+    *,
+    calibration: Calibration | None = None,
 ) -> tuple[ReferenceState, ...]:
     """Draw worlds consistent with ``observation`` from production's belief.
 
     Worlds whose opponents are dealt an already-complete hand are rejected and
     redrawn: such a seat would have won before this decision, so the state is
     not reachable.
+
+    The default loads the committed table through the same provider as the
+    CLI/API analysis context; only a missing or unusable table falls back.
     """
     if sims < 1:
         raise ValueError("sims must be positive")
+    if calibration is None:
+        calibration = _default_calibration()
     rng = random.Random(seed)
     worlds: list[ReferenceState] = []
     attempts = 0
@@ -260,6 +278,7 @@ def sample_worlds(
             1,
             observation.context,
             rng.randrange(2**64),
+            calibration=calibration,
         )
         hands = tuple(tuple(player.hand) for player in trial.players)
         if any(
@@ -581,6 +600,7 @@ def exploitability(
     measured_plan: dict[InfoKey, int] | None = None,
     measured_policy: DiscardPolicy = _production_discard_policy,
     holdout: bool = False,
+    calibration: Calibration | None = None,
 ) -> ExploitabilityResult:
     """Measure how much the measured policy leaves on the table in ``case``.
 
@@ -635,6 +655,7 @@ def exploitability(
     sampled_worlds = sample_worlds(
         observation, sims * 2 if holdout else sims,
         case.seed if seed is None else seed,
+        calibration=calibration,
     )
     worlds = sampled_worlds[:sims]
     holdout_worlds = sampled_worlds[sims:] if holdout else ()
