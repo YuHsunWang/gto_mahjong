@@ -26,7 +26,7 @@ from .config import DEFAULT_RULES, RulesConfig, resolve_ron_claims
 from .danger import DeclaredKong, DeclaredMeld, KongLike, MeldLike, kong_tiles, meld_tiles
 from .ev import FLOWERLESS_DEAD_WALL_TILES, WinValueContext, declaration_ev, evaluate_discard, evaluate_pass, ev_rank
 from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
-from .scoring import DEFAULT_SCHEME, ScoringScheme
+from .scoring import DEFAULT_SCHEME, ScoreResult, ScoringScheme, WinContext
 from .selfplay import (
     DEALER_SEAT,
     Player,
@@ -34,6 +34,7 @@ from .selfplay import (
     _apply_big_kong,
     _best_call,
     _cached_shanten,
+    _cached_score_hand,
     _choose_discard,
     _declare_kong,
     _declared,
@@ -260,6 +261,12 @@ class TrainerOutcome:
     next_dealer_streak: int = 0
     next_human_seat: int = 0
     robbed_kong: bool = False
+    winner_hand: tuple[int, ...] | None = None  # concealed counts, including winning tile
+    winning_tile: int | None = None
+    winner_melds: tuple[MeldLike, ...] = ()
+    winner_kongs: tuple[KongLike, ...] = ()
+    score: ScoreResult | None = None
+    winner_value: int | None = None
 
     @property
     def headline(self) -> str:
@@ -294,7 +301,30 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
              human_seat: int, deltas: tuple[int, int, int, int], turns: int,
              dealer_streak: int = 0, robbed_kong: bool = False,
              rules: RulesConfig = DEFAULT_RULES,
-             winners: tuple[int, ...] = ()) -> TrainerOutcome:
+             winners: tuple[int, ...] = (),
+             winning_player: Player | None = None,
+             winning_hand: tuple[int, ...] | None = None,
+             winning_tile: int | None = None,
+             scheme: ScoringScheme = DEFAULT_SCHEME,
+             kong_bloom: bool = False) -> TrainerOutcome:
+    score = None
+    if winning_player is not None:
+        assert winner is not None and winning_hand is not None and winning_tile is not None
+        # Retrieve the same cached ScoreResult used by settlement, with its
+        # exact context; the displayed value excludes bilateral payment premiums.
+        score = _cached_score_hand(
+            winning_hand, tuple(winning_player.melds),
+            WinContext(
+                winning_tile=winning_tile,
+                self_draw=outcome == "tsumo",
+                dealer=winner == DEALER_SEAT,
+                dealer_streak=dealer_streak if winner == DEALER_SEAT else 0,
+                migi_declared=winning_player.declared,
+                kong_bloom=kong_bloom,
+                robbed_kong=robbed_kong,
+            ),
+            tuple(winning_player.kongs),
+        )
     # 流局連莊: the dealer (seat 0) keeps dealership and the streak grows on a
     # draw or a dealer win; otherwise dealership passes, which we emulate by
     # rotating the human one seat downstream and resetting the streak.
@@ -316,6 +346,12 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
         next_dealer_streak=dealer_streak + 1 if dealer_keeps else 0,
         next_human_seat=human_seat if dealer_keeps else (human_seat + 1) % 4,
         robbed_kong=robbed_kong,
+        winner_hand=winning_hand,
+        winning_tile=winning_tile,
+        winner_melds=tuple(winning_player.melds) if winning_player is not None else (),
+        winner_kongs=tuple(winning_player.kongs) if winning_player is not None else (),
+        score=score,
+        winner_value=score.value_in(scheme) if score is not None else None,
     )
 
 
@@ -843,7 +879,8 @@ def play_trainer(
                 )
                 yield _outcome(
                     "tsumo", current, None, human_seat, deltas, actions,
-                    dealer_streak, rules=rules,
+                    dealer_streak, rules=rules, winning_player=player,
+                    winning_hand=winning_hand, winning_tile=drawn_tile, scheme=scheme,
                 )
                 return
 
@@ -880,7 +917,9 @@ def play_trainer(
                             yield _outcome(
                                 "ron", robber, current, human_seat, deltas, actions,
                                 dealer_streak, robbed_kong=True, rules=rules,
-                                winners=robbers,
+                                winners=robbers, winning_player=players[robber],
+                                winning_hand=winning_hands[robber],
+                                winning_tile=option.tile, scheme=scheme,
                             )
                             return
                     drawn_tile = _declare_kong(player, option.tile, option.kind == "concealed", dead, wall)
@@ -892,7 +931,9 @@ def play_trainer(
                         )
                         yield _outcome(
                             "tsumo", current, None, human_seat, deltas, actions,
-                            dealer_streak, rules=rules,
+                            dealer_streak, rules=rules, winning_player=player,
+                            winning_hand=winning_hand, winning_tile=drawn_tile,
+                            scheme=scheme, kong_bloom=True,
                         )
                         return
                 else:
@@ -939,6 +980,8 @@ def play_trainer(
             yield _outcome(
                 "ron", winner, current, human_seat, deltas, actions,
                 dealer_streak, rules=rules, winners=winners,
+                winning_player=players[winner], winning_hand=winning_hands[winner],
+                winning_tile=tile, scheme=scheme,
             )
             return
 
@@ -1031,7 +1074,8 @@ def play_trainer(
                     )
                     yield _outcome(
                         "tsumo", human_seat, None, human_seat, deltas, actions,
-                        dealer_streak, rules=rules,
+                        dealer_streak, rules=rules, winning_player=players[human_seat],
+                        winning_hand=winning_hand, winning_tile=replacement, scheme=scheme,
                     )
                     return
                 pending_drawn_tile = replacement
