@@ -390,7 +390,7 @@ def _default_calibration() -> Calibration | None:
 def _tenpai_factor(opponent: OpponentView) -> float:
     if opponent.declared_at is not None:
         return DECLARED_FACTOR
-    score = tenpai_score(opponent, len(opponent.river)).score
+    score = tenpai_score(opponent).score
     return min(3.0, max(0.25, score / BASELINE_TENPAI_RATE))
 
 
