@@ -552,3 +552,23 @@ def test_score_endpoint_last_tile_and_menqing_option(client, self_draw, name):
     last = response.json()
     assert any(name in item['name'] and item['tai'] == 1 for item in last['items'])
     assert last['total_tai'] == ordinary['total_tai'] + 1 + int(self_draw)
+
+
+@pytest.mark.parametrize("live_draw", [False, True])
+def test_ev_rank_passes_real_position_context(client, monkeypatch, live_draw):
+    captured = []
+
+    def rank(*args, **kwargs):
+        captured.append(kwargs["context_template"])
+        return []
+
+    monkeypatch.setattr(api, "ev_rank", rank)
+    response = client.post("/api/ev/rank", json={
+        "hand": "123m456m123p789s333z55p", "seat_wind": "3z",
+        "wall_remaining": 17, "turns": 1, "sims": 1,
+        "opening_live_draw": live_draw,
+    })
+    assert response.status_code == 200
+    assert captured[0].context.seat_wind == 29
+    assert captured[0].wall_remaining == 17
+    assert captured[0].opening_live_draw is live_draw

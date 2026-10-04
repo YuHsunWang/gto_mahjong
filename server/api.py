@@ -50,6 +50,7 @@ from taimahjong.endgame import EndgamePosition, generate_endgame_position
 from taimahjong.ev import (
     EVRankEntry,
     TileAccounting,
+    WinValueContext,
     ev_rank,
     paired_delta_moments,
     remaining_draws,
@@ -697,6 +698,8 @@ class EvRankRequest(SchemeRequest):
     sims: int = Field(default=400, ge=1, le=5_000)
     seed: int = 7
     exhaustive: bool = False
+    seat_wind: str | None = None
+    opening_live_draw: bool = False
 
 
 class ScoreRequest(SchemeRequest):
@@ -767,9 +770,15 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
             turns = remaining_draws(counts, accounting, wall_remaining=request.wall_remaining)
         else:
             turns = remaining_draws(counts, accounting, kongs=request.kongs)
+        seat_wind = None if request.seat_wind is None else _tile_from_compact(request.seat_wind)
         entries = ev_rank(
             counts, opponents, visible,
             turns=turns, sims=request.sims, seed=request.seed,
+            context_template=WinValueContext(
+                WinContext(winning_tile=0, seat_wind=seat_wind, dealer=seat_wind == 27),
+                wall_remaining=request.wall_remaining,
+                opening_live_draw=request.opening_live_draw,
+            ),
             calibration=analysis.calibration.calibration,
             scheme=analysis.game.scheme,
             exhaustive=request.exhaustive,

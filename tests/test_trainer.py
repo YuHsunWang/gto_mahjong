@@ -125,6 +125,7 @@ def test_trainer_positions_are_gradeable():
 def test_trainer_rejects_illegal_discard():
     gen = play_trainer(5, human_seat=0)
     position = next(gen).position  # dealer's first action is always a discard
+    assert position.opening_live_draw is True
     missing = next(tile for tile, count in enumerate(position.hand) if count == 0)
     with pytest.raises(ValueError):
         gen.send(missing)
@@ -225,6 +226,7 @@ def test_taking_open_kong_draws_replacement_and_records_kong():
         item = gen.send(None)
 
     assert isinstance(item, TrainerDecision)
+    assert item.position.opening_live_draw is False
     assert item.position.drawn_tile is not None
     assert item.position.own_kongs == ((kong_tile, False),)
     kong = item.position.own_kongs[0]
@@ -248,6 +250,7 @@ def _first_call(seed_range=range(1, 20)):
 def test_trainer_offers_and_evaluates_call_decisions():
     decision = _first_call()
     assert decision is not None, "expected a call decision in seeds 1-19"
+    assert decision.position.opening_live_draw is False
     assert decision.options, "a call decision must offer at least one legal call"
     assert all(option.kind in {"kong", "pon", "chi"} for option in decision.options)
     # Every consumed tile is actually held; the meld includes the offered tile.
@@ -312,10 +315,9 @@ def test_call_ev_credits_dealer_tai_for_dealer_seat():
             context,
         ).net_ev
 
-    stripped = WinValueContext(
-        replace(template.context, dealer=False, dealer_streak=0),
-        position.own_melds,
-        position.own_kongs,
+    stripped = replace(
+        template,
+        context=replace(template.context, dealer=False, dealer_streak=0, seat_wind=None),
     )
     assert _pass_ev(decision, base, 200) == pass_ev(template)
     assert pass_ev(template) != pass_ev(stripped), (
@@ -467,10 +469,10 @@ def test_trainer_ev_preserves_concealed_kong_for_menqing_tai():
     position = replace(position, hand=hand, own_melds=(), own_kongs=((kong_tile, True),))
 
     # play_trainer(1) seat 0 is the dealer, and _score_value scores as a self-draw,
-    # so preserving the concealed kong's 門清 gives 莊家1 + 門清1 + 自摸1 = 3 tai =>
-    # 底3台1 value 6. If the kong were disguised as an exposed meld (the bug), 門清
-    # would be lost, dropping this to 5 — so 6 is exactly what proves the fix.
-    assert _score_value(hand, win_tile, _score_template(position)) == 6
+    # Its concealed East kong now also earns the real seat-wind tai:
+    # 莊家1 + 門清1 + 自摸1 + 東風1 = 4 tai => 底3台1 value 7.
+    # Disguising the kong as an exposed meld would lose 門清 and drop this to 6.
+    assert _score_value(hand, win_tile, _score_template(position)) == 7
 
 
 def test_human_added_kong_can_be_robbed_and_skip_reaches_discard(monkeypatch):
