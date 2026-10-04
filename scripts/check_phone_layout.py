@@ -59,6 +59,14 @@ def check_page(browser, url, width, height, route, screenshot=None):
               || style.visibility === 'hidden' || style.visibility === 'collapse'
               || !child.checkVisibility({checkOpacity: true, checkVisibilityCSS: true});
           });
+          const inside = (box, outer) => box.left >= outer.left && box.right <= outer.right
+            && box.top >= outer.top && box.bottom <= outer.bottom;
+          const clippedSideChildren = sideChildren.filter(child => {
+            const box = child.getBoundingClientRect();
+            const chip = child.parentElement.getBoundingClientRect();
+            const seat = child.closest('.seat-band').getBoundingClientRect();
+            return !inside(box, chip) || !inside(box, seat);
+          });
           const felt = document.querySelector('.felt').getBoundingClientRect();
           const topRow = document.querySelector('.seat--top .concealed-hand');
           const topBox = topRow?.getBoundingClientRect();
@@ -72,6 +80,7 @@ def check_page(browser, url, width, height, route, screenshot=None):
             chips: chips.length, overflowingChips: overflowingChips.length,
             sideChips: sideChips.length, sideChildren: sideChildren.length,
             hiddenSideChildren: hiddenSideChildren.length,
+            clippedSideChildren: clippedSideChildren.length,
             topBacks: backs.length, topInside};
         }""")
         if screenshot:
@@ -82,13 +91,14 @@ def check_page(browser, url, width, height, route, screenshot=None):
                       and result["overflowingChips"] == 0
                       and result["sideChips"] == 2 and result["sideChildren"] > 0
                       and result["hiddenSideChildren"] == 0
+                      and result["clippedSideChildren"] == 0
                       and result["topBacks"] == 16 and result["topInside"])
         status = "PASS" if passed else "FAIL"
         print(f"{width}x{height} #/{route}: {status} "
               f"tiles={result['count']} outside={result['outside']} "
               f"scrollWidth={result['scrollWidth']}"
               + (f" chips={result['chips']} overflowingChips={result['overflowingChips']} "
-                 f"sideChildren={result['sideChildren']} hiddenSideChildren={result['hiddenSideChildren']} "
+                 f"sideChildren={result['sideChildren']} hiddenSideChildren={result['hiddenSideChildren']} clippedSideChildren={result['clippedSideChildren']} "
                  f"topBacks={result['topBacks']} topInside={result['topInside']}"
                  if route == "trainer" else ""), flush=True)
         return passed

@@ -60,16 +60,16 @@ const LESSONS = [
     subtitle: '4555678 條，別人打五條要碰嗎？',
     hand: '4555678s123m789m22p1z',
     question: '對手打出五條，用手上兩張五條碰成刻子嗎？',
-    answer: '看局勢取捨 —— 碰五條後打東風可立即聽牌（11 張）；不碰保留門清，但仍是一向聽（24 張進張）。',
+    answer: '看局勢取捨 —— 碰五條後打東風可立即聽牌（11 張）；不碰保留門清，但仍是一向聽（23 張進張）。',
     kind: 'compare',
     options: [
-      { label: '不碰（留門清）', hand: '4555678s123m789m22p1z', melds_declared: 0 },
+      { label: '不碰（留門清）', hand: '4555678s123m789m22p1z', melds_declared: 0, visible: '5s' },
       { label: '碰五條後打東風', hand: '45678s123m789m22p', melds_declared: 1 },
     ],
     points: [
-      '碰五條後打東風，是引擎排序第一的切法：剩下四五六七八條，配上五條刻子即可聽三條／六條／九條，共 11 張。不碰則是一向聽、24 張進張；兩者向聽數不同，不能直接相減來比較速度。',
+      '碰五條後打東風，是引擎排序第一的切法：剩下四五六七八條，配上五條刻子即可聽三條／六條／九條，共 11 張。不碰則是一向聽、23 張進張；兩者向聽數不同，不能直接相減來比較速度。',
       '不碰保留門清／門清自摸的台數優勢，也保留一向聽手牌拆搭、改良的彈性。碰牌會把五條固定成刻子，失去門清相關台數，但碰後仍可自摸。',
-      '基本原則：鳴牌前先問「這一鳴換到多少速度／台數？值不值得丟掉門清？」這裡碰牌換到立即聽牌、11 張可胡牌；不碰保留門清與 24 張進張的一向聽。要看剩餘巡數、台數需求與場上風險取捨，沒有一律碰或不碰的答案。',
+      '基本原則：鳴牌前先問「這一鳴換到多少速度／台數？值不值得丟掉門清？」這裡碰牌換到立即聽牌、11 張可胡牌；不碰保留門清與 23 張進張的一向聽。要看剩餘巡數、台數需求與場上風險取捨，沒有一律碰或不碰的答案。',
     ],
   },
 ];
@@ -161,7 +161,7 @@ async function corroborate(lesson, mount) {
     } else {
       const rows = [];
       for (const option of lesson.options) {
-        const result = await post('/api/ukeire', { hand: option.hand, melds_declared: option.melds_declared });
+        const result = await post('/api/ukeire', { hand: option.hand, melds_declared: option.melds_declared, visible: option.visible || '' });
         rows.push({ label: option.label, result });
       }
       mount.replaceChildren(compareTable(rows));

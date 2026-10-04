@@ -238,7 +238,7 @@ export function scoreScreen(root) {
       wrap.append(table);
       const total = document.createElement('div');
       total.className = 'score-total';
-      total.textContent = `總計 ${body.total_tai} 台（底 ${body.base_units} + 台 ${body.tai_units} × ${body.total_tai} = ${body.value_units} 籌碼單位；方案 ${body.scheme.id}）`;
+      total.textContent = `總計 ${body.total_tai} 台（底 ${body.base_units} + 台 ${body.tai_units} × ${body.total_tai} = ${body.value_units} 分；方案 ${body.scheme.id}）`;
       output.append(wrap, total);
     } catch (error) {
       output.replaceChildren();
