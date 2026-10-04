@@ -818,6 +818,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
                 opening_live_draw=request.opening_live_draw,
             ),
             calibration=analysis.calibration.calibration,
+            opponent_shanten=analysis.calibration.opponent_shanten,
             scheme=analysis.game.scheme,
             exhaustive=request.exhaustive,
         )

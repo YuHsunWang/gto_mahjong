@@ -423,6 +423,7 @@ def _rank_cached(position: QuizPosition, analysis: AnalysisContext) -> tuple[EVR
         _evaluation_seed(position),
         _score_template(position),
         calibration=analysis.calibration.calibration,
+        opponent_shanten=analysis.calibration.opponent_shanten,
         top_k=EV_TOP_K,
         scheme=analysis.game.scheme,
     ))
@@ -440,6 +441,7 @@ def _display_rank_cached(position: QuizPosition, analysis: AnalysisContext) -> t
         _evaluation_seed(position),
         _score_template(position),
         calibration=analysis.calibration.calibration,
+        opponent_shanten=analysis.calibration.opponent_shanten,
         top_k=EV_TOP_K,
         scheme=analysis.game.scheme,
     ))
@@ -562,6 +564,7 @@ def _refine(
         _evaluation_seed(position),
         _score_template(position),
         calibration=context.calibration.calibration,
+        opponent_shanten=context.calibration.opponent_shanten,
         scheme=context.game.scheme,
     )
 
