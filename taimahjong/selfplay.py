@@ -210,6 +210,7 @@ def _view(player: Player, seat: int) -> OpponentView:
         is_dealer=seat == DEALER_SEAT,
         dealer_streak=player.dealer_streak if seat == DEALER_SEAT else 0,
         hand_count=sum(player.hand),
+        discard_count=player.discards,
     )
 
 

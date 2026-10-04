@@ -297,7 +297,7 @@ def opponent_hazards(
             for entry in other.river
         )
         folded = fold_score(opponent, others) >= FOLD_HAZARD_CUTOFF
-        tenpai = 1.0 if opponent.declared_at is not None else tenpai_score(opponent, len(opponent.river)).score
+        tenpai = 1.0 if opponent.declared_at is not None else tenpai_score(opponent).score
         multiplier = min(3.0, max(0.25, tenpai / BASELINE_TENPAI_RATE))
         hazards.append(0.0 if folded else BASE_OPPONENT_HAZARD * multiplier)
     return tuple(hazards)
@@ -514,7 +514,7 @@ def deal_in_ev(
     elif opponent.declared_at is not None:
         factor = DECLARED_FACTOR
     else:
-        factor = min(3.0, max(0.25, tenpai_score(opponent, len(opponent.river)).score / BASELINE_TENPAI_RATE))
+        factor = min(3.0, max(0.25, tenpai_score(opponent).score / BASELINE_TENPAI_RATE))
     return probability * factor * opponent_value_estimate(opponent, scheme)
 
 
@@ -749,6 +749,7 @@ def _copy_view_player(view: OpponentView | None) -> Player:
     return Player(
         "attack",
         river=list(view.river),
+        discards=view.discard_count,
         melds=list(view.melds),
         declared_at=view.declared_at,
         dealer_streak=view.dealer_streak if view.is_dealer else 0,
@@ -984,7 +985,7 @@ def _sample_production_world(
             else tenpai_quantiles[opponent_ordinal]
         )
         target_tenpai = tenpai_draw < tenpai_score(
-            public_state, len(public_state.river),
+            public_state,
         ).score
         sampled = (
             _construct_tenpai_hand(
@@ -1008,7 +1009,7 @@ def _sample_production_world(
                     else shanten_quantiles[opponent_ordinal]
                 )
                 target = model.sample(
-                    public_state, len(public_state.river), shanten_draw,
+                    public_state, None, shanten_draw,
                 )
                 if target is not None:
                     sampled = _construct_shanten_hand(

@@ -397,7 +397,7 @@ def main() -> None:
             if opponent_tenpai is not None:
                 signals = ", ".join(f"{name}={value}" for name, value in opponent_tenpai.signals.items())
                 run = int(opponent_tenpai.signals.get("trailing_tsumogiri_run", 0))
-                calibrated = calibration.tenpai_probability(len(opponent.melds), len(opponent.river), run) if calibration else None
+                calibrated = calibration.tenpai_probability(len(opponent.melds), opponent.lookup_turn, run) if calibration else None
                 probability = "unavailable" if calibrated is None else f"{calibrated:.3f}"
                 if calibration:
                     print(f"Opponent tenpai: heuristic {opponent_tenpai.score:.2f}; calibrated P(tenpai) {probability} ({signals})")

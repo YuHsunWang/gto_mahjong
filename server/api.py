@@ -209,6 +209,7 @@ def _position_payload(position: QuizPosition) -> dict[str, Any]:
                 "is_dealer": opponent.is_dealer,
                 "dealer_streak": opponent.dealer_streak,
                 "hand_count": opponent.hand_count,
+                "discard_count": opponent.discard_count,
             }
             for opponent in position.opponents
         ],
@@ -673,6 +674,7 @@ class EvOpponentRequest(ApiRequest):
     river: str = ""
     melds: str = ""
     declared_at: int | None = None
+    discard_count: int | None = Field(default=None, ge=0)
     # Whether the modeled opponent is the dealer. Settlement always treats one
     # seat as the dealer, so leaving this unset does not remove the premium —
     # it lands on whichever seat the sampler filled first, and the defensive
@@ -687,6 +689,7 @@ class EvRankRequest(SchemeRequest):
     river: str = ""
     melds: str = ""
     declared_at: int | None = None
+    discard_count: int | None = Field(default=None, ge=0)
     is_dealer: bool = False
     dealer_streak: int = Field(default=0, ge=0, le=32)
     opponents: list[EvOpponentRequest] = Field(default_factory=list, max_length=3)
@@ -726,6 +729,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
                 parse_river(source.river),
                 _parse_melds(source.melds),
                 source.declared_at,
+                discard_count=source.discard_count,
                 is_dealer=source.is_dealer,
                 dealer_streak=source.dealer_streak if source.is_dealer else 0,
             )
@@ -736,6 +740,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
             request.river
             or request.melds
             or request.declared_at is not None
+            or request.discard_count is not None
             or request.is_dealer
         )
         if request.opponents and legacy_present:
@@ -787,14 +792,14 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
         if opponents and not request.opponents:
             opponent = opponents[0]
             payload["opponent"] = {
-                "tenpai_estimate": tenpai_score(opponent, len(opponent.river)).score,
+                "tenpai_estimate": tenpai_score(opponent).score,
                 "fold_estimate": fold_score(opponent, []),
             }
         elif opponents:
             payload["opponents"] = [
                 {
                     "tenpai_estimate": tenpai_score(
-                        opponent, len(opponent.river),
+                        opponent,
                     ).score,
                     "fold_estimate": fold_score(opponent, []),
                 }
