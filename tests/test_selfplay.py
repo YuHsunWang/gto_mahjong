@@ -1,5 +1,6 @@
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import math
 import pytest
@@ -232,6 +233,80 @@ def test_ev_aware_is_deterministic_and_chooses_the_safe_known_case(monkeypatch):
 
     monkeypatch.setattr(selfplay, "_default_calibration", forbidden_load)
     assert _choose_discard(0, 8, players, consume_calibration=False) == (19, False)
+
+
+def test_valuable_hand_pushes_where_equal_speed_cheap_hand_folds(monkeypatch):
+    # Hold speed and opponent risk fixed: the extra seat-wind tai must tip
+    # this marginal decision toward pushing. The old flat proxy folds both.
+    analyses = (
+        selfplay.DiscardAnalysis(0, 0, {23: 4}, 4),
+        selfplay.DiscardAnalysis(3, 1, {23: 4}, 4),
+    )
+    monkeypatch.setattr(selfplay, "danger_score", lambda tile, *args: SimpleNamespace(score=float(tile == 0)))
+    monkeypatch.setattr(selfplay, "_default_calibration", lambda: SimpleNamespace(deal_in_probability=lambda danger: 0.05 * danger))
+    monkeypatch.setattr(selfplay, "opponent_value_estimate", lambda *args: 20.0)
+    monkeypatch.setattr(selfplay, "_tenpai_factor", lambda *args: 1.0)
+    choices = []
+    for wind in ("444", "222"):
+        players = [Player("attack") for _ in range(4)]
+        players[1].hand = list(parse_tiles(f"1123456m123p1178s{wind}z"))
+        choices.append(selfplay._ev_aware_discard(1, analyses, players))
+    assert choices == [3, 0]
+
+
+@pytest.mark.parametrize("shanten_after", [0, 1])
+def test_valuable_hands_have_higher_attack_value(shanten_after):
+    # Equal speed/ukeire and risk must reward the South seat's own wind:
+    # bots should push harder with valuable hands, not defend identically.
+    tile = next(index for index, count in enumerate(parse_tiles("6s")) if count)
+    analysis = selfplay.DiscardAnalysis(0, shanten_after, {tile: 4}, 4)
+    values = []
+    for wind in ("444", "222"):
+        post = list(parse_tiles(f"123456m123p1178s{wind}z"))
+        player = Player("ev_aware", hand=post)
+        values.append(selfplay._attack_value(
+            1, player, tuple(post), analysis, 4, 0, selfplay.DEFAULT_SCHEME,
+        ))
+    assert values[1] > values[0]
+    assert values[1] - values[0] == pytest.approx(
+        2 * selfplay.SHANTEN_WIN_WEIGHT[shanten_after],
+    )
+
+
+@pytest.mark.parametrize("seat,streak", [(0, 0), (0, 2), (1, 0), (1, 2)])
+@pytest.mark.parametrize("scheme", [selfplay.DEFAULT_SCHEME, selfplay.ScoringScheme(5, 2)])
+def test_own_win_estimate_matches_weighted_settlement_income(seat, streak, scheme):
+    # Winner income includes all three tsumo payments and the bilateral
+    # dealer leg; score-hand's one-leg value alone would underprice attack.
+    post = parse_tiles("123456m123p1178s222z")
+    players = [Player("ev_aware") for _ in range(4)]
+    players[seat].hand = list(post)
+    waits = dict(selfplay._cached_ukeire(post, 0, (0,) * 34))
+    analysis = selfplay.DiscardAnalysis(0, 0, waits, sum(waits.values()))
+    expected = 0.0
+    for tile, remaining in waits.items():
+        completed = list(post)
+        completed[tile] += 1
+        ron = sum(
+            _settlement("ron", seat, payer, players, tuple(completed), tile, streak, scheme)[0][seat]
+            for payer in range(4) if payer != seat
+        ) / 3
+        tsumo = _settlement("tsumo", seat, None, players, tuple(completed), tile, streak, scheme)[0][seat]
+        expected += remaining * (0.5 * ron + 0.5 * tsumo)
+    expected /= analysis.total
+    assert selfplay._own_win_value(seat, players[seat], post, analysis, streak, scheme) == pytest.approx(expected)
+
+
+def test_own_win_estimate_ignores_exhausted_waits():
+    post = parse_tiles("123456m123p1178s222z")
+    player = Player("ev_aware", hand=list(post))
+    waits = dict(selfplay._cached_ukeire(post, 0, (0,) * 34))
+    live_tile, dead_tile = sorted(waits)
+    one_wait = selfplay.DiscardAnalysis(0, 0, {live_tile: 2}, 2)
+    dead_wait = selfplay.DiscardAnalysis(0, 0, {live_tile: 2, dead_tile: 0}, 2)
+    assert selfplay._own_win_value(1, player, post, one_wait, 0, selfplay.DEFAULT_SCHEME) == selfplay._own_win_value(
+        1, player, post, dead_wait, 0, selfplay.DEFAULT_SCHEME,
+    )
 
 
 def test_head_to_head_smoke_batch_records_point_deltas():

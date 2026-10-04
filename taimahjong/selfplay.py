@@ -13,6 +13,7 @@ from math import sqrt
 from pathlib import Path
 from typing import Callable, Mapping
 
+from . import scoring
 from .calibration import Calibration
 from .config import (
     DEFAULT_GAME_CONFIG,
@@ -62,7 +63,8 @@ def generation_rules() -> dict[str, object]:
 ATTACK_TOP_K = 5
 SHANTEN_WIN_WEIGHT = {-1: 1.0, 0: 0.45, 1: 0.18, 2: 0.06}
 SHANTEN_FALLBACK_WEIGHT = 0.02
-EXPECTED_TAI_PROXY = 1.0
+# Neutral bot-policy prior, not a calibrated human-play probability.
+EXPECTED_SELF_DRAW_RATE = 0.5
 DEALER_SEAT = 0
 # Cautious defends harder against the dealer: each fold candidate's danger to
 # the dealer is scaled by 1 + CAUTIOUS_DEALER_BONUS x (1 + streak), so a
@@ -394,6 +396,95 @@ def _tenpai_factor(opponent: OpponentView) -> float:
     return min(3.0, max(0.25, score / BASELINE_TENPAI_RATE))
 
 
+def _own_win_value(
+    player_index: int,
+    player: Player,
+    post: tuple[int, ...],
+    analysis: DiscardAnalysis,
+    dealer_streak: int,
+    scheme: ScoringScheme,
+) -> float:
+    """Expected winner income, not just one payment leg.
+
+    Tenpai: score every live completion with the shared scorer, weighted by
+    remaining copies. Further away: cheap retained-tile tai estimate (menqing,
+    flush, honor triplets), using the scoring table's constants. This omits
+    speculative future patterns rather than searching completion trees.
+    Both use a neutral 50/50 tsumo/ron prior and uniform ron payer prior.
+    """
+    melds = tuple(meld_tiles(meld) for meld in player.melds)
+    kongs = tuple(kong_tiles(kong) for kong in player.kongs)
+    dealer = player_index == DEALER_SEAT
+    ron_value = tsumo_value = live = 0.0
+    if analysis.shanten_after == 0:
+        for tile, remaining in analysis.ukeire.items():
+            if remaining <= 0:
+                continue
+            completed = list(post)
+            completed[tile] += 1
+            completed = tuple(completed)
+            context = dict(
+                winning_tile=tile, dealer=dealer,
+                dealer_streak=dealer_streak if dealer else 0,
+                round_wind=SUIT_OFFSETS["z"],
+                seat_wind=SUIT_OFFSETS["z"] + (player_index - DEALER_SEAT) % 4,
+                migi_declared=player.declared,
+            )
+            ron_value += remaining * _cached_score_hand(
+                completed, melds, WinContext(**context), kongs,
+            ).value_in(scheme)
+            tsumo_value += remaining * _cached_score_hand(
+                completed, melds, WinContext(**context, self_draw=True), kongs,
+            ).value_in(scheme)
+            live += remaining
+    if live:
+        ron_value /= live
+        tsumo_value /= live
+    else:
+        tiles = {tile for tile, count in enumerate(post) if count}
+        tiles.update(tile for meld in melds for tile in meld)
+        tiles.update(tile for tile, _ in kongs)
+        triplets = {tile for tile, count in enumerate(post) if count >= 3}
+        triplets.update(meld[0] for meld in melds if meld[0] == meld[1] == meld[2])
+        triplets.update(tile for tile, _ in kongs)
+        tai = scoring.MENQING_TAI if not melds and all(concealed for _, concealed in kongs) else 0
+        suits = {tile // 9 for tile in tiles if tile < 27}
+        if tiles and not suits:
+            tai += scoring.ALL_HONORS_TAI
+        elif len(suits) == 1:
+            tai += scoring.HALF_FLUSH_TAI if any(tile >= 27 for tile in tiles) else scoring.FULL_FLUSH_TAI
+        tai += scoring.DRAGON_TRIPLET_TAI * len(triplets & scoring.DRAGON_TILES)
+        tai += scoring.ROUND_WIND_TAI * (SUIT_OFFSETS["z"] in triplets)
+        tai += scoring.SEAT_WIND_TAI * (SUIT_OFFSETS["z"] + (player_index - DEALER_SEAT) % 4 in triplets)
+        if dealer:
+            tai += DEALER_TAI + STREAK_TAI_PER_WIN * dealer_streak
+        ron_value = scheme.value(tai)
+        tsumo_value = scheme.value(tai + scoring.SELF_DRAW_TAI)
+    tsumo_rate = EXPECTED_SELF_DRAW_RATE
+    income = (1 - tsumo_rate) * ron_value + tsumo_rate * 3 * tsumo_value
+    if not dealer:
+        # The dealer pays its bilateral premium on tsumo, or 1/3 of rons.
+        premium = scheme.tai_units * (DEALER_TAI + STREAK_TAI_PER_WIN * dealer_streak)
+        income += premium * (tsumo_rate + (1 - tsumo_rate) / 3)
+    return income
+
+
+def _attack_value(
+    player_index: int,
+    player: Player,
+    post: tuple[int, ...],
+    analysis: DiscardAnalysis,
+    best_ukeire: int,
+    dealer_streak: int,
+    scheme: ScoringScheme,
+) -> float:
+    relative_ukeire = analysis.total / best_ukeire if best_ukeire else 0.0
+    weight = SHANTEN_WIN_WEIGHT.get(analysis.shanten_after, SHANTEN_FALLBACK_WEIGHT)
+    return weight * relative_ukeire * _own_win_value(
+        player_index, player, post, analysis, dealer_streak, scheme,
+    )
+
+
 def _ev_aware_discard(
     player_index: int,
     analyses: tuple[DiscardAnalysis, ...],
@@ -423,9 +514,10 @@ def _ev_aware_discard(
     for order, analysis in enumerate(candidates):
         post = list(player.hand)
         post[analysis.discard] -= 1
-        relative_ukeire = analysis.total / best_ukeire if best_ukeire else 0.0
-        attack = SHANTEN_WIN_WEIGHT.get(analysis.shanten_after, SHANTEN_FALLBACK_WEIGHT)
-        attack *= relative_ukeire * (scheme.base_units + scheme.tai_units * EXPECTED_TAI_PROXY)
+        attack = _attack_value(
+            player_index, player, tuple(post), analysis, best_ukeire,
+            players[DEALER_SEAT].dealer_streak, scheme,
+        )
         risk = 0.0
         for index, opponent in opponents:
             danger = danger_by_candidate[analysis.discard][index]
