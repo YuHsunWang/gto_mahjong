@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .calibration import Calibration
 from .config import DEFAULT_GAME_CONFIG, GameConfig
+from .opponent_shanten import OpponentShanten
 
 
 logger = logging.getLogger(__name__)
@@ -55,9 +56,29 @@ class AnalysisContext:
 DEFAULT_ANALYSIS_CONTEXT = AnalysisContext()
 
 
+def _load_opponent_shanten(path: Path) -> tuple[bytes, OpponentShanten] | None:
+    """Read and validate the table shared by provenance and world sampling."""
+    try:
+        content = path.read_bytes()
+        model = OpponentShanten(json.loads(content))
+        for cell in model.tables.values():
+            for label, count in cell.items():
+                if int(label) < 0 or type(count) is not int or count < 0:
+                    raise ValueError("invalid shanten count")
+        if not any(
+            int(label) > 0 and count > 0
+            for label, count in model.tables["*|*|*"].items()
+        ):
+            raise ValueError("no non-tenpai observations")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        logger.warning("ignoring unusable opponent-shanten table %s: %s", path, error)
+        return None
+    return content, model
+
+
 @dataclass(frozen=True)
 class CalibrationProvider:
-    """Load one table and identify it by its exact content hash."""
+    """Load both EV tables and identify their exact content by one hash."""
 
     path: Path
 
@@ -65,10 +86,16 @@ class CalibrationProvider:
         if not self.path.exists():
             return HEURISTIC_FALLBACK
         content = self.path.read_bytes()
-        calibration_id = f"sha256:{sha256(content).hexdigest()}"
         try:
             calibration = Calibration(json.loads(content))
         except (ValueError, KeyError, TypeError, AttributeError) as error:
             logger.warning("ignoring unusable calibration table %s: %s", self.path, error)
             return HEURISTIC_FALLBACK
+        opponent = _load_opponent_shanten(self.path.with_name("opponent-shanten.json"))
+        if opponent is None:
+            return HEURISTIC_FALLBACK
+        opponent_content, _ = opponent
+        # Frame the first table so different byte boundaries cannot share an ID.
+        combined = len(content).to_bytes(8, "big") + content + opponent_content
+        calibration_id = f"sha256:{sha256(combined).hexdigest()}"
         return CalibrationContext(calibration_id, calibration)

@@ -16,6 +16,7 @@ from math import comb, floor
 from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
+from .analysis import _load_opponent_shanten
 from .calibration import Calibration
 from .config import DEFAULT_RULES, RulesConfig
 from .danger import (
@@ -870,7 +871,8 @@ def _construct_tenpai_hand(
 def _default_opponent_shanten() -> OpponentShanten | None:
     """Load the observed shanten distribution once; absence is not fatal."""
     path = Path(__file__).resolve().parent.parent / "data" / "opponent-shanten.json"
-    return OpponentShanten.from_path(path) if path.exists() else None
+    loaded = _load_opponent_shanten(path)
+    return loaded[1] if loaded is not None else None
 
 
 def _worsen_by_one(

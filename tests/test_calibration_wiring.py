@@ -1,6 +1,8 @@
 """MJ-004 calibration identity, fallback, and composition-root wiring."""
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 
 import pytest
 
@@ -249,3 +251,85 @@ def test_malformed_table_api_reports_fallback(tmp_path, monkeypatch):
         })
     assert response.status_code == 200
     assert response.json()["fallback_used"] is True
+
+
+@pytest.fixture
+def model_tables(tmp_path):
+    from taimahjong.opponent_shanten import document
+
+    calibration = tmp_path / "calibration.json"
+    calibration.write_bytes(
+        (Path(__file__).parents[1] / "data" / "calibration.json").read_bytes()
+    )
+    opponent = tmp_path / "opponent-shanten.json"
+    opponent.write_text(json.dumps(document({"0|7-12|0": {"1": 30, "2": 70}})))
+    return calibration, opponent
+
+
+def test_model_id_changes_when_only_opponent_shanten_changes(model_tables):
+    from taimahjong.opponent_shanten import document
+
+    calibration, opponent = model_tables
+    provider = CalibrationProvider(calibration)
+    first = provider.load()
+    assert not first.fallback_used
+    assert first.calibration_id.startswith("sha256:")
+    assert provider.load().calibration_id == first.calibration_id
+
+    opponent.write_text(json.dumps(document({"0|7-12|0": {"1": 70, "2": 30}})))
+    second = provider.load()
+    assert not second.fallback_used
+    assert second.calibration_id != first.calibration_id
+
+
+def test_missing_opponent_shanten_reports_existing_fallback(model_tables, monkeypatch):
+    calibration, opponent = model_tables
+    opponent.unlink()
+    fallback = CalibrationProvider(calibration).load()
+    assert fallback.fallback_used
+    assert fallback.calibration_id == "heuristic-fallback"
+    monkeypatch.setattr(api, "_calibration_context", lambda: fallback)
+    response = api.ev_rank_endpoint(api.EvRankRequest(
+        hand="123m123p123s11122233z", turns=1, sims=1,
+    ))
+    assert response["fallback_used"] is True
+    assert response["calibration_id"] == "heuristic-fallback"
+
+
+@pytest.mark.parametrize("content", [
+    "{truncated",
+    "[]",
+    '{"version": 99, "tables": {}}',
+    '{"version": 1, "tables": null}',
+    '{"version": 1, "tables": {}}',
+    '{"version": 1, "tables": {"*|*|*": {}}}',
+    '{"version": 1, "tables": {"*|*|*": {"1": "bad"}}}',
+])
+def test_unusable_opponent_shanten_reports_existing_fallback(
+    model_tables, caplog, content,
+):
+    calibration, opponent = model_tables
+    opponent.write_text(content)
+    with caplog.at_level("WARNING"):
+        fallback = CalibrationProvider(calibration).load()
+    assert fallback.fallback_used
+    assert fallback.calibration_id == "heuristic-fallback"
+    assert "unusable opponent-shanten table" in caplog.text
+
+
+@pytest.mark.parametrize("content", [None, "{truncated", '{"version": 1, "tables": {}}'])
+def test_default_opponent_loader_declines_missing_or_unusable_table(
+    tmp_path, monkeypatch, content,
+):
+    from taimahjong import ev
+
+    data = tmp_path / "data"
+    data.mkdir()
+    if content is not None:
+        (data / "opponent-shanten.json").write_text(content)
+    monkeypatch.setattr(ev, "__file__", str(tmp_path / "taimahjong" / "ev.py"))
+    ev._default_opponent_shanten.cache_clear()
+    try:
+        assert ev._default_opponent_shanten() is None
+    finally:
+        ev._default_opponent_shanten.cache_clear()
