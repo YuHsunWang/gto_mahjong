@@ -171,7 +171,7 @@ class CallEvaluation:
                 + len(self.decision.position.own_kongs)
                 + 1,
             )
-        post, melds = _post_call(self.decision.position, option)
+        post, melds, _ = _post_call(self.decision.position, option)
         return _cached_shanten(post, len(melds) + len(self.decision.position.own_kongs))
 
     def verdict_for(self, choice: int | None) -> CallVerdict:
@@ -455,13 +455,18 @@ def _apply_call(
     )
 
 
-def _post_call(position: QuizPosition, option: CallOption) -> tuple[tuple[int, ...], tuple[MeldLike, ...]]:
-    """The concealed hand and meld set after declaring a pon/chi."""
+def _post_call(
+    position: QuizPosition, option: CallOption,
+) -> tuple[tuple[int, ...], tuple[MeldLike, ...], tuple[int, ...]]:
+    """The concealed hand, meld set, and public counts after a pon/chi."""
     assert option.kind in ("pon", "chi")
     post = list(position.hand)
+    public = list(position.public_counts)
+    # The claimed discard is already public in the discarder's river.
     for consumed in option.consumed:
         post[consumed] -= 1
-    return tuple(post), position.own_melds + (option.meld,)
+        public[consumed] += 1
+    return tuple(post), position.own_melds + (option.meld,), tuple(public)
 
 
 def _pass_estimate(
@@ -528,9 +533,9 @@ def _option_rank(
             decision, option, base_seed, sims, scheme, calibration,
         ), None
     position = decision.position
-    post, melds = _post_call(position, option)
+    post, melds, public = _post_call(position, option)
     ranked = ev_rank(
-        post, [opponent.view() for opponent in position.opponents], position.public_counts,
+        post, [opponent.view() for opponent in position.opponents], public,
         len(melds) + len(position.own_kongs), position.draws_remaining, sims, base_seed,
         _score_template(position, melds), calibration=calibration, top_k=EV_TOP_K,
         scheme=scheme,
@@ -575,10 +580,10 @@ def _refine_call_discard(
     calibration: Calibration | None = None,
 ) -> EVRankEntry:
     position = decision.position
-    post, melds = _post_call(position, option)
+    post, melds, public = _post_call(position, option)
     return evaluate_discard(
         post, discard, [opponent.view() for opponent in position.opponents],
-        position.public_counts, len(melds) + len(position.own_kongs), position.draws_remaining,
+        public, len(melds) + len(position.own_kongs), position.draws_remaining,
         sims, base_seed, _score_template(position, melds),
         calibration=calibration,
         scheme=scheme,

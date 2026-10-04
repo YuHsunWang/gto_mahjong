@@ -120,6 +120,56 @@ def test_human_is_offered_open_kong_on_opponents_discard():
     )
 
 
+@pytest.mark.parametrize("kind", ["pon", "chi"])
+@pytest.mark.parametrize("refined", [False, True])
+def test_post_call_world_counts_consumed_tiles_and_claimed_discard_once(monkeypatch, kind, refined):
+    import taimahjong.ev as ev
+    import taimahjong.trainer as trainer
+    from taimahjong.danger import RiverEntry
+    from taimahjong.selfplay import Player, _public_counts
+    from taimahjong.tiles import parse_tiles
+
+    hand = parse_tiles("449m1124456p4578s13z")
+    pon_tile = next(tile for tile, count in enumerate(parse_tiles("4p")) if count)
+    offered = pon_tile if kind == "pon" else pon_tile - 1
+    option = (
+        CallOption("pon", (offered,) * 3, (offered,) * 2)
+        if kind == "pon"
+        else CallOption("chi", (offered - 1, offered, offered + 1), (offered - 1, offered + 1))
+    )
+    players = [Player("attack", hand=list(hand))] + [Player("attack") for _ in range(3)]
+    players[1].river.append(RiverEntry(offered, "tedashi"))
+    position = trainer._trainer_position(0, offered, players, 4, 1)
+    decision = TrainerCallDecision(position, offered, 1, (option,))
+    assert position.public_counts[offered] == 1
+
+    # The hypothetical EV world must agree with actually applying the call:
+    # remove the claimed river entry and expose the complete meld exactly once.
+    trainer._apply_call(players[0], players[1], option)
+    expected_public = _public_counts(players)
+    assert expected_public[offered] == (3 if kind == "pon" else 1)
+
+    class WorldChecked(Exception):
+        pass
+
+    def check_world(post, public, *_args):
+        assert public == expected_public
+        assert post == tuple(players[0].hand)
+        if kind == "pon":
+            assert 4 - post[offered] - public[offered] == 1
+        raise WorldChecked
+
+    monkeypatch.setattr(ev, "_production_worlds", check_world)
+    with pytest.raises(WorldChecked):
+        if refined:
+            discard = next(tile for tile, count in enumerate(players[0].hand) if count)
+            trainer._refine_call_discard(decision, option, discard, 41, 1)
+        else:
+            trainer._option_rank(decision, option, 41, 1)
+    assert position.hand == hand
+    assert position.public_counts[offered] == 1
+
+
 def test_open_kong_call_can_be_evaluated_and_graded(monkeypatch):
     from dataclasses import replace
 
