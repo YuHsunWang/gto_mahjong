@@ -268,6 +268,7 @@ function ownSeatEl(position, handOptions) {
     + (position.own_kong_details || []).length * 4;
   section.append(identityEl(position.seat, {
     you: true,
+    declared: position.migi_declared,
     isDealer: position.is_dealer,
     streak: position.is_dealer ? position.dealer_streak : 0,
     handCount: concealedCount,

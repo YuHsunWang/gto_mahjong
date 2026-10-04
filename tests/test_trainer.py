@@ -109,6 +109,24 @@ def test_trainer_is_deterministic_for_a_fixed_policy():
     assert a_outcome == b_outcome
 
 
+def test_trainer_reports_auto_declaration_when_human_choices_stop():
+    from taimahjong.ukeire import discard_analysis
+
+    def discard_to_tenpai(position):
+        return discard_analysis(
+            position.hand, len(position.own_melds) + len(position.own_kongs),
+            position.public_counts,
+        )[0].discard
+
+    decisions, outcome = _play(2419, discard_to_tenpai)
+
+    assert len(decisions) == 1
+    assert decisions[0].migi_declared is False
+    # The advice rule locks this dealer's hand after the first discard. With
+    # no more human choices, the terminal state must explain the auto-lock.
+    assert outcome.migi_declared is True
+
+
 # Grades a batch of generated trainer positions (~21s).
 @pytest.mark.slow
 def test_trainer_positions_are_gradeable():
