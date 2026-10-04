@@ -30,15 +30,10 @@
   --blue: #2a4fa2;
   --green: #2e7d32;
   --wind: #23407a;
-  --v-best: #2e9e5b;
-  --v-good: #3b82c4;
-  --v-inacc: #d99114;
-  --v-mist: #c0392b;
   --q-best: #4fc78a;
   --q-correct: #55a9e8;
   --q-inaccuracy: #e6b84d;
   --q-wrong: #ee765f;
-  --q-blunder: #b54c72;
   --q-unresolved: #a58be2;
   --serif: "Noto Serif TC", "PMingLiU", serif;
   --sans: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
@@ -529,20 +524,20 @@ button {
   font-size: 13px;
   border-radius: 999px;
   padding: 2px 11px;
-  color: #fff;
+  color: #241b32;
   flex: 0 0 auto;
 }
 
-.verdict.best { border-left-color: var(--v-best); }
-.verdict.good { border-left-color: var(--v-good); }
-.verdict.inaccuracy { border-left-color: var(--v-inacc); }
-.verdict.mistake { border-left-color: var(--v-mist); }
+.verdict.best { border-left-color: var(--q-best); }
+.verdict.good { border-left-color: var(--q-correct); }
+.verdict.inaccuracy { border-left-color: var(--q-inaccuracy); }
+.verdict.mistake { border-left-color: var(--q-wrong); }
 .verdict.unresolved { border-left-color: var(--q-unresolved); }
-.verdict.best .badge { background: var(--v-best); }
-.verdict.good .badge { background: var(--v-good); }
-.verdict.inaccuracy .badge { background: var(--v-inacc); }
-.verdict.mistake .badge { background: var(--v-mist); }
-.verdict.unresolved .badge { background: var(--q-unresolved); color: #241b32; }
+.verdict.best .badge { background: var(--q-best); }
+.verdict.good .badge { background: var(--q-correct); }
+.verdict.inaccuracy .badge { background: var(--q-inaccuracy); }
+.verdict.mistake .badge { background: var(--q-wrong); }
+.verdict.unresolved .badge { background: var(--q-unresolved); }
 
 .verdict .delta { font-variant-numeric: tabular-nums; color: var(--ink-dim); }
 .verdict .text { flex: 1 1 auto; }
@@ -832,7 +827,7 @@ details.evwrap summary {
   left: 50%;
   bottom: 24px;
   transform: translateX(-50%);
-  background: var(--v-mist);
+  background: #c0392b;
   color: #fff;
   border-radius: 10px;
   padding: 9px 16px;
