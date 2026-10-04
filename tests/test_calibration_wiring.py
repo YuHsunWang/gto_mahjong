@@ -18,6 +18,9 @@ class _ExtremeCalibration:
     def deal_in_probability(self, danger_score: float) -> float:
         return self.probability
 
+    def tenpai_probability(self, melds: int, turn: int, run: int) -> None:
+        return None
+
 
 def _context(identity: str, probability: float) -> AnalysisContext:
     return AnalysisContext(

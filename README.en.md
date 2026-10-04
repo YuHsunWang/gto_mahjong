@@ -339,10 +339,10 @@ still uses the older seven-bin danger edges while the shipped table now has eigh
 tail splits at 16), and the append is refused.
 
 The table maps each discard's per-opponent `danger_score` to a ron probability, and the
-production rollout uses it on the opening and later discards. Again: only this ron/deal-in
-probability lookup is calibrated against *these bots*. Self-draw and wall outcomes come from
-Monte Carlo, while hidden hands and future policies include heuristics; none is calibrated
-against humans.
+production rollout uses it on the opening and later discards; its P(tenpai | melds, turn,
+tsumogiri run) sets how often a sampled opponent is tenpai. Again: only these two lookups are
+calibrated against *these bots*. Self-draw and wall outcomes come from Monte Carlo, while hidden
+hands and future policies include heuristics; none is calibrated against humans.
 
 ### Methodology card
 
@@ -353,11 +353,11 @@ currently fixed at zero. The table below splits the model by *how* each piece is
 | Category | What the project actually does | Limitation |
 | --- | --- | --- |
 | **Modeled and calculated exactly** | Given one sampled four-seat world, it validates ordinary-tile wins, scores the selected house rules, and performs zero-sum four-seat settlement. Each trial produces exactly one of `self_tsumo`, `self_ron`, `opponent_ron`, `opponent_tsumo`, or `draw`; `net_ev` is exactly the acting seat's mean sampled terminal payment. | “Exact” covers rules, settlement, and aggregation inside that sampled world—not exact terminal probabilities or human play. Draw payment is currently fixed at zero. |
-| **Heuristic approximation** | Public information drives opponent-tenpai estimates and hidden-hand sampling; efficiency-discard and fixed defense policies advance future play. Wall and terminal frequencies are fixed-seed Monte Carlo estimates. | Opponents do not fully adapt; the hidden-world distribution and policies are model assumptions, and finite sampling leaves error. |
-| **Calibrated by a calibration table** | The per-opponent `danger_score` lookup supplies ron/deal-in probabilities on the opening and later discards. A non-tenpai opponent's shanten is drawn from `data/opponent-shanten.json`, the distribution the same self-play observed (see `docs/opponent-shanten.md`), rather than uniformly from the unseen pool. Both data sets live in the built-in-bot self-play ecology. | It is not calibrated on human games. If a calibrated event conflicts with the sampled concealed hand, a physically winning hand is redeterminized for valuation. If no usable calibration table is available, a reported heuristic fallback is used. |
+| **Heuristic approximation** | Public information drives hidden-hand sampling; efficiency-discard and fixed defense policies advance future play. Wall and terminal frequencies are fixed-seed Monte Carlo estimates. Where a calibration cell has too few observations, the opponent-tenpai rate falls back to a heuristic estimate. | Opponents do not fully adapt; the hidden-world distribution and policies are model assumptions, and finite sampling leaves error. |
+| **Calibrated by a calibration table** | The per-opponent `danger_score` lookup supplies ron/deal-in probabilities on the opening and later discards: every opponent wins on a discard at the table's rate, and its sampled hand only sets how much the win is worth; your own ron follows your real hand and nearest-claim priority. The opponent-tenpai rate comes from the same table's P(tenpai \| melds, turn, tsumogiri run). A non-tenpai opponent's shanten is drawn from `data/opponent-shanten.json`, the distribution the same self-play observed (see `docs/opponent-shanten.md`), rather than uniformly from the unseen pool. Both data sets live in the built-in-bot self-play ecology. | It is not calibrated on human games. If a calibrated event conflicts with the sampled concealed hand, a physically winning hand is redeterminized for valuation. If no usable calibration table is available, a reported heuristic fallback is used. |
 | **Not modeled** | Future chi, pon, kong/replacement draws and flowers, special hands, complete pass-on-ron decisions, and a full best response by every seat. | These events are absent from the terminal rollout transitions; draws also have no tenpai/noten settlement. |
 
-**Calibration domain**: only the ron/deal-in probability lookup is calibrated, and its domain is
+**Calibration domain**: only the ron/deal-in probability and opponent-tenpai lookups are calibrated, and their domain is
 the built-in-bot self-play ecology, not human game records. When no usable calibration table is
 available, all three teaching paths fall back to the same heuristic and report that they did.
 
@@ -380,7 +380,7 @@ each kong type is worth declaring (`scripts/kong_ev.py`). Method and data are in
 ## Honest scope and limits
 
 - **Ordinary tiles only**: no flowers, no special hands.
-- **Only the ron/deal-in probability lookup has bot-domain calibration**, not human calibration;
+- **Only the ron/deal-in probability and opponent-tenpai lookups have bot-domain calibration**, not human calibration;
   self-draw and wall outcomes are Monte Carlo, while hidden hands, opponent discards, and
   defense policies include heuristic assumptions.
 - **Danger is not a safety guarantee**: Taiwan has no permanent furiten, so river

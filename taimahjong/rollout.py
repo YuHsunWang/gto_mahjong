@@ -39,8 +39,9 @@ MIXTURE_TOLERANCE = 1e-9
 class CalibratedRonClaim:
     """RON probability plus either legacy value or a physically scored hand.
 
-    Calibration prices only non-acting opponents that can win in the fixed
-    hidden world.  The acting seat's actual hand decides its claim physically.
+    Calibration prices every non-acting opponent at its marginal rate, whatever
+    its sampled hand; the hand only values the ron.  The acting seat's actual
+    hand decides its claim physically.
     """
 
     seat: int
@@ -266,9 +267,11 @@ def _calibrated_claim_probabilities(
 ) -> tuple[dict[int, float], dict[int, CalibratedRonClaim]]:
     """Per-seat RON probabilities for one discard, plus the claims behind them.
 
-    The acting seat is the one seat whose claim may be physical rather than
-    priced: when the callback does not price it, the hand it actually holds
-    decides, which is a probability of one or zero.
+    The acting seat is the one seat whose claim is physical rather than
+    priced: the hand it actually holds decides whether it can win.  When it
+    can, the house's nearest-claim priority still applies: seats between the
+    discarder and the actor take their priced share first, the actor takes
+    all the mass they leave, and seats after the actor never get the tile.
     """
     physical_actor_claim = False
     if discarder != acting_seat:
@@ -290,13 +293,24 @@ def _calibrated_claim_probabilities(
         raise ValueError("calibrated RON claims must exclude the discarder")
     if acting_seat != discarder:
         estimates.pop(acting_seat, None)
-        if physical_actor_claim:
-            return {acting_seat: 1.0}, estimates
     probabilities = {
         seat: claim.probability for seat, claim in estimates.items()
     }
     if acting_seat != discarder:
-        probabilities[acting_seat] = 0.0
+        if physical_actor_claim:
+            nearer = set()
+            seat = (discarder + 1) % 4
+            while seat != acting_seat:
+                nearer.add(seat)
+                seat = (seat + 1) % 4
+            probabilities = {
+                seat: probability
+                for seat, probability in probabilities.items()
+                if seat in nearer
+            }
+            probabilities[acting_seat] = max(0.0, 1.0 - sum(probabilities.values()))
+        else:
+            probabilities[acting_seat] = 0.0
     return probabilities, estimates
 
 
@@ -323,7 +337,9 @@ def _winner_distribution(
         if probabilities.get(seat, 0.0)
     }
     residual = 0.0 if total > 1.0 else 1.0 - total
-    if residual:
+    # A physical actor claim takes exactly the mass the nearer seats leave, so
+    # its sum lands on one up to rounding; that dust is not a surviving world.
+    if residual > MIXTURE_TOLERANCE:
         distribution[()] = residual
     return distribution
 
