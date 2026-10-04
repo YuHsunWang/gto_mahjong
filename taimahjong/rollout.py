@@ -417,6 +417,8 @@ def resolve_terminal_distribution(
     calibrated_ron: CalibratedRon | None = None,
     acting_discard_policy: ContinuationDiscardPolicy | None = None,
     visible: Sequence[int] | None = None,
+    wall_remaining: int | None = None,
+    opening_live_draw: bool = False,
 ) -> TerminalMixture:
     """Sample one wall order and return its whole terminal distribution.
 
@@ -432,11 +434,24 @@ def resolve_terminal_distribution(
     exactly once.  It never reconstructs visibility from rollout players,
     whose river/meld representation may retain a called tile in both places.
 
+    ``wall_remaining`` counts real live tiles before the rollout draws, even
+    when ``wall`` is a shorter simulation horizon. ``opening_live_draw`` says
+    the opening discard follows a normal live draw; calls and kong replacement
+    draws must leave it false.
+
     ``discard`` is ``None`` for the declined-call branch: the acting seat holds
     a hand that owes no discard this turn, so play resumes at ``next_seat``
     without an opening discard.  Every later turn is unchanged, which is what
     puts a pass on the same signed-payment scale as a call.
     """
+    # Count the real live wall separately from a truncated rollout horizon.
+    live_remaining = len(wall) if wall_remaining is None else wall_remaining
+    if (
+        not isinstance(live_remaining, int)
+        or isinstance(live_remaining, bool)
+        or live_remaining < len(wall)
+    ):
+        raise ValueError("wall_remaining must be an integer at least the simulated wall size")
     if acting_seat not in range(4) or next_seat not in range(4):
         raise ValueError("acting and next seats must be 0-3")
     if discard is not None and discard not in range(34):
@@ -507,7 +522,10 @@ def resolve_terminal_distribution(
             raise ValueError("discard must be present in the acting hand")
 
         trial_players[acting_seat].hand[discard] -= 1
-        if claim_ron(acting_seat, discard):
+        if claim_ron(
+            acting_seat, discard,
+            wall_remaining=live_remaining if opening_live_draw else None,
+        ):
             return TerminalMixture(tuple(outcomes))
         if records_river:
             trial_players[acting_seat].river.append(RiverEntry(discard))
@@ -530,6 +548,7 @@ def resolve_terminal_distribution(
             if draw_index < cumulative:
                 break
         remaining[tile] -= 1
+        live_remaining -= 1
         player = trial_players[current]
         player.hand[tile] += 1
 
@@ -544,7 +563,7 @@ def resolve_terminal_distribution(
                 tile,
                 dealer_streak,
                 scheme,
-                wall_remaining=sum(remaining),
+                wall_remaining=live_remaining,
                 rules=rules,
             )
             outcomes.append((
@@ -581,7 +600,7 @@ def resolve_terminal_distribution(
         if discarded not in range(34) or not player.hand[discarded]:
             raise ValueError("discard policy returned a tile absent from the hand")
         player.hand[discarded] -= 1
-        if claim_ron(current, discarded, wall_remaining=sum(remaining)):
+        if claim_ron(current, discarded, wall_remaining=live_remaining):
             return TerminalMixture(tuple(outcomes))
         if records_river:
             origin = "tsumogiri" if discarded == tile else "tedashi"
@@ -612,6 +631,8 @@ def resolve_terminal(
     calibrated_ron: CalibratedRon | None = None,
     acting_discard_policy: ContinuationDiscardPolicy | None = None,
     visible: Sequence[int] | None = None,
+    wall_remaining: int | None = None,
+    opening_live_draw: bool = False,
 ) -> TerminalResult:
     """One coherent terminal payment, for worlds that leave nothing uncertain.
 
@@ -634,4 +655,6 @@ def resolve_terminal(
         calibrated_ron=calibrated_ron,
         acting_discard_policy=acting_discard_policy,
         visible=visible,
+        wall_remaining=wall_remaining,
+        opening_live_draw=opening_live_draw,
     ).sole

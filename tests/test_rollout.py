@@ -443,3 +443,44 @@ def test_winner_distribution_normalizes_independent_rows_above_one():
     })
     assert distribution.get((), 0.0) == 0.0
     assert sum(distribution.values()) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("calibrated", [False, True])
+def test_opening_last_normal_draw_discard_gets_river_bottom(calibrated):
+    winning = parse_tiles("111m456789p234s55789s")
+    tile = 19
+    players = [Player("attack", list(parse_tiles("147m147p147s1234567z"))) for _ in range(4)]
+    players[1].hand = list(winning)
+    players[1].hand[tile] -= 1
+    players[0].hand[tile] = 1
+
+    def claims(*_):
+        return (CalibratedRonClaim(1, 1.0, winning_hand=winning, scoring_tile=tile),)
+
+    def run(live_draw):
+        return resolve_terminal(
+            players, (), 0, 1, tile, _policy_discard, Random(1),
+            wall_remaining=0, opening_live_draw=live_draw,
+            calibrated_ron=claims if calibrated else None,
+        )
+
+    assert run(True).value_units == run(False).value_units + 1
+
+
+def test_rollout_horizon_does_not_end_real_live_wall():
+    tile = 19
+    waiting = list(parse_tiles("111m456789p234s55789s"))
+    waiting[tile] -= 1
+    players = [Player("attack", list(parse_tiles("147m147p147s1234567z"))) for _ in range(4)]
+    players[1].hand = waiting
+
+    def run(real_remaining):
+        return resolve_terminal(
+            players, (tile,), 1, 1, None, _policy_discard, Random(1),
+            wall_remaining=real_remaining,
+        )
+
+    ordinary = run(2)
+    last = run(1)
+    assert ordinary.kind == last.kind == "self_tsumo"
+    assert last.value_units == ordinary.value_units + 1
