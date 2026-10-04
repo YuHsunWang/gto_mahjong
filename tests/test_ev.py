@@ -6,7 +6,7 @@ from random import Random
 
 import pytest
 
-from taimahjong.danger import OpponentView, parse_river
+from taimahjong.danger import OpponentView, RiverEntry, parse_river
 import taimahjong.ev as ev
 from taimahjong.ev import (
     DRAW_VALUE,
@@ -91,6 +91,26 @@ def test_ev_rank_is_seed_deterministic_and_net_ev_is_signed_payment_mean():
         entry.net_ev == pytest.approx(entry.attack_ev - entry.risk_ev)
         for entry in first
     )
+
+
+def test_calibrated_ev_rank_accepts_plain_integer_opponent_river():
+    class FixedCalibration:
+        def deal_in_probability(self, _danger_score):
+            return 0.2
+
+    river = [8, 17, 27, 30, 22, 23, 24]
+    melds = [(4, 4, 4), (13, 13, 13)]
+    visible = _visible_with_opponent(OpponentView(river, melds))
+
+    def rank(opponent):
+        return ev_rank(
+            POST_DRAW, [opponent], visible,
+            turns=0, sims=2, seed=17,
+            calibration=FixedCalibration(), exhaustive=True,
+        )
+
+    expected = rank(OpponentView([RiverEntry(tile) for tile in river], melds))
+    assert rank(OpponentView(river, melds)) == expected
 
 
 def test_determinized_opponents_track_public_tenpai_state_and_conserve_tiles():
