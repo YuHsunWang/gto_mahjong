@@ -34,7 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from taimahjong.analysis import AnalysisContext, CalibrationProvider
 from taimahjong.calibration import Calibration
-from taimahjong.config import DEFAULT_GAME_CONFIG, GameConfig
+from taimahjong.config import DEFAULT_GAME_CONFIG, GameConfig, RulesConfig
 from taimahjong.danger import (
     DeclaredKong,
     DeclaredMeld,
@@ -704,6 +704,8 @@ class ScoreRequest(SchemeRequest):
     win_tile: str
     melds: str = ""
     self_draw: bool = False
+    last_tile: bool = False
+    menqing_self_draw_three: bool = False
     dealer: bool = False
     dealer_streak: int = 0
     migi: bool = False
@@ -813,6 +815,8 @@ def score_endpoint(request: ScoreRequest) -> dict[str, Any]:
         context = WinContext(
             winning_tile=_tile_from_compact(request.win_tile),
             self_draw=request.self_draw,
+            last_tile=request.last_tile,
+            rules=RulesConfig(menqing_self_draw_three=request.menqing_self_draw_three),
             dealer=request.dealer,
             dealer_streak=request.dealer_streak,
             migi_declared=request.migi,

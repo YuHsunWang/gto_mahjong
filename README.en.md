@@ -225,6 +225,13 @@ The project defaults to the following tai and house-rule choices: dealer 1,
 3 tai. 天胡/地胡 are 16/8 tai. It enumerates every way to read the hand and takes the
 highest-scoring one.
 
+海底撈月 (tsumo on the last live tile) and 河底撈魚 (ron on the discard immediately
+after that draw) each add 1 tai and are always enabled. 門清自摸 defaults to 2 tai
+(門清 1 + 自摸 1); enabling `RulesConfig.menqing_self_draw_three` makes it 3 total.
+The score tool accepts CLI `--last-tile` and `--menqing-self-draw-three`, or
+`last_tile` and `menqing_self_draw_three` in `/api/score`. Live tiles exclude the
+14-tile dead wall; kong replacement draws do not qualify for 海底撈月.
+
 A few documented house-rule calls:
 
 - A **kong** scores no tai by itself. Only winning on a kong's replacement tile

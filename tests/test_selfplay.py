@@ -566,3 +566,54 @@ def test_metadata_free_legacy_table_still_loads_and_merges(tmp_path):
     assert "13+" in format_report(document)
     merged = write_merged_table(path, empty_counts(LEGACY_DANGER_BUCKETS))
     assert Calibration(merged).deal_in_probability(20) == pytest.approx(10.5 / 101)
+
+
+@pytest.mark.parametrize('outcome', ['tsumo', 'ron'])
+def test_settlement_scores_exhausted_live_wall(outcome):
+    players = [Player('attack') for _ in range(4)]
+    hand = parse_tiles('111m456789p234s55789s')
+    tile = 19  # 2s
+    discarder = 2 if outcome == 'ron' else None
+    ordinary, plain = _settlement(outcome, 1, discarder, players, hand, tile, wall_remaining=1)
+    last, bonus = _settlement(outcome, 1, discarder, players, hand, tile, wall_remaining=0)
+    assert bonus == plain + 1
+    assert last[1] == ordinary[1] + (3 if outcome == 'tsumo' else 1)
+    assert sum(last) == 0
+
+
+def test_settlement_cache_keeps_menqing_rule_options_separate():
+    players = [Player('attack') for _ in range(4)]
+    hand = parse_tiles('111m456789p234s55789s')
+    args = ('tsumo', 1, None, players, hand, 19)
+    _, plain = _settlement(*args)
+    _, enabled = _settlement(*args, rules=replace(DEFAULT_RULES, menqing_self_draw_three=True))
+    _, again = _settlement(*args)
+    assert enabled == plain + 1
+    assert again == plain
+
+
+def test_play_game_passes_last_live_draw_to_settlement(monkeypatch):
+    calls = []
+    original_shanten = selfplay._cached_shanten
+    monkeypatch.setattr(selfplay, 'FLOWERLESS_DEAD_WALL_TILES', 71)
+    monkeypatch.setattr(selfplay, '_assert_conservation', lambda *args: None)
+    def win_on_draw(hand, melds):
+        return -1 if sum(hand) == 17 else original_shanten(hand, melds)
+    monkeypatch.setattr(selfplay, '_cached_shanten', win_on_draw)
+    def capture(*args, **kwargs):
+        calls.append(kwargs)
+        return (0, 0, 0, 0), 0
+    monkeypatch.setattr(selfplay, '_settlement', capture)
+    game = play_game(seed=7)
+    assert game.outcome == 'tsumo'
+    assert calls[0]['wall_remaining'] == 0
+
+
+@pytest.mark.parametrize('outcome, flags', [
+    ('tsumo', {'kong_bloom': True}), ('ron', {'robbed_kong': True}),
+])
+def test_empty_live_wall_does_not_make_kong_win_a_last_tile(outcome, flags):
+    players = [Player('attack') for _ in range(4)]
+    hand = parse_tiles('111m456789p234s55789s')
+    args = (outcome, 1, 2 if outcome == 'ron' else None, players, hand, 19)
+    assert _settlement(*args, **flags, wall_remaining=0) == _settlement(*args, **flags)

@@ -541,3 +541,14 @@ def test_static_spa_is_served_at_root(client):
     assert "台灣麻將教室" in response.text
     assert client.get("/js/main.js").status_code == 200
     assert client.get("/style.css").status_code == 200
+
+
+@pytest.mark.parametrize('self_draw, name', [(True, '海底撈月'), (False, '河底撈魚')])
+def test_score_endpoint_last_tile_and_menqing_option(client, self_draw, name):
+    payload = {'hand': '111m456789p234s55789s', 'win_tile': '2s', 'self_draw': self_draw}
+    ordinary = client.post('/api/score', json=payload).json()
+    response = client.post('/api/score', json={**payload, 'last_tile': True, 'menqing_self_draw_three': True})
+    assert response.status_code == 200
+    last = response.json()
+    assert any(name in item['name'] and item['tai'] == 1 for item in last['items'])
+    assert last['total_tai'] == ordinary['total_tai'] + 1 + int(self_draw)
