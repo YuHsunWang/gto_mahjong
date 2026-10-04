@@ -65,7 +65,7 @@ REFINE_SIMS = 200
 EV_TOP_K = 5
 
 # Third, adaptive stage. REFINE_SIMS leaves cross-seed ev_delta noise around
-# 0.05-0.15 tai, which is only well below the *wide* verdict boundary (1.0) but
+# 0.05-0.15 chip units, which is only well below the *wide* verdict boundary (1.0) but
 # not the tight one (GOOD_DELTA) — a verdict whose ev_delta sits right on a
 # boundary can still flip between CRN seeds. So when the REFINE_SIMS ev_delta
 # lands within ESCALATE_MARGIN of a boundary, re-estimate the same two
@@ -88,27 +88,32 @@ ESCALATE_MAX_SHANTEN = 1
 EV_EFFECT_SIZE_MIN = 0.10
 
 
-def verdict_for_delta(ev_delta: float) -> str:
-    """Map an EV loss (best minus chosen, in tai) to a teaching verdict."""
+def scaled_threshold(value: float, scheme: ScoringScheme = DEFAULT_SCHEME) -> float:
+    """Scale a default-scheme chip-unit threshold by the value of a one-tai win."""
+    return value * (scheme.value(1) / DEFAULT_SCHEME.value(1))
+
+
+def verdict_for_delta(ev_delta: float, scheme: ScoringScheme = DEFAULT_SCHEME) -> str:
+    """Map an EV loss (best minus chosen, in chip units) to a teaching verdict."""
     if ev_delta <= 0.0:
         return "best"
-    if ev_delta < GOOD_DELTA:
+    if ev_delta < scaled_threshold(GOOD_DELTA, scheme):
         return "good"
-    if ev_delta < 1.0:
+    if ev_delta < scaled_threshold(1.0, scheme):
         return "inaccuracy"
     return "mistake"
 
 
-def threshold_gap(ev_delta: float) -> float:
-    """Distance from ``ev_delta`` to the nearest verdict boundary."""
-    return min(abs(ev_delta - threshold) for threshold in (0.0, GOOD_DELTA, 1.0))
+def threshold_gap(ev_delta: float, scheme: ScoringScheme = DEFAULT_SCHEME) -> float:
+    """Chip-unit distance from ``ev_delta`` to the nearest scheme-scaled boundary."""
+    return min(abs(ev_delta - scaled_threshold(threshold, scheme)) for threshold in (0.0, GOOD_DELTA, 1.0))
 
 
-def should_escalate(ev_delta: float, shanten: int) -> bool:
+def should_escalate(ev_delta: float, shanten: int, scheme: ScoringScheme = DEFAULT_SCHEME) -> bool:
     """Whether a boundary-hugging verdict is worth (and cheap enough for) the
     higher ESCALATE_SIMS budget. Reads the gate constants live so tests can
     monkeypatch them."""
-    return shanten <= ESCALATE_MAX_SHANTEN and threshold_gap(ev_delta) < ESCALATE_MARGIN
+    return shanten <= ESCALATE_MAX_SHANTEN and threshold_gap(ev_delta, scheme) < scaled_threshold(ESCALATE_MARGIN, scheme)
 
 
 @dataclass(frozen=True)
@@ -135,7 +140,11 @@ class Verdict:
 _Payload = TypeVar("_Payload")
 
 
-def resolve_adaptive(estimate: Callable[[int], tuple[float, _Payload]], shanten: int) -> tuple[Verdict, _Payload]:
+def resolve_adaptive(
+    estimate: Callable[[int], tuple[float, _Payload]],
+    shanten: int,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+) -> tuple[Verdict, _Payload]:
     """Grade a best-minus-chosen ev_delta under the two-stage adaptive budget.
 
     ``estimate(sims)`` returns ``(ev_delta, payload)`` for the best and chosen
@@ -148,10 +157,13 @@ def resolve_adaptive(estimate: Callable[[int], tuple[float, _Payload]], shanten:
     """
     delta, payload = estimate(REFINE_SIMS)
     refined_sims = REFINE_SIMS
-    if should_escalate(delta, shanten):
+    if should_escalate(delta, shanten, scheme):
         delta, payload = estimate(ESCALATE_SIMS)
         refined_sims = ESCALATE_SIMS
-    return Verdict(verdict_for_delta(delta), delta, refined_sims, threshold_gap(delta) < MARGINAL_BAND), payload
+    return Verdict(
+        verdict_for_delta(delta, scheme), delta, refined_sims,
+        threshold_gap(delta, scheme) < scaled_threshold(MARGINAL_BAND, scheme),
+    ), payload
 
 
 @dataclass(frozen=True)
@@ -249,6 +261,7 @@ class QuizGrade:
     marginal: bool = False  # final ev_delta still hugs a verdict boundary
     top_gap: SampleMoments = SampleMoments()
     defense_policy: EVRankEntry | None = None
+    scheme: ScoringScheme = DEFAULT_SCHEME
 
     @property
     def ev_loss(self) -> float:
@@ -262,7 +275,7 @@ class QuizGrade:
             return "clear"
         if self.top_gap.crosses_zero:
             return "uncertain"
-        if abs(self.top_gap.mean) < EV_EFFECT_SIZE_MIN:
+        if abs(self.top_gap.mean) < scaled_threshold(EV_EFFECT_SIZE_MIN, self.scheme):
             return "marginal"
         return "clear"
 
@@ -623,12 +636,12 @@ def grade(
             _cached_shanten(tuple(best_post), len(position.own_melds) + len(position.own_kongs)),
             _cached_shanten(tuple(chosen_post), len(position.own_melds) + len(position.own_kongs)),
         )
-        outcome, (best, chosen) = resolve_adaptive(estimate, gate_shanten)
+        outcome, (best, chosen) = resolve_adaptive(estimate, gate_shanten, context.game.scheme)
     ranking_uncertain = (
         top_gap.n > 0
         and (
             top_gap.crosses_zero
-            or abs(top_gap.mean) < EV_EFFECT_SIZE_MIN
+            or abs(top_gap.mean) < scaled_threshold(EV_EFFECT_SIZE_MIN, context.game.scheme)
         )
     )
     return QuizGrade(
@@ -637,6 +650,7 @@ def grade(
         outcome.marginal or ranking_uncertain,
         top_gap,
         defense_policy,
+        context.game.scheme,
     )
 
 

@@ -179,7 +179,7 @@ class CallEvaluation:
         # Gate on whichever refined hand is farther from tenpai, keeping both
         # actions' escalation cheap.
         gate_shanten = max(self._action_shanten(self.best_index), self._action_shanten(choice))
-        outcome, best_ev = quiz.resolve_adaptive(estimate, gate_shanten)
+        outcome, best_ev = quiz.resolve_adaptive(estimate, gate_shanten, self.scheme)
         return CallVerdict(outcome.verdict, outcome.ev_delta, outcome.refined_sims, outcome.marginal, best_ev)
 
 
@@ -238,7 +238,7 @@ class KongEvaluation:
             return best_ev - self._action_ev(choice, sims), best_ev
 
         gate_shanten = max(self._action_shanten(self.best_index), self._action_shanten(choice))
-        outcome, best_ev = quiz.resolve_adaptive(estimate, gate_shanten)
+        outcome, best_ev = quiz.resolve_adaptive(estimate, gate_shanten, self.scheme)
         return KongVerdict(outcome.verdict, outcome.ev_delta, outcome.refined_sims, outcome.marginal, best_ev)
 
 

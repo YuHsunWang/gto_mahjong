@@ -62,8 +62,9 @@ from taimahjong.quiz import (
     explain,
     generate_position,
     grade,
+    scaled_threshold,
 )
-from taimahjong.scoring import WinContext, score_hand
+from taimahjong.scoring import DEFAULT_SCHEME, ScoringScheme, WinContext, score_hand
 from taimahjong.tiles import parse_tiles
 from taimahjong.shanten import shanten
 from taimahjong.ukeire import discard_analysis, ukeire
@@ -248,14 +249,17 @@ def _entry_payload(entry: EVRankEntry) -> dict[str, Any]:
     return payload
 
 
-def _top_gap_payload(entries: tuple[EVRankEntry, ...] | list[EVRankEntry]) -> dict[str, Any] | None:
+def _top_gap_payload(
+    entries: tuple[EVRankEntry, ...] | list[EVRankEntry],
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+) -> dict[str, Any] | None:
     ranked = sorted(entries, key=lambda entry: (-entry.net_ev, entry.discard))
     if len(ranked) < 2:
         return None
     moments = paired_delta_moments(ranked[0], ranked[1])
     # paired_delta_moments always marks its result post-selection, including
     # empty/mismatched trial paths, so unavailable uncertainty stays uncertain.
-    payload = moments.payload(EV_EFFECT_SIZE_MIN)
+    payload = moments.payload(scaled_threshold(EV_EFFECT_SIZE_MIN, scheme))
     payload.update({
         "top_discard": ranked[0].discard,
         "top_is_fold": ranked[0].is_fold,
@@ -299,7 +303,7 @@ def _grade_payload(result: QuizGrade) -> dict[str, Any]:
             if result.defense_policy is None
             else _entry_payload(result.defense_policy)
         ),
-        "top1_vs_top2": _top_gap_payload(result.ranked),
+        "top1_vs_top2": _top_gap_payload(result.ranked, result.scheme),
         "explain": explain(result),
         "mistake_label": _mistake_label_payload(result),
     }
@@ -781,7 +785,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
                 if request.exhaustive
                 else "confidence_bound_screened"
             ),
-            "top1_vs_top2": _top_gap_payload(entries),
+            "top1_vs_top2": _top_gap_payload(entries, analysis.game.scheme),
             **_analysis_payload(analysis),
         }
         if opponents and not request.opponents:
