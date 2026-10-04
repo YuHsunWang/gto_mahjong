@@ -208,8 +208,9 @@ class OpponentView:
     """Public information for the one opponent being modeled.
 
     ``river`` is ordered oldest to newest and accepts plain tile indices
-    (unknown origin) or ``RiverEntry`` values. Every meld is exactly three
-    tile indices; this view intentionally does not distinguish call types.
+    (unknown origin) or ``RiverEntry`` values, normalized to ``RiverEntry``
+    at construction. Every meld is exactly three tile indices; this view
+    intentionally does not distinguish call types.
     """
 
     river: list[int | RiverEntry]
@@ -248,6 +249,8 @@ class OpponentView:
             raise ValueError("dealer_streak requires is_dealer=True")
         if not isinstance(self.hand_count, int) or isinstance(self.hand_count, bool) or self.hand_count < 0:
             raise ValueError("hand_count must be a non-negative integer")
+        if isinstance(self.river, list):
+            self.river = [RiverEntry(entry) if _is_tile(entry) else entry for entry in self.river]
 
     @property
     def lookup_turn(self) -> int:
