@@ -139,6 +139,26 @@ def _ron_settlement(winner, discarder, dealer_streak=0):
     return _settlement("ron", winner, discarder, players, winning, tile, dealer_streak)
 
 
+@pytest.mark.parametrize("outcome", ["ron", "tsumo"])
+@pytest.mark.parametrize("winner,wind,extra_tai", [(0, "1", 2), (1, "2", 1), (2, "3", 1), (3, "4", 1)])
+def test_settlement_scores_seat_and_fixed_east_round_winds(outcome, winner, wind, extra_tai):
+    # Only the honor triplet changes: a guest wind pays no tai, each seat's
+    # wind pays one, and the dealer's East also earns the fixed round wind.
+    players = [Player("attack") for _ in range(4)]
+    guest = "3" if wind == "4" else "4"
+    tile = next(index for index, count in enumerate(parse_tiles("6s")) if count)
+    discarder = (winner + 1) % 4 if outcome == "ron" else None
+    guest_hand = parse_tiles(f"123456m123p11678s{guest * 3}z")
+    wind_hand = parse_tiles(f"123456m123p11678s{wind * 3}z")
+    guest_deltas, guest_value = _settlement(outcome, winner, discarder, players, guest_hand, tile)
+    wind_deltas, wind_value = _settlement(outcome, winner, discarder, players, wind_hand, tile)
+
+    assert wind_value == guest_value + extra_tai
+    payments = 1 if outcome == "ron" else 3
+    assert wind_deltas[winner] == guest_deltas[winner] + payments * extra_tai
+    assert sum(guest_deltas) == sum(wind_deltas) == 0
+
+
 def test_non_dealer_ron_off_dealer_adds_bilateral_premium_even_at_streak_zero():
     # Intentional behavior change (雙向計): the dealer's payment leg carries
     # DEALER_TAI even at streak 0, so the same hand ron'd off the dealer pays

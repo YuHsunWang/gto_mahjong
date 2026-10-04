@@ -37,6 +37,7 @@ from .danger import (
 from .ev import BASELINE_TENPAI_RATE, DECLARED_FACTOR, FLOWERLESS_DEAD_WALL_TILES, opponent_value_estimate
 from .scoring import BASE_UNITS, DEFAULT_SCHEME, DEALER_TAI, STREAK_TAI_PER_WIN, ScoringScheme, WinContext, score_hand
 from .shanten import shanten
+from .tiles import SUIT_OFFSETS
 from .ukeire import DiscardAnalysis
 
 
@@ -545,7 +546,7 @@ def _settlement(
 ) -> tuple[tuple[int, int, int, int], int]:
     """Score a terminal game using M5a, with deliberate bot-table omissions.
 
-    No winds, heavenly/earthly values, or dealer payment doubling are
+    No heavenly/earthly values or dealer payment doubling are
     modeled.  Ron is paid solely by the actual discarder; tsumo uses
     Taiwanese three-opponent equal payments.
 
@@ -565,6 +566,9 @@ def _settlement(
         WinContext(
             winning_tile=winning_tile,
             self_draw=outcome == "tsumo",
+            # Round wind stays East; seats advance East/South/West/North from the dealer.
+            round_wind=SUIT_OFFSETS["z"],
+            seat_wind=SUIT_OFFSETS["z"] + (winner - DEALER_SEAT) % 4,
             dealer=dealer_won,
             dealer_streak=dealer_streak if dealer_won else 0,
             migi_declared=players[winner].declared,
