@@ -63,8 +63,9 @@ from taimahjong.quiz import (
     explain,
     generate_position,
     grade,
+    scaled_threshold,
 )
-from taimahjong.scoring import WinContext, score_hand
+from taimahjong.scoring import DEFAULT_SCHEME, ScoringScheme, WinContext, score_hand
 from taimahjong.tiles import parse_tiles
 from taimahjong.shanten import shanten
 from taimahjong.ukeire import discard_analysis, ukeire
@@ -188,6 +189,7 @@ def _position_payload(position: QuizPosition) -> dict[str, Any]:
         "drawn_tile": position.drawn_tile,
         "hand": list(position.hand),
         "own_river": _river_payload(position.own_river),
+        "migi_declared": position.migi_declared,
         "own_melds": [list(meld_tiles(meld)) for meld in position.own_melds],
         "own_meld_details": [
             _meld_detail_payload(meld) for meld in position.own_melds
@@ -210,6 +212,7 @@ def _position_payload(position: QuizPosition) -> dict[str, Any]:
                 "is_dealer": opponent.is_dealer,
                 "dealer_streak": opponent.dealer_streak,
                 "hand_count": opponent.hand_count,
+                "discard_count": opponent.discard_count,
             }
             for opponent in position.opponents
         ],
@@ -249,14 +252,17 @@ def _entry_payload(entry: EVRankEntry) -> dict[str, Any]:
     return payload
 
 
-def _top_gap_payload(entries: tuple[EVRankEntry, ...] | list[EVRankEntry]) -> dict[str, Any] | None:
+def _top_gap_payload(
+    entries: tuple[EVRankEntry, ...] | list[EVRankEntry],
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+) -> dict[str, Any] | None:
     ranked = sorted(entries, key=lambda entry: (-entry.net_ev, entry.discard))
     if len(ranked) < 2:
         return None
     moments = paired_delta_moments(ranked[0], ranked[1])
     # paired_delta_moments always marks its result post-selection, including
     # empty/mismatched trial paths, so unavailable uncertainty stays uncertain.
-    payload = moments.payload(EV_EFFECT_SIZE_MIN)
+    payload = moments.payload(scaled_threshold(EV_EFFECT_SIZE_MIN, scheme))
     payload.update({
         "top_discard": ranked[0].discard,
         "top_is_fold": ranked[0].is_fold,
@@ -300,7 +306,7 @@ def _grade_payload(result: QuizGrade) -> dict[str, Any]:
             if result.defense_policy is None
             else _entry_payload(result.defense_policy)
         ),
-        "top1_vs_top2": _top_gap_payload(result.ranked),
+        "top1_vs_top2": _top_gap_payload(result.ranked, result.scheme),
         "explain": explain(result),
         "mistake_label": _mistake_label_payload(result),
     }
@@ -483,9 +489,20 @@ def _decision_payload(item: Any) -> dict[str, Any]:
             "discarder": item.discarder,
             "point_delta": item.point_delta,
             "turns": item.turns,
+            "winner_hand": list(item.winner_hand) if item.winner_hand is not None else None,
+            "winning_tile": item.winning_tile,
+            "winner_melds": [list(meld_tiles(meld)) for meld in item.winner_melds],
+            "winner_meld_details": [_meld_detail_payload(meld) for meld in item.winner_melds],
+            "winner_kong_details": [_kong_detail_payload(kong) for kong in item.winner_kongs],
+            "score": None if item.score is None else {
+                "items": [{"name": name, "tai": tai} for name, tai in item.score.items],
+                "total_tai": item.score.total_tai,
+                "value": item.winner_value,
+            },
             "dealer_streak_in": item.dealer_streak_in,
             "next_dealer_streak": item.next_dealer_streak,
             "next_human_seat": item.next_human_seat,
+            "migi_declared": item.migi_declared,
         }
     if isinstance(item, TrainerKongDecision):
         return {
@@ -519,6 +536,11 @@ def _session_payload(session_id: str, session: _TrainerSession) -> dict[str, Any
         "seed": session.seed,
         "human_seat": session.human_seat,
         "dealer_streak": session.dealer_streak,
+        "migi_declared": (
+            session.current.migi_declared
+            if isinstance(session.current, TrainerOutcome)
+            else session.current.position.migi_declared
+        ),
         "scorecard": dict(session.score),
         "decision": _decision_payload(session.current),
         "feedback": session.feedback,
@@ -560,10 +582,19 @@ def trainer_get(session_id: str) -> dict[str, Any]:
         return _session_payload(session_id, session)
 
 
-def _record(session: _TrainerSession, verdict: str, ev_loss: float) -> None:
+def _record(session: _TrainerSession, feedback: dict[str, Any]) -> None:
+    top_pair = feedback.get("top1_vs_top2")
+    chosen = feedback.get("chosen")
+    # Match the UI's ≈ marker: uncertainty applies only to the top pair.
+    tied = (
+        feedback.get("ranking_state", "clear") != "clear"
+        and top_pair is not None
+        and chosen is not None
+        and chosen["discard"] in (top_pair["top_discard"], top_pair["runner_up_discard"])
+    )
     session.score["decisions"] += 1
-    session.score["best"] += int(verdict == "best")
-    session.score["loss"] += ev_loss
+    session.score["best"] += int(feedback["verdict"] == "best" or tied)
+    session.score["loss"] += 0.0 if tied else feedback["ev_loss"]
 
 
 def _validate_option(options, option: int | None) -> int | None:
@@ -634,6 +665,10 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
                 "best_index": evaluation.best_index,
                 "pass_ev": evaluation.pass_ev,
                 "option_evs": list(evaluation.option_evs),
+                "table_sims": evaluation.best_ev_sims,
+                "ranking_state": evaluation.ranking_state,
+                "ranking_uncertain": evaluation.ranking_uncertain,
+                "indistinguishable_indices": list(evaluation.indistinguishable_indices),
             }
             next_item = _engine(_advance_session, session, choice)
         elif isinstance(item, TrainerCallDecision):
@@ -654,13 +689,17 @@ def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
                 "best_index": evaluation.best_index,
                 "pass_ev": evaluation.pass_ev,
                 "option_evs": list(evaluation.option_evs),
+                "table_sims": evaluation.best_ev_sims,
+                "ranking_state": evaluation.ranking_state,
+                "ranking_uncertain": evaluation.ranking_uncertain,
+                "indistinguishable_indices": list(evaluation.indistinguishable_indices),
             }
             next_item = _engine(_advance_session, session, choice)
         else:  # pragma: no cover - the isinstance set above is exhaustive
             raise HTTPException(status_code=500, detail="unknown decision type")
 
         session.current = next_item
-        _record(session, result.verdict, result.ev_loss)
+        _record(session, feedback)
         session.feedback = feedback
         session.step += 1
         return _session_payload(session_id, session)
@@ -674,6 +713,7 @@ class EvOpponentRequest(ApiRequest):
     river: str = ""
     melds: str = ""
     declared_at: int | None = None
+    discard_count: int | None = Field(default=None, ge=0)
     # Whether the modeled opponent is the dealer. Settlement always treats one
     # seat as the dealer, so leaving this unset does not remove the premium —
     # it lands on whichever seat the sampler filled first, and the defensive
@@ -688,6 +728,7 @@ class EvRankRequest(SchemeRequest):
     river: str = ""
     melds: str = ""
     declared_at: int | None = None
+    discard_count: int | None = Field(default=None, ge=0)
     is_dealer: bool = False
     dealer_streak: int = Field(default=0, ge=0, le=32)
     opponents: list[EvOpponentRequest] = Field(default_factory=list, max_length=3)
@@ -731,6 +772,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
                 parse_river(source.river),
                 _parse_melds(source.melds),
                 source.declared_at,
+                discard_count=source.discard_count,
                 is_dealer=source.is_dealer,
                 dealer_streak=source.dealer_streak if source.is_dealer else 0,
             )
@@ -741,6 +783,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
             request.river
             or request.melds
             or request.declared_at is not None
+            or request.discard_count is not None
             or request.is_dealer
         )
         if request.opponents and legacy_present:
@@ -780,6 +823,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
                 opening_live_draw=request.opening_live_draw,
             ),
             calibration=analysis.calibration.calibration,
+            opponent_shanten=analysis.calibration.opponent_shanten,
             scheme=analysis.game.scheme,
             exhaustive=request.exhaustive,
         )
@@ -792,20 +836,20 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
                 if request.exhaustive
                 else "confidence_bound_screened"
             ),
-            "top1_vs_top2": _top_gap_payload(entries),
+            "top1_vs_top2": _top_gap_payload(entries, analysis.game.scheme),
             **_analysis_payload(analysis),
         }
         if opponents and not request.opponents:
             opponent = opponents[0]
             payload["opponent"] = {
-                "tenpai_estimate": tenpai_score(opponent, len(opponent.river)).score,
+                "tenpai_estimate": tenpai_score(opponent).score,
                 "fold_estimate": fold_score(opponent, []),
             }
         elif opponents:
             payload["opponents"] = [
                 {
                     "tenpai_estimate": tenpai_score(
-                        opponent, len(opponent.river),
+                        opponent,
                     ).score,
                     "fold_estimate": fold_score(opponent, []),
                 }

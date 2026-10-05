@@ -109,6 +109,24 @@ def test_trainer_is_deterministic_for_a_fixed_policy():
     assert a_outcome == b_outcome
 
 
+def test_trainer_reports_auto_declaration_when_human_choices_stop():
+    from taimahjong.ukeire import discard_analysis
+
+    def discard_to_tenpai(position):
+        return discard_analysis(
+            position.hand, len(position.own_melds) + len(position.own_kongs),
+            position.public_counts,
+        )[0].discard
+
+    decisions, outcome = _play(2419, discard_to_tenpai)
+
+    assert len(decisions) == 1
+    assert decisions[0].migi_declared is False
+    # The advice rule locks this dealer's hand after the first discard. With
+    # no more human choices, the terminal state must explain the auto-lock.
+    assert outcome.migi_declared is True
+
+
 # Grades a batch of generated trainer positions (~21s).
 @pytest.mark.slow
 def test_trainer_positions_are_gradeable():
@@ -167,6 +185,57 @@ def test_human_is_offered_open_kong_on_opponents_discard():
     assert CallOption("kong", (tile, tile, tile, tile), (tile, tile, tile)) in _human_call_options(
         player, tile, is_next_seat=False,
     )
+
+
+@pytest.mark.parametrize("kind", ["pon", "chi"])
+@pytest.mark.parametrize("refined", [False, True])
+def test_post_call_world_counts_consumed_tiles_and_claimed_discard_once(monkeypatch, kind, refined):
+    import taimahjong.ev as ev
+    import taimahjong.trainer as trainer
+    from taimahjong.danger import RiverEntry
+    from taimahjong.selfplay import Player, _public_counts
+    from taimahjong.tiles import parse_tiles
+
+    hand = parse_tiles("449m1124456p4578s13z")
+    pon_tile = next(tile for tile, count in enumerate(parse_tiles("4p")) if count)
+    offered = pon_tile if kind == "pon" else pon_tile - 1
+    option = (
+        CallOption("pon", (offered,) * 3, (offered,) * 2)
+        if kind == "pon"
+        else CallOption("chi", (offered - 1, offered, offered + 1), (offered - 1, offered + 1))
+    )
+    players = [Player("attack", hand=list(hand))] + [Player("attack") for _ in range(3)]
+    players[1].river.append(RiverEntry(offered, "tedashi"))
+    players[1].discards = 1
+    position = trainer._trainer_position(0, offered, players, 4, 1)
+    decision = TrainerCallDecision(position, offered, 1, (option,))
+    assert position.public_counts[offered] == 1
+
+    # The hypothetical EV world must agree with actually applying the call:
+    # remove the claimed river entry and expose the complete meld exactly once.
+    trainer._apply_call(players[0], players[1], option)
+    expected_public = _public_counts(players)
+    assert expected_public[offered] == (3 if kind == "pon" else 1)
+
+    class WorldChecked(Exception):
+        pass
+
+    def check_world(post, public, *_args, **_kwargs):
+        assert public == expected_public
+        assert post == tuple(players[0].hand)
+        if kind == "pon":
+            assert 4 - post[offered] - public[offered] == 1
+        raise WorldChecked
+
+    monkeypatch.setattr(ev, "_production_worlds", check_world)
+    with pytest.raises(WorldChecked):
+        if refined:
+            discard = next(tile for tile, count in enumerate(players[0].hand) if count)
+            trainer._refine_call_discard(decision, option, discard, 41, 1)
+        else:
+            trainer._option_rank(decision, option, 41, 1)
+    assert position.hand == hand
+    assert position.public_counts[offered] == 1
 
 
 def test_open_kong_call_can_be_evaluated_and_graded(monkeypatch):
@@ -340,11 +409,19 @@ def test_call_grading_prices_pass_and_options_with_the_same_calibration(monkeypa
     analysis = AnalysisContext(calibration=CalibrationContext("test-table", calibration))
     pass_calibrations = []
 
-    def fake_pass_ev(decision, base_seed, sims, scheme, used=None):
+    def fake_pass_estimate(decision, base_seed, sims, scheme, used=None, *_args):
+        from types import SimpleNamespace
         pass_calibrations.append(used)
-        return 0.0
+        return SimpleNamespace(net_ev=0.0, trial_values=(), trial_strata=())
 
-    monkeypatch.setattr(trainer, "_pass_ev", fake_pass_ev)
+    option_calibrations = []
+
+    def fake_option(decision, option, discard, base_seed, sims, scheme, used=None, *_args):
+        option_calibrations.append(used)
+        return -1.0
+
+    monkeypatch.setattr(trainer, "_pass_estimate", fake_pass_estimate)
+    monkeypatch.setattr(trainer, "_refine_option", fake_option)
     monkeypatch.setattr(trainer, "_option_rank", lambda *args, **kwargs: (-1.0, None))
     decision = _first_call()
     assert decision is not None, "expected a call decision in seeds 1-19"
@@ -352,8 +429,9 @@ def test_call_grading_prices_pass_and_options_with_the_same_calibration(monkeypa
     evaluation = evaluate_call(decision, analysis=analysis)
 
     assert evaluation.best_index is None
-    assert len(pass_calibrations) == 2  # the cheap rank and the REFINE_SIMS best
-    assert all(used is calibration for used in pass_calibrations)
+    assert len(pass_calibrations) == 1  # DEV-249 reuses the refined table estimate.
+    assert option_calibrations
+    assert all(used is calibration for used in pass_calibrations + option_calibrations)
 
 
 def test_call_ev_credits_dealer_tai_for_dealer_seat():
@@ -516,9 +594,9 @@ def test_kong_verdict_is_adaptive_and_deterministic(monkeypatch):
     calls = []
     original = trainer.quiz.resolve_adaptive
 
-    def traced(estimate, shanten):
+    def traced(estimate, shanten, scheme):
         calls.append(shanten)
-        return original(estimate, shanten)
+        return original(estimate, shanten, scheme)
 
     monkeypatch.setattr(trainer.quiz, "resolve_adaptive", traced)
     a = evaluate_kong(decision, seed=41)
@@ -570,6 +648,10 @@ def test_human_added_kong_can_be_robbed_and_skip_reaches_discard(monkeypatch):
         trainer, "_settle_ron_winners",
         lambda *args, **kwargs: ((-5, 5, 0, 0), (5,)),
     )
+    # This fixture fabricates a ron on a non-winning hand; fabricate its score
+    # too, since terminal outcomes now expose the settlement's scoring result.
+    from taimahjong.scoring import ScoreResult
+    monkeypatch.setattr(trainer, "_cached_score_hand", lambda *args: ScoreResult((("搶槓", 1),), 1))
     robbed = play_trainer(1)
     item = next(robbed)
     assert isinstance(item, TrainerKongDecision)
@@ -643,3 +725,72 @@ def test_streak_raises_dealer_opponent_value_in_a_trainer_position():
     view0, view2 = first_dealer_view(0), first_dealer_view(2)
     assert view0.dealer_streak == 0 and view2.dealer_streak == 2
     assert opponent_value_estimate(view2) > opponent_value_estimate(view0)
+
+
+def test_call_table_uses_refined_values_and_marks_only_unresolved_actions(monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    import taimahjong.trainer as trainer
+
+    decision = _first_call()
+    decision = replace(decision, options=(decision.options[0],) * 2)
+    estimate = lambda ev: SimpleNamespace(net_ev=ev, trial_values=(ev,) * 4, trial_strata=())
+    monkeypatch.setattr(trainer, "_option_rank", lambda *_args: (10.0, 0))
+    monkeypatch.setattr(trainer, "_pass_estimate", lambda *_args: estimate(1.0))
+    calls = []
+
+    def refine(_decision, _option, _discard, _seed, sims, *_args):
+        calls.append(sims)
+        return estimate(0.95 if len(calls) == 1 else -2.0)
+
+    monkeypatch.setattr(trainer, "_refine_call_discard", refine)
+    evaluation = evaluate_call(decision)
+    assert calls == [trainer.quiz.REFINE_SIMS] * 2
+    assert evaluation.pass_ev == 1.0
+    assert evaluation.option_evs == (0.95, -2.0)
+    assert evaluation.best_index is None  # Cheap max would have chosen calling.
+    assert evaluation.best_ev == evaluation.pass_ev
+    assert evaluation.ranking_state == "marginal"
+    assert evaluation.indistinguishable_indices == (None, 0)
+    # Grading reuses the estimates already displayed.
+    monkeypatch.setattr(evaluation.__class__, "_action_ev", lambda *_args: pytest.fail("duplicate refinement"))
+    assert evaluation.verdict_for(0).verdict == "good"
+
+
+def test_kong_table_refines_all_actions_and_keeps_missing_uncertainty_visible(monkeypatch):
+    import taimahjong.trainer as trainer
+
+    position = next(play_trainer(1)).position
+    decision = TrainerKongDecision(position, (KongOption("concealed", 0, 3),))
+    budgets = []
+
+    def value(ev, sims):
+        budgets.append(sims)
+        return ev
+
+    monkeypatch.setattr(trainer, "_kong_pass_ev", lambda _d, _seed, sims, *_args: value(2.0, sims))
+    monkeypatch.setattr(trainer, "_kong_option_ev", lambda _d, _o, _seed, sims, *_args: value(1.0, sims))
+    evaluation = evaluate_kong(decision)
+    assert budgets == [trainer.quiz.REFINE_SIMS] * 2
+    assert evaluation.pass_ev == evaluation.best_ev == 2.0
+    assert evaluation.option_evs == (1.0,)
+    assert evaluation.best_index is None
+    assert evaluation.ranking_state == "uncertain"
+    assert evaluation.indistinguishable_indices == (None, 0)
+
+
+def test_trainer_position_preserves_discards_called_out_of_river():
+    from taimahjong.danger import RiverEntry
+    from taimahjong.selfplay import Player
+    from taimahjong.tiles import parse_tiles
+    from taimahjong.trainer import _trainer_position
+
+    players = [Player("attack") for _ in range(4)]
+    players[0].hand = list(parse_tiles("123m123p123s11122233z"))
+    players[1].river = [RiverEntry(tile) for tile in (3, 4, 5, 6)]
+    players[1].discards = 6
+    position = _trainer_position(0, 0, players, 40, 7)
+    opponent = next(opponent for opponent in position.opponents if opponent.seat == 1)
+    assert opponent.discard_count == 6
+    assert len(opponent.river) == 4
+    assert opponent.view().lookup_turn == 7

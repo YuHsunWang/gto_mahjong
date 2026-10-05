@@ -209,6 +209,38 @@ def test_trainer_session_flow_discard_scorecard_and_reload(client):
     assert client.post(f"/api/trainer/{session_id}/act", json=stale).status_code == 409
 
 
+def test_trainer_payload_tells_player_when_hand_is_auto_locked(client, monkeypatch):
+    from types import SimpleNamespace
+
+    from taimahjong.ukeire import discard_analysis
+
+    # Grading is unrelated to declaration visibility; run the real game and
+    # advice rule while avoiding the discard EV calculation.
+    monkeypatch.setattr(api, "grade", lambda *_args: SimpleNamespace(verdict="best", ev_loss=0.0))
+    monkeypatch.setattr(api, "_grade_payload", lambda _result: {"verdict": "best", "ev_loss": 0.0})
+    state = client.post("/api/trainer/new", json={"seed": 2419, "human_seat": 0}).json()
+    position = state["decision"]["position"]
+    assert state["migi_declared"] is False
+    assert position["migi_declared"] is False
+    tile = discard_analysis(
+        tuple(position["hand"]), len(position["own_melds"]) + len(position["own_kong_details"]),
+        (0,) * 34,
+    )[0].discard
+
+    response = client.post(f"/api/trainer/{state['session_id']}/act", json={
+        "step": state["step"], "action": "discard", "tile": tile,
+    })
+    assert response.status_code == 200
+    after = response.json()
+    assert after["decision"]["type"] == "outcome"
+    # A player whose hand is auto-locked must be told even if the next payload
+    # is the outcome rather than another decision. Reload must retain it too.
+    assert after["migi_declared"] is True
+    assert after["decision"]["migi_declared"] is True
+    reloaded = client.get(f"/api/trainer/{state['session_id']}").json()
+    assert reloaded["migi_declared"] is True
+
+
 def test_trainer_rejects_mid_session_scheme_switch(client):
     state = client.post("/api/trainer/new", json={"seed": 1, "scheme": "3-1"}).json()
     decision = state["decision"]
@@ -328,7 +360,7 @@ def test_ev_rank_endpoint_accepts_three_opponents(client, monkeypatch):
         "hand": "123m123p123s11122233z",
         "opponents": [
             {"river": "9m"},
-            {"river": "9p", "melds": "111p"},
+            {"river": "9p", "melds": "111p", "discard_count": 6},
             {"river": "1z", "is_dealer": True, "dealer_streak": 2},
         ],
         "turns": 1,
@@ -338,6 +370,8 @@ def test_ev_rank_endpoint_accepts_three_opponents(client, monkeypatch):
     assert response.status_code == 200
     assert len(captured["opponents"]) == 3
     assert captured["opponents"][1].melds
+    assert captured["opponents"][0].discard_count == 1
+    assert captured["opponents"][1].discard_count == 6
     assert captured["opponents"][2].is_dealer
     assert len(response.json()["opponents"]) == 3
 
@@ -572,3 +606,113 @@ def test_ev_rank_passes_real_position_context(client, monkeypatch, live_draw):
     assert captured[0].context.seat_wind == 29
     assert captured[0].wall_remaining == 17
     assert captured[0].opening_live_draw is live_draw
+
+
+@pytest.mark.parametrize("seed, expected", [(1, "ron"), (7, "tsumo"), (5, "draw")])
+def test_trainer_terminal_payload_reveals_winning_hand_and_tai(client, monkeypatch, seed, expected):
+    from taimahjong import trainer
+    from taimahjong.trainer import TrainerDecision, TrainerOutcome, play_trainer
+
+    cached_score = trainer._cached_score_hand
+    settled_scores = []
+
+    def settlement_score(*args):
+        before = cached_score.cache_info()
+        result = cached_score(*args)
+        assert cached_score.cache_info().misses == before.misses, "outcome must reuse settlement scoring"
+        settled_scores.append(result)
+        return result
+
+    monkeypatch.setattr(trainer, "_cached_score_hand", settlement_score)
+    # Use a real completed trainer hand without paying for per-discard grading.
+    generator = play_trainer(seed)
+    outcome = next(generator)
+    while not isinstance(outcome, TrainerOutcome):
+        position = outcome.position
+        tile = position.drawn_tile
+        if tile is None or not position.hand[tile]:
+            tile = next(tile for tile, count in enumerate(position.hand) if count)
+        outcome = generator.send(tile if isinstance(outcome, TrainerDecision) else None)
+    assert outcome.outcome == expected
+    state = client.post("/api/trainer/new", json={"seed": seed}).json()
+    api._SESSIONS[state["session_id"]].current = outcome
+    response = client.get(f"/api/trainer/{state['session_id']}")
+    assert response.status_code == 200
+    payload = response.json()["decision"]
+    if expected == "draw":
+        assert payload["winner_hand"] is None
+        assert payload["winning_tile"] is None
+        assert payload["score"] is None
+        return
+    if expected == "ron":
+        assert payload["human_dealt_in"] is True
+    assert outcome.score is settled_scores[-1]
+    assert len(payload["winner_hand"]) == 34
+    assert payload["winner_hand"][payload["winning_tile"]] > 0
+    assert payload["winner_melds"], "these wins include exposed sets"
+    assert all(len(meld) == 3 for meld in payload["winner_melds"])
+    assert [detail["tiles"] for detail in payload["winner_meld_details"]] == payload["winner_melds"]
+    declared = len(payload["winner_melds"]) + len(payload["winner_kong_details"])
+    assert sum(payload["winner_hand"]) == 17 - 3 * declared
+    score = payload["score"]
+    assert score["items"] == [{"name": name, "tai": tai} for name, tai in outcome.score.items]
+    assert sum(item["tai"] for item in score["items"]) == score["total_tai"]
+    assert score["value"] == 3 + score["total_tai"]
+
+
+@pytest.mark.parametrize("kind", ["call", "kong"])
+def test_trainer_option_payload_reports_refinement_and_uncertainty(client, monkeypatch, kind):
+    from types import SimpleNamespace
+    from taimahjong import trainer
+    from taimahjong.analysis import AnalysisContext
+
+    position = next(trainer.play_trainer(1)).position
+    if kind == "call":
+        decision = trainer.TrainerCallDecision(position, 0, 1, (trainer.CallOption("pon", (0, 0, 0), (0, 0)),))
+        estimate = lambda ev: SimpleNamespace(net_ev=ev, trial_values=(ev,) * 4, trial_strata=())
+        monkeypatch.setattr(trainer, "_option_rank", lambda *_args: (10.0, 0))
+        monkeypatch.setattr(trainer, "_pass_estimate", lambda *_args: estimate(1.0))
+        monkeypatch.setattr(trainer, "_refine_call_discard", lambda *_args: estimate(0.95))
+    else:
+        decision = trainer.TrainerKongDecision(position, (trainer.KongOption("concealed", 0, 3),))
+        monkeypatch.setattr(trainer, "_kong_pass_ev", lambda *_args: 1.0)
+        monkeypatch.setattr(trainer, "_kong_option_ev", lambda *_args: 0.95)
+
+    def game():
+        yield decision
+        yield trainer.TrainerDecision(position)
+
+    generator = game()
+    assert next(generator) is decision
+    session = api._TrainerSession(1, 0, 0, generator, decision, AnalysisContext())
+    api._store_session("refined-options", session)
+    response = client.post("/api/trainer/refined-options/act", json={"step": 0, "action": kind, "option": None})
+    assert response.status_code == 200
+    feedback = response.json()["feedback"]
+    assert feedback["pass_ev"] == 1.0
+    assert feedback["option_evs"] == [0.95]
+    assert feedback["table_sims"] == trainer.quiz.REFINE_SIMS
+    assert feedback["best_index"] is None
+    assert feedback["ranking_state"] == ("marginal" if kind == "call" else "uncertain")
+    assert feedback["ranking_uncertain"] is True
+    assert feedback["indistinguishable_indices"] == [None, 0]
+
+
+@pytest.mark.parametrize("discard_count,status", [(6, 200), (3, 422)])
+def test_ev_rank_legacy_discard_count(client, monkeypatch, discard_count, status):
+    captured = []
+
+    def capture_rank(_hand, opponents, _visible, **_kwargs):
+        captured.extend(opponents)
+        return []
+
+    monkeypatch.setattr(api, "ev_rank", capture_rank)
+    response = client.post("/api/ev/rank", json={
+        "hand": "123m123p123s11122233z",
+        "river": "3456m", "discard_count": discard_count,
+        "turns": 1, "sims": 1,
+    })
+    assert response.status_code == status
+    if status == 200:
+        assert captured[0].discard_count == 6
+        assert captured[0].lookup_turn == 7

@@ -95,6 +95,7 @@ def _opponent_view(args, number: int = 1) -> OpponentView:
         declared,
         is_dealer=dealer,
         dealer_streak=streak if dealer else 0,
+        discard_count=getattr(args, f"{prefix}_discard_count"),
     )
 
 
@@ -108,6 +109,7 @@ def _opponent_views(args, mode: str) -> list[OpponentView]:
             or getattr(args, f"{prefix}_melds")
             or getattr(args, f"{prefix}_declared") is not None
             or getattr(args, f"{prefix}_dealer")
+            or getattr(args, f"{prefix}_discard_count") is not None
         )
         if not present:
             continue
@@ -164,16 +166,19 @@ def main() -> None:
     mode.add_argument("--quiz-batch", type=int, metavar="N", help="print N seeded quiz drills and their best discards")
     parser.add_argument("--visible", help="compact notation for other tiles seen elsewhere")
     parser.add_argument("--opp-river", help="ordered compact notation for the modeled opponent's discards")
+    parser.add_argument("--opp-discard-count", type=int, help="opponent's total discards, including called-away tiles (default: river length)")
     parser.add_argument("--opp-melds", help="semicolon-separated three-tile declared melds, e.g. 123s;777s")
     parser.add_argument("--opp-declared", type=int, help="migi declaration river index (only 0 or 1)")
     parser.add_argument("--opp-dealer", action="store_true", help="the modeled opponent is the dealer (莊)")
     parser.add_argument("--opp-streak", type=int, default=0, help="the modeled opponent's 連莊 count (needs --opp-dealer)")
     parser.add_argument("--opp2-river", help="ordered compact notation for a second opponent's discards")
+    parser.add_argument("--opp2-discard-count", type=int, help="second opponent's total discards, including called-away tiles (default: river length)")
     parser.add_argument("--opp2-melds", help="second opponent's semicolon-separated declared melds")
     parser.add_argument("--opp2-declared", type=int, help="second opponent's migi declaration river index")
     parser.add_argument("--opp2-dealer", action="store_true", help="the second opponent is the dealer (莊)")
     parser.add_argument("--opp2-streak", type=int, default=0, help="the second opponent's 連莊 count")
     parser.add_argument("--opp3-river", help="ordered compact notation for a third opponent's discards")
+    parser.add_argument("--opp3-discard-count", type=int, help="third opponent's total discards, including called-away tiles (default: river length)")
     parser.add_argument("--opp3-melds", help="third opponent's semicolon-separated declared melds")
     parser.add_argument("--opp3-declared", type=int, help="third opponent's migi declaration river index")
     parser.add_argument("--opp3-dealer", action="store_true", help="the third opponent is the dealer (莊)")
@@ -321,6 +326,7 @@ def main() -> None:
                 counts, opponents, ev_visible, args.melds, turns,
                 args.sims or 400, args.seed, template,
                 analysis.calibration.calibration, scheme=config.scheme,
+                opponent_shanten=analysis.calibration.opponent_shanten,
             )
             print(f"Hand: {format_tiles(counts)}")
             print(scheme_line)
@@ -399,7 +405,7 @@ def main() -> None:
             if opponent_tenpai is not None:
                 signals = ", ".join(f"{name}={value}" for name, value in opponent_tenpai.signals.items())
                 run = int(opponent_tenpai.signals.get("trailing_tsumogiri_run", 0))
-                calibrated = calibration.tenpai_probability(len(opponent.melds), len(opponent.river), run) if calibration else None
+                calibrated = calibration.tenpai_probability(len(opponent.melds), opponent.lookup_turn, run) if calibration else None
                 probability = "unavailable" if calibrated is None else f"{calibrated:.3f}"
                 if calibration:
                     print(f"Opponent tenpai: heuristic {opponent_tenpai.score:.2f}; calibrated P(tenpai) {probability} ({signals})")

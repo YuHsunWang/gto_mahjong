@@ -6,7 +6,7 @@ from random import Random
 
 import pytest
 
-from taimahjong.danger import OpponentView, parse_river
+from taimahjong.danger import OpponentView, RiverEntry, parse_river
 import taimahjong.ev as ev
 from taimahjong.ev import (
     DRAW_VALUE,
@@ -91,6 +91,29 @@ def test_ev_rank_is_seed_deterministic_and_net_ev_is_signed_payment_mean():
         entry.net_ev == pytest.approx(entry.attack_ev - entry.risk_ev)
         for entry in first
     )
+
+
+def test_calibrated_ev_rank_accepts_plain_integer_opponent_river():
+    class FixedCalibration:
+        def deal_in_probability(self, _danger_score):
+            return 0.2
+
+        def tenpai_probability(self, _melds, _turn, _run):
+            return None
+
+    river = [8, 17, 27, 30, 22, 23, 24]
+    melds = [(4, 4, 4), (13, 13, 13)]
+    visible = _visible_with_opponent(OpponentView(river, melds))
+
+    def rank(opponent):
+        return ev_rank(
+            POST_DRAW, [opponent], visible,
+            turns=0, sims=2, seed=17,
+            calibration=FixedCalibration(), exhaustive=True,
+        )
+
+    expected = rank(OpponentView([RiverEntry(tile) for tile in river], melds))
+    assert rank(OpponentView(river, melds)) == expected
 
 
 def test_determinized_opponents_track_public_tenpai_state_and_conserve_tiles():
@@ -225,6 +248,7 @@ def test_calibrated_ron_incremental_public_state_matches_fresh_callback():
     players = [Player("attack", list(hand)) for _ in range(4)]
     players[2].declared_at = 0
     players[2].river = parse_river("9m")
+    players[2].discards = 1
     calibration = FixedCalibration()
     cached = ev._calibrated_ron(calibration, 0, value_hands)
     for step in range(12):
@@ -234,6 +258,7 @@ def test_calibrated_ron_incremental_public_state_matches_fresh_callback():
         assert cached(players, discarder, tile) == fresh(players, discarder, tile)
         # Terminal continuations append one public discard after each claim.
         players[discarder].river.append(ev.RiverEntry(tile))
+        players[discarder].discards += 1
     # The callback must reset when handed a new trial's player sequence.
     players = [Player("attack", list(hand)) for _ in range(4)]
     fresh = ev._calibrated_ron(calibration, 0, value_hands)

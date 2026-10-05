@@ -122,3 +122,14 @@ def test_rank_discards_exposes_shared_tenpai_and_expected_danger_product():
     assert ranked
     assert len({entry.tenpai_score for entry in ranked}) == 1
     assert all(entry.expected_danger == entry.danger.score * entry.tenpai_score for entry in ranked)
+
+
+def test_discard_count_defaults_and_validation():
+    opponent = OpponentView([0, 1, 2, 3], [])
+    assert opponent.discard_count == 4
+    assert opponent.lookup_turn == 5
+    called = OpponentView([0, 1, 2, 3], [], discard_count=6)
+    assert tenpai_score(called) == tenpai_score(called, 7)
+    for count in (-1, 3, True, 6.5):
+        with pytest.raises(ValueError, match="discard_count"):
+            OpponentView([0, 1, 2, 3], [], discard_count=count)

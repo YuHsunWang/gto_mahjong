@@ -303,8 +303,9 @@ python3 -m taimahjong --quiz-batch 5 --seed 1
 Plays a whole hand start to finish with you, scoring every move live.
 
 It pauses when it's your turn, grades your discard by EV as you go, and tallies your
-model-best rate and total EV loss until a win / deal-in / draw, then summarizes. In this phase
-you play 門清 (self-draw or ron; no chi/pon yet) while opponents call normally. You can
+model-best rate and total EV loss until a win / deal-in / draw, then summarizes. You can
+self-draw or ron, make legal chi/pon/open-kong calls, and declare concealed or added kongs;
+opponents call normally but do not declare kongs. You can
 pick a seat and streak at the start to feel different positions relative to the dealer —
 a streak raises both the value of the dealer's win and the cost of dealing into them.
 
