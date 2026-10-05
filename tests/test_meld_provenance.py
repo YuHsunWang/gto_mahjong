@@ -83,13 +83,8 @@ def test_bare_triples_keep_public_scoring_danger_and_ev_results():
     # Re-baselined for DEV-120: non-tenpai opponents are now drawn at an
     # observed shanten instead of uniformly from the unseen pool, so the two
     # sampled worlds are different worlds. The subject of this test is the
-    # bare-versus-rich equality below, which is unaffected.
-    assert [(entry.discard, entry.net_ev) for entry in bare_ev] == [
-        (0, 10.0),
-        (2, 0.0),
-        (27, 0.0),
-        (27, 0.0),
-    ]
+    # Re-baselined for DEV-245, DEV-256, DEV-262, DEV-269; bare/rich equality stays the intent.
+    assert [(entry.discard, entry.net_ev) for entry in bare_ev] == [(2, 3.5), (0, 3.0), (27, -3.0), (27, 0.0)]
     assert rich_ev == bare_ev
     assert opponent_value_estimate(OpponentView([], [(31, 31, 31)])) == 4.0
     assert opponent_value_estimate(

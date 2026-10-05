@@ -36,7 +36,7 @@ function bucket(data, mode, schemeId) {
 }
 
 function pairedChoiceIsUnresolved(grade) {
-  if (grade.ranking_state === 'clear' || !grade.top1_vs_top2 || !grade.chosen) return false;
+  if ((grade.ranking_state || 'clear') === 'clear' || !grade.top1_vs_top2 || !grade.chosen) return false;
   const chosen = grade.chosen.discard;
   return chosen === grade.top1_vs_top2.top_discard
     || chosen === grade.top1_vs_top2.runner_up_discard;
@@ -53,14 +53,15 @@ export function record(mode, gradeOrVerdict, evLossOrScheme, explicitSchemeId = 
   };
   const schemeId = fullGrade ? (evLossOrScheme || currentScheme().key) : explicitSchemeId;
   const rankingState = grade.ranking_state || 'clear';
-  const loss = pairedChoiceIsUnresolved(grade) ? 0 : Number(grade.ev_loss) || 0;
+  const tied = pairedChoiceIsUnresolved(grade);
+  const loss = tied ? 0 : Number(grade.ev_loss) || 0;
   const event = {
     type: 'grade',
     t: Date.now(),
     v: grade.verdict,
     r: rankingState,
     l: Math.round(Math.max(0, loss) * 100) / 100,
-    b: grade.verdict === 'best' && rankingState === 'clear' ? 1 : 0,
+    b: grade.verdict === 'best' || tied ? 1 : 0,
   };
   const data = load();
   const events = bucket(data, mode, schemeId);
@@ -110,7 +111,7 @@ export function summary(mode, schemeId = currentScheme().key) {
   const hands = events.filter((event) => event.type === 'hand').length;
   return {
     decisions: grades.length,
-    best: counts.best,
+    best: counts.best + grades.filter((event) => event.r && event.r !== 'clear' && event.b === 1).length,
     loss,
     hands,
     unresolved,

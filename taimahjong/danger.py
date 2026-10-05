@@ -208,8 +208,9 @@ class OpponentView:
     """Public information for the one opponent being modeled.
 
     ``river`` is ordered oldest to newest and accepts plain tile indices
-    (unknown origin) or ``RiverEntry`` values. Every meld is exactly three
-    tile indices; this view intentionally does not distinguish call types.
+    (unknown origin) or ``RiverEntry`` values, normalized to ``RiverEntry``
+    at construction. Every meld is exactly three tile indices; this view
+    intentionally does not distinguish call types.
     """
 
     river: list[int | RiverEntry]
@@ -225,8 +226,19 @@ class OpponentView:
     # face-down tiles) even though their identity is hidden, so this is not a
     # leak of concealed information — purely a UI/teaching convenience.
     hand_count: int = 0
+    # Total discards made, including tiles subsequently called out of the river.
+    # Older callers that only know the river retain a usable public estimate.
+    discard_count: int | None = None
 
     def __post_init__(self) -> None:
+        if self.discard_count is None:
+            self.discard_count = len(self.river)
+        if (
+            not isinstance(self.discard_count, int)
+            or isinstance(self.discard_count, bool)
+            or self.discard_count < len(self.river)
+        ):
+            raise ValueError("discard_count must be an integer at least the river length")
         if self.declared_at is not None and (
             not isinstance(self.declared_at, int) or isinstance(self.declared_at, bool) or self.declared_at not in (0, 1)
         ):
@@ -237,6 +249,13 @@ class OpponentView:
             raise ValueError("dealer_streak requires is_dealer=True")
         if not isinstance(self.hand_count, int) or isinstance(self.hand_count, bool) or self.hand_count < 0:
             raise ValueError("hand_count must be a non-negative integer")
+        if isinstance(self.river, list):
+            self.river = [RiverEntry(entry) if _is_tile(entry) else entry for entry in self.river]
+
+    @property
+    def lookup_turn(self) -> int:
+        """Next discard number, matching self-play's ``player.discards + 1``."""
+        return self.discard_count + 1
 
     def validate(self) -> None:
         """Validate tile indices and public multiplicities in this view."""
@@ -654,9 +673,11 @@ def _trailing_tsumogiri_run(river: list[int | RiverEntry]) -> int:
     return run
 
 
-def tenpai_score(opponent: OpponentView, turn: int) -> TenpaiAssessment:
+def tenpai_score(opponent: OpponentView, turn: int | None = None) -> TenpaiAssessment:
     """Estimate one opponent's tenpai state with UNCALIBRATED heuristics."""
     opponent.validate()
+    if turn is None:
+        turn = opponent.lookup_turn
     if not isinstance(turn, int) or isinstance(turn, bool) or turn < 0:
         raise ValueError("turn must be a non-negative integer")
     if opponent.declared_at is not None:
@@ -742,12 +763,12 @@ def rank_discards(
 ) -> list[DangerDiscardAnalysis]:
     """Attach M4a+ danger and tenpai state to M2-ranked discards.
 
-    ``turn`` defaults to the number of observed opponent discards.  Raw danger
-    and tenpai remain independent; ``expected_danger`` is only their
+    ``turn`` defaults to the next opponent discard number, including called
+    tiles. Raw danger and tenpai remain independent; ``expected_danger`` is only their
     convenience product.
     """
     analyses = discard_analysis(counts17, melds_declared, visible)
-    opponent_tenpai = tenpai_score(opponent, len(opponent.river) if turn is None else turn)
+    opponent_tenpai = tenpai_score(opponent, turn)
     results: list[DangerDiscardAnalysis] = []
     for analysis in analyses:
         post_discard = list(counts17)

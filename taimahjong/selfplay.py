@@ -13,6 +13,7 @@ from math import sqrt
 from pathlib import Path
 from typing import Callable, Mapping
 
+from . import scoring
 from .calibration import Calibration
 from .config import (
     DEFAULT_GAME_CONFIG,
@@ -37,6 +38,7 @@ from .danger import (
 from .ev import BASELINE_TENPAI_RATE, DECLARED_FACTOR, FLOWERLESS_DEAD_WALL_TILES, opponent_value_estimate
 from .scoring import BASE_UNITS, DEFAULT_SCHEME, DEALER_TAI, STREAK_TAI_PER_WIN, ScoringScheme, WinContext, score_hand
 from .shanten import shanten
+from .tiles import SUIT_OFFSETS
 from .ukeire import DiscardAnalysis
 
 
@@ -61,7 +63,8 @@ def generation_rules() -> dict[str, object]:
 ATTACK_TOP_K = 5
 SHANTEN_WIN_WEIGHT = {-1: 1.0, 0: 0.45, 1: 0.18, 2: 0.06}
 SHANTEN_FALLBACK_WEIGHT = 0.02
-EXPECTED_TAI_PROXY = 1.0
+# Neutral bot-policy prior, not a calibrated human-play probability.
+EXPECTED_SELF_DRAW_RATE = 0.5
 DEALER_SEAT = 0
 # Cautious defends harder against the dealer: each fold candidate's danger to
 # the dealer is scaled by 1 + CAUTIOUS_DEALER_BONUS x (1 + streak), so a
@@ -210,6 +213,7 @@ def _view(player: Player, seat: int) -> OpponentView:
         is_dealer=seat == DEALER_SEAT,
         dealer_streak=player.dealer_streak if seat == DEALER_SEAT else 0,
         hand_count=sum(player.hand),
+        discard_count=player.discards,
     )
 
 
@@ -389,8 +393,104 @@ def _default_calibration() -> Calibration | None:
 def _tenpai_factor(opponent: OpponentView) -> float:
     if opponent.declared_at is not None:
         return DECLARED_FACTOR
-    score = tenpai_score(opponent, len(opponent.river)).score
+    score = tenpai_score(opponent).score
     return min(3.0, max(0.25, score / BASELINE_TENPAI_RATE))
+
+
+def _own_win_value(
+    player_index: int,
+    player: Player,
+    post: tuple[int, ...],
+    analysis: DiscardAnalysis,
+    dealer_streak: int,
+    scheme: ScoringScheme,
+    rules: RulesConfig = DEFAULT_RULES,
+) -> float:
+    """Expected winner income, not just one payment leg.
+
+    Tenpai: score every live completion with the shared scorer, weighted by
+    remaining copies. Further away: cheap retained-tile tai estimate (menqing,
+    flush, honor triplets), using the scoring table's constants. This omits
+    speculative future patterns rather than searching completion trees.
+    Both use a neutral 50/50 tsumo/ron prior and uniform ron payer prior.
+    """
+    melds = tuple(meld_tiles(meld) for meld in player.melds)
+    kongs = tuple(kong_tiles(kong) for kong in player.kongs)
+    dealer = player_index == DEALER_SEAT
+    ron_value = tsumo_value = live = 0.0
+    if analysis.shanten_after == 0:
+        for tile, remaining in analysis.ukeire.items():
+            if remaining <= 0:
+                continue
+            completed = list(post)
+            completed[tile] += 1
+            completed = tuple(completed)
+            context = dict(
+                winning_tile=tile, dealer=dealer,
+                dealer_streak=dealer_streak if dealer else 0,
+                round_wind=SUIT_OFFSETS["z"],
+                seat_wind=SUIT_OFFSETS["z"] + (player_index - DEALER_SEAT) % 4,
+                migi_declared=player.declared,
+                rules=rules,
+            )
+            ron_value += remaining * _cached_score_hand(
+                completed, melds, WinContext(**context), kongs,
+            ).value_in(scheme)
+            tsumo_value += remaining * _cached_score_hand(
+                completed, melds, WinContext(**context, self_draw=True), kongs,
+            ).value_in(scheme)
+            live += remaining
+    if live:
+        ron_value /= live
+        tsumo_value /= live
+    else:
+        tiles = {tile for tile, count in enumerate(post) if count}
+        tiles.update(tile for meld in melds for tile in meld)
+        tiles.update(tile for tile, _ in kongs)
+        triplets = {tile for tile, count in enumerate(post) if count >= 3}
+        triplets.update(meld[0] for meld in melds if meld[0] == meld[1] == meld[2])
+        triplets.update(tile for tile, _ in kongs)
+        concealed_hand = not melds and all(concealed for _, concealed in kongs)
+        tai = scoring.MENQING_TAI if concealed_hand else 0
+        suits = {tile // 9 for tile in tiles if tile < 27}
+        if tiles and not suits:
+            tai += scoring.ALL_HONORS_TAI
+        elif len(suits) == 1:
+            tai += scoring.HALF_FLUSH_TAI if any(tile >= 27 for tile in tiles) else scoring.FULL_FLUSH_TAI
+        tai += scoring.DRAGON_TRIPLET_TAI * len(triplets & scoring.DRAGON_TILES)
+        tai += scoring.ROUND_WIND_TAI * (SUIT_OFFSETS["z"] in triplets)
+        tai += scoring.SEAT_WIND_TAI * (SUIT_OFFSETS["z"] + (player_index - DEALER_SEAT) % 4 in triplets)
+        if dealer:
+            tai += DEALER_TAI + STREAK_TAI_PER_WIN * dealer_streak
+        ron_value = scheme.value(tai)
+        tsumo_tai = tai + scoring.SELF_DRAW_TAI
+        if concealed_hand and rules.menqing_self_draw_three:
+            tsumo_tai += scoring.MENQING_SELF_DRAW_TAI - scoring.MENQING_TAI - scoring.SELF_DRAW_TAI
+        tsumo_value = scheme.value(tsumo_tai)
+    tsumo_rate = EXPECTED_SELF_DRAW_RATE
+    income = (1 - tsumo_rate) * ron_value + tsumo_rate * 3 * tsumo_value
+    if not dealer:
+        # The dealer pays its bilateral premium on tsumo, or 1/3 of rons.
+        premium = scheme.tai_units * (DEALER_TAI + STREAK_TAI_PER_WIN * dealer_streak)
+        income += premium * (tsumo_rate + (1 - tsumo_rate) / 3)
+    return income
+
+
+def _attack_value(
+    player_index: int,
+    player: Player,
+    post: tuple[int, ...],
+    analysis: DiscardAnalysis,
+    best_ukeire: int,
+    dealer_streak: int,
+    scheme: ScoringScheme,
+    rules: RulesConfig = DEFAULT_RULES,
+) -> float:
+    relative_ukeire = analysis.total / best_ukeire if best_ukeire else 0.0
+    weight = SHANTEN_WIN_WEIGHT.get(analysis.shanten_after, SHANTEN_FALLBACK_WEIGHT)
+    return weight * relative_ukeire * _own_win_value(
+        player_index, player, post, analysis, dealer_streak, scheme, rules=rules,
+    )
 
 
 def _ev_aware_discard(
@@ -399,6 +499,7 @@ def _ev_aware_discard(
     players: list[Player],
     scheme: ScoringScheme = DEFAULT_SCHEME,
     consume_calibration: bool = True,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> int:
     """Choose from M2's top candidates plus the raw minimum-danger discard."""
     player = players[player_index]
@@ -422,9 +523,10 @@ def _ev_aware_discard(
     for order, analysis in enumerate(candidates):
         post = list(player.hand)
         post[analysis.discard] -= 1
-        relative_ukeire = analysis.total / best_ukeire if best_ukeire else 0.0
-        attack = SHANTEN_WIN_WEIGHT.get(analysis.shanten_after, SHANTEN_FALLBACK_WEIGHT)
-        attack *= relative_ukeire * (scheme.base_units + scheme.tai_units * EXPECTED_TAI_PROXY)
+        attack = _attack_value(
+            player_index, player, tuple(post), analysis, best_ukeire,
+            players[DEALER_SEAT].dealer_streak, scheme, rules=rules,
+        )
         risk = 0.0
         for index, opponent in opponents:
             danger = danger_by_candidate[analysis.discard][index]
@@ -443,6 +545,7 @@ def _choose_discard(
     players: list[Player],
     scheme: ScoringScheme = DEFAULT_SCHEME,
     consume_calibration: bool = True,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> tuple[int, bool]:
     player = players[player_index]
     if player.declared:
@@ -458,6 +561,7 @@ def _choose_discard(
             players,
             scheme,
             consume_calibration=consume_calibration,
+            rules=rules,
         ), False
     fold_active = (
         player.policy == "cautious"
@@ -525,8 +629,8 @@ def _cached_score_hand(
     (hand, tile) pairs recur across trials.  ``score_hand`` is a pure function
     of these four arguments, so the cache changes cost only.
 
-    ``WinContext.rules`` is ``compare=False`` and therefore outside the key;
-    every caller here leaves it unset.
+    ``WinContext.rules`` participates in the key because house options can
+    change the hand value.
     """
     return score_hand(winning_hand, melds, context, kongs=kongs)
 
@@ -542,12 +646,16 @@ def _settlement(
     scheme: ScoringScheme = DEFAULT_SCHEME,
     kong_bloom: bool = False,
     robbed_kong: bool = False,
+    wall_remaining: int | None = None,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> tuple[tuple[int, int, int, int], int]:
     """Score a terminal game using M5a, with deliberate bot-table omissions.
 
-    No winds, heavenly/earthly values, or dealer payment doubling are
+    No heavenly/earthly values or dealer payment doubling are
     modeled.  Ron is paid solely by the actual discarder; tsumo uses
-    Taiwanese three-opponent equal payments.
+    Taiwanese three-opponent equal payments. ``wall_remaining`` counts live
+    tiles after a normal draw (excluding the dead wall); omit it for kong
+    replacements and discards following calls rather than a live draw.
 
     The dealer premium (莊 + 連莊拉莊) is bilateral: a dealer winner bakes it
     into the hand value via ``score_hand`` (every payment leg involves the
@@ -565,11 +673,16 @@ def _settlement(
         WinContext(
             winning_tile=winning_tile,
             self_draw=outcome == "tsumo",
+            # Round wind stays East; seats advance East/South/West/North from the dealer.
+            round_wind=SUIT_OFFSETS["z"],
+            seat_wind=SUIT_OFFSETS["z"] + (winner - DEALER_SEAT) % 4,
             dealer=dealer_won,
             dealer_streak=dealer_streak if dealer_won else 0,
             migi_declared=players[winner].declared,
             kong_bloom=kong_bloom,
             robbed_kong=robbed_kong,
+            last_tile=wall_remaining == 0 and not kong_bloom and not robbed_kong,
+            rules=rules,
         ),
         tuple(players[winner].kongs),
     ).value_in(scheme)
@@ -598,6 +711,8 @@ def _settle_ron_winners(
     scheme: ScoringScheme = DEFAULT_SCHEME,
     *,
     robbed_kong: bool = False,
+    wall_remaining: int | None = None,
+    rules: RulesConfig = DEFAULT_RULES,
 ) -> tuple[tuple[int, int, int, int], tuple[int, ...]]:
     """Settle every resolved ron claim; the discarder pays each winner."""
     if not winners:
@@ -615,6 +730,8 @@ def _settle_ron_winners(
             dealer_streak,
             scheme,
             robbed_kong=robbed_kong,
+            wall_remaining=wall_remaining,
+            rules=rules,
         )
         combined = [total + delta for total, delta in zip(combined, deltas)]
         values.append(value)
@@ -741,16 +858,18 @@ def play_game(
         assert actions < 1000, "game did not terminate"
         player = players[current]
         drawn_tile: int | None = None
+        live_draw = False
         if needs_draw:
             if not wall:
                 points, value = _settlement("draw", None, None, players, None, None, dealer_streak, config.scheme)
                 return GameResult(events, "draw", None, None, actions, point_deltas=points, value_units=value, dealer_streak=dealer_streak, kong_log=tuple(kong_log))
             drawn_tile = wall.pop()
+            live_draw = True
             player.hand[drawn_tile] += 1
             _assert_conservation(players, wall, dead)
             if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                 winning_hand = tuple(player.hand)
-                points, value = _settlement("tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme)
+                points, value = _settlement("tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme, wall_remaining=len(wall), rules=rules)
                 return GameResult(
                     events, "tsumo", current, None, actions, winning_hand, _declared(player), points, value,
                     dealer_streak, _dealer_leg_premium("tsumo", current, None, dealer_streak, config.scheme),
@@ -781,6 +900,7 @@ def play_game(
                             dealer_streak,
                             config.scheme,
                             robbed_kong=True,
+                            rules=rules,
                         )
                         robber = robbers[0]
                         winning = winning_hands[robber]
@@ -791,11 +911,12 @@ def play_game(
                         )
                 kong_log.append((current, kind_tile, concealed))
                 drawn_tile = _declare_kong(player, kind_tile, concealed, dead, wall)
+                live_draw = False
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                     winning_hand = tuple(player.hand)
                     points, value = _settlement(
-                        "tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme, kong_bloom=True,
+                        "tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme, kong_bloom=True, rules=rules,
                     )
                     return GameResult(
                         events, "tsumo", current, None, actions, winning_hand, _declared(player), points, value,
@@ -811,6 +932,7 @@ def play_game(
             players,
             config.scheme,
             consume_calibration=consume_calibration,
+            rules=rules,
         )
         assert player.hand[tile] > 0
         origin = "tsumogiri" if drawn_tile == tile else "tedashi"
@@ -880,6 +1002,7 @@ def play_game(
                 winning_hands[ron_winner] = winning
             points, values = _settle_ron_winners(
                 winners, current, players, winning_hands, tile, dealer_streak, config.scheme,
+                wall_remaining=len(wall) if live_draw else None, rules=rules,
             )
             winning = winning_hands[winner]
             return GameResult(
@@ -908,7 +1031,7 @@ def play_game(
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(players[big_caller].hand), _declared(players[big_caller])) == -1:
                     winning_hand = tuple(players[big_caller].hand)
-                    points, value = _settlement("tsumo", big_caller, None, players, winning_hand, replacement, dealer_streak, config.scheme)
+                    points, value = _settlement("tsumo", big_caller, None, players, winning_hand, replacement, dealer_streak, config.scheme, rules=rules)
                     return GameResult(
                         events, "tsumo", big_caller, None, actions, winning_hand, _declared(players[big_caller]), points, value,
                         dealer_streak, _dealer_leg_premium("tsumo", big_caller, None, dealer_streak, config.scheme),

@@ -33,10 +33,11 @@ def cell_key(melds: int, turn: int, run: int) -> str:
     return f"{melds}|{turn_bucket(turn)}|{run_bucket(run)}"
 
 
-def view_key(opponent: OpponentView, turn: int) -> str:
+def view_key(opponent: OpponentView, turn: int | None = None) -> str:
     """The key for a public view, read the way `tenpai_score` reads it."""
     return cell_key(
-        len(opponent.melds), turn, _trailing_tsumogiri_run(opponent.river),
+        len(opponent.melds), opponent.lookup_turn if turn is None else turn,
+        _trailing_tsumogiri_run(opponent.river),
     )
 
 
@@ -120,7 +121,7 @@ class OpponentShanten:
                 return cell
         return self.tables["*|*|*"]
 
-    def distribution(self, opponent: OpponentView, turn: int) -> tuple[tuple[int, float], ...]:
+    def distribution(self, opponent: OpponentView, turn: int | None = None) -> tuple[tuple[int, float], ...]:
         """(shanten, probability) over shanten >= 1, conditional on not tenpai.
 
         Returns an empty tuple when the backing cell holds no non-tenpai
@@ -138,7 +139,7 @@ class OpponentShanten:
             return ()
         return tuple((shanten, count / total) for shanten, count in entries)
 
-    def sample(self, opponent: OpponentView, turn: int, quantile: float) -> int | None:
+    def sample(self, opponent: OpponentView, turn: int | None, quantile: float) -> int | None:
         """Draw a shanten >= 1 by inverse transform on `quantile` in [0, 1)."""
         distribution = self.distribution(opponent, turn)
         if not distribution:

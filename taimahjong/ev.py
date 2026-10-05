@@ -14,8 +14,9 @@ from functools import lru_cache
 from itertools import permutations
 from math import comb, floor
 from pathlib import Path
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Literal, Sequence
 
+from .analysis import _load_opponent_shanten
 from .calibration import Calibration
 from .config import DEFAULT_RULES, RulesConfig
 from .danger import (
@@ -101,6 +102,16 @@ class WinValueContext:
     context: WinContext
     melds: tuple[MeldLike, ...] = ()
     kongs: tuple[KongLike, ...] = ()
+    wall_remaining: int | None = None
+    opening_live_draw: bool = False
+
+    def __post_init__(self) -> None:
+        if self.wall_remaining is not None and (
+            not isinstance(self.wall_remaining, int)
+            or isinstance(self.wall_remaining, bool)
+            or self.wall_remaining < 0
+        ):
+            raise ValueError("wall_remaining must be a non-negative integer")
 
 
 @dataclass(frozen=True)
@@ -298,7 +309,7 @@ def opponent_hazards(
             for entry in other.river
         )
         folded = fold_score(opponent, others) >= FOLD_HAZARD_CUTOFF
-        tenpai = 1.0 if opponent.declared_at is not None else tenpai_score(opponent, len(opponent.river)).score
+        tenpai = 1.0 if opponent.declared_at is not None else tenpai_score(opponent).score
         multiplier = min(3.0, max(0.25, tenpai / BASELINE_TENPAI_RATE))
         hazards.append(0.0 if folded else BASE_OPPONENT_HAZARD * multiplier)
     return tuple(hazards)
@@ -515,7 +526,7 @@ def deal_in_ev(
     elif opponent.declared_at is not None:
         factor = DECLARED_FACTOR
     else:
-        factor = min(3.0, max(0.25, tenpai_score(opponent, len(opponent.river)).score / BASELINE_TENPAI_RATE))
+        factor = min(3.0, max(0.25, tenpai_score(opponent).score / BASELINE_TENPAI_RATE))
     return probability * factor * opponent_value_estimate(opponent, scheme)
 
 
@@ -628,6 +639,7 @@ class _TrialWorld:
         tuple[tuple[int, ...], int] | None,
         tuple[tuple[int, ...], int] | None,
     ] = (None, None, None, None)
+    wall_remaining: int | None = None
 
 
 class _OrderedWallRandom:
@@ -759,6 +771,7 @@ def _copy_view_player(view: OpponentView | None) -> Player:
     return Player(
         "attack",
         river=list(view.river),
+        discards=view.discard_count,
         melds=list(view.melds),
         declared_at=view.declared_at,
         dealer_streak=view.dealer_streak if view.is_dealer else 0,
@@ -770,7 +783,11 @@ def _production_seats(
     context_template: WinContext | WinValueContext | None,
 ) -> tuple[int, tuple[OpponentView | None, ...], int]:
     context, _, _ = _template(context_template)
-    acting_seat = 0 if context.dealer else 1
+    acting_seat = (
+        context.seat_wind - 27
+        if context.seat_wind is not None
+        else (0 if context.dealer else 1)
+    )
     seats: list[OpponentView | None] = [None] * 4
     remaining_seats = [seat for seat in range(4) if seat != acting_seat]
     dealer_view = next((view for view in views if view.is_dealer), None)
@@ -880,7 +897,8 @@ def _construct_tenpai_hand(
 def _default_opponent_shanten() -> OpponentShanten | None:
     """Load the observed shanten distribution once; absence is not fatal."""
     path = Path(__file__).resolve().parent.parent / "data" / "opponent-shanten.json"
-    return OpponentShanten.from_path(path) if path.exists() else None
+    loaded = _load_opponent_shanten(path)
+    return loaded[1] if loaded is not None else None
 
 
 def _worsen_by_one(
@@ -1010,7 +1028,7 @@ def _sampled_tenpai_rate(
     the fallback when no table or no well-observed cell exists; it ran 3-20x
     above the table early in the hand.  A migi declaration is tenpai by rule.
     """
-    turn = len(opponent.river)
+    turn = opponent.lookup_turn
     if opponent.declared_at is None and calibration is not None:
         rate = calibration.tenpai_probability(
             len(opponent.melds), turn, _trailing_tsumogiri_run(opponent.river),
@@ -1030,6 +1048,7 @@ def _sample_production_world(
     tenpai_quantiles: tuple[float, ...] | None = None,
     shanten_quantiles: tuple[float, ...] | None = None,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> _TrialWorld:
     from .selfplay import Player
 
@@ -1086,7 +1105,11 @@ def _sample_production_world(
             # self-play actually observed at this public state instead, and
             # fall through to the uniform draw only when no observation backs
             # a target or the hand cannot be built at it.
-            model = _default_opponent_shanten()
+            model = (
+                _default_opponent_shanten()
+                if opponent_shanten == "default"
+                else opponent_shanten
+            )
             if model is not None:
                 shanten_draw = (
                     rng.random()
@@ -1094,7 +1117,7 @@ def _sample_production_world(
                     else shanten_quantiles[opponent_ordinal]
                 )
                 target = model.sample(
-                    public_state, len(public_state.river), shanten_draw,
+                    public_state, None, shanten_draw,
                 )
                 if target is not None:
                     sampled = _construct_shanten_hand(
@@ -1131,12 +1154,21 @@ def _sample_production_world(
         for _ in range(count)
     ]
     rng.shuffle(pool)
-    wall = tuple(pool[:min(4 * turns, len(pool))])
+    # The unseen pool includes the retained dead wall; the horizon does not
+    # determine whether a normal draw is the last live tile.
+    live_remaining = (
+        context_template.wall_remaining
+        if isinstance(context_template, WinValueContext)
+        and context_template.wall_remaining is not None
+        else max(0, len(pool) - FLOWERLESS_DEAD_WALL_TILES)
+    )
+    wall = tuple(pool[:min(4 * turns, live_remaining)])
     return _TrialWorld(
         tuple(players),
         wall,
         terminal_seed=rng.randrange(2**64),
         ron_value_hands=ron_value_hands,
+        wall_remaining=live_remaining,
     )
 
 
@@ -1313,6 +1345,7 @@ def _calibrated_ron(
                 for entry in player.river[river_lengths[seat]:]:
                     public_counts[entry.tile] += 1
                     public_views[seat].river.append(entry)
+                public_views[seat].discard_count = player.discards
                 river_lengths[seat] = len(player.river)
         public = tuple(public_counts)
         # Calibration rows were recorded from each discarder against every
@@ -1370,6 +1403,7 @@ def _production_worlds(
     base_seed: int,
     sims: int,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> tuple[list[_TrialWorld], int, int, int, tuple[int | None, ...]]:
     """Build the shared hidden-world layer used by every production estimate.
 
@@ -1435,6 +1469,7 @@ def _production_worlds(
                     for quantiles in opponent_shanten_quantiles
                 ),
                 calibration,
+                opponent_shanten=opponent_shanten,
             ),
             hidden_stratum=stratum,
         )
@@ -1472,6 +1507,7 @@ def evaluate_pass(
     calibration: Calibration | None = None,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     rules: RulesConfig = DEFAULT_RULES,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> EVRankEntry:
     """Value declining a call: the same terminal path with no opening discard.
 
@@ -1494,7 +1530,7 @@ def evaluate_pass(
     calibration_active = calibration is not None
     worlds, acting, next_seat, streak, seat_to_opponent = _production_worlds(
         hand, seen, views, turns, context_template,
-        base_seed, sims, calibration,
+        base_seed, sims, calibration, opponent_shanten=opponent_shanten,
     )
     terminals = [
         resolve_terminal_distribution(
@@ -1514,6 +1550,7 @@ def evaluate_pass(
                 else None
             ),
             visible=seen,
+            wall_remaining=world.wall_remaining,
         )
         for world in worlds
     ]
@@ -1552,6 +1589,7 @@ def ev_rank(
     _target_discard: int | None = None,
     _screen_floor: int | None = None,
     _screen_cap: int | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> list[EVRankEntry]:
     """Rank discards by mean signed actor payment from terminal rollouts.
 
@@ -1644,6 +1682,11 @@ def ev_rank(
                         injected_players,
                         wall,
                         wall_order=orders[(offset + trial) % len(orders)],
+                        wall_remaining=(
+                            context_template.wall_remaining
+                            if isinstance(context_template, WinValueContext)
+                            else None
+                        ),
                     ))
             else:
                 rng = random.Random(world_seed)
@@ -1652,6 +1695,11 @@ def ev_rank(
                         injected_players,
                         wall,
                         terminal_seed=rng.randrange(2**64),
+                        wall_remaining=(
+                            context_template.wall_remaining
+                            if isinstance(context_template, WinValueContext)
+                            else None
+                        ),
                     )
                     for _ in range(sims)
                 ]
@@ -1666,7 +1714,7 @@ def ev_rank(
             )
         return _production_worlds(
             hand, seen, views, turns, context_template,
-            world_seed, sims, calibration,
+            world_seed, sims, calibration, opponent_shanten=opponent_shanten,
         )
 
     (
@@ -1719,6 +1767,11 @@ def ev_rank(
                 calibrated_ron=calibrated_ron,
                 acting_discard_policy=acting_discard_policy,
                 visible=seen,
+                wall_remaining=world.wall_remaining,
+                opening_live_draw=(
+                    isinstance(context_template, WinValueContext)
+                    and context_template.opening_live_draw
+                ),
             ))
         hidden_strata = tuple(
             world.hidden_stratum
@@ -1854,6 +1907,7 @@ def evaluate_discard(
     context_template: WinContext | WinValueContext | None = None,
     calibration: Calibration | None = None,
     scheme: ScoringScheme = DEFAULT_SCHEME,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> EVRankEntry:
     """Return one candidate from the same coherent terminal path as ev_rank."""
     ranked = ev_rank(
@@ -1870,6 +1924,7 @@ def evaluate_discard(
         scheme=scheme,
         exhaustive=True,
         _target_discard=discard,
+        opponent_shanten=opponent_shanten,
     )
     return ranked[0]
 

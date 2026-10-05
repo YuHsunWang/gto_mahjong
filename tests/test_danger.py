@@ -9,6 +9,7 @@ from taimahjong.danger import (
     SHAPE_RIVER_DISCOUNT,
     SUIT_VOID,
     OpponentView,
+    RiverEntry,
     danger_score,
     rank_discards,
 )
@@ -24,7 +25,7 @@ def _counts(tiles):
 
 
 def _public(opponent):
-    return _counts(opponent.river + [tile for meld in opponent.melds for tile in meld])
+    return _counts([entry.tile for entry in opponent.river] + [tile for meld in opponent.melds for tile in meld])
 
 
 def _assessment(tile, opponent=None, visible=None, hand=None):
@@ -61,6 +62,18 @@ def test_danger_cache_tracks_local_blockers_and_public_reads():
     repeated = danger_score(4, opponent, seen, (0,) * 34)
     assert repeated.modifiers == {"declared_safe": 1.0}
     assert repeated.feasible_shapes == []
+
+
+def test_opponent_view_normalizes_river_and_preserves_known_origins():
+    tsumogiri = RiverEntry(1, "tsumogiri")
+    tedashi = RiverEntry(2, "tedashi")
+    river = [0, tsumogiri, tedashi, 3]
+    opponent = OpponentView(river, [])
+
+    assert opponent.river == [RiverEntry(0), tsumogiri, tedashi, RiverEntry(3)]
+    assert opponent.river[1] is tsumogiri
+    assert opponent.river[2] is tedashi
+    assert river == [0, tsumogiri, tedashi, 3]
 
 
 def test_wait_shape_known_answers_for_honor_terminal_and_middle():

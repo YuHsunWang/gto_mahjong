@@ -36,10 +36,13 @@ class EndgamePosition:
 def _full_rank(
     position: QuizPosition,
     analysis: AnalysisContext = DEFAULT_ANALYSIS_CONTEXT,
+    *,
+    sims: int,
 ) -> list[EVRankEntry]:
     """The quiz ranking with the executable defense policy retained.
 
-    Budget constants are read live off ``quiz`` so tests can monkeypatch them.
+    Budget constants are read live off ``quiz`` by the caller so tests can
+    monkeypatch them.
     """
     return ev_rank(
         position.hand,
@@ -47,10 +50,11 @@ def _full_rank(
         position.public_counts,
         len(position.own_melds),
         position.draws_remaining,
-        quiz.EV_SIMS,
+        sims,
         _evaluation_seed(position),
         _score_template(position),
         calibration=analysis.calibration.calibration,
+        opponent_shanten=analysis.calibration.opponent_shanten,
         top_k=EV_TOP_K,
         scheme=analysis.game.scheme,
     )
@@ -93,7 +97,16 @@ def generate_endgame_position(
             position = _position_from(snapshot, game_seed)
             if not _pressure(position):
                 continue
-            ranked = _full_rank(position, analysis)
+            ranked = _full_rank(position, analysis, sims=quiz.EV_SIMS)
+            playable = [entry for entry in ranked if not entry.is_fold]
+            if len(playable) < 2:
+                continue
+            gap = playable[0].net_ev - playable[-1].net_ev
+            if gap < ENDGAME_EV_GAP_MIN:
+                continue
+            # The cheap screen can pick lucky draws (winner's curse); accept
+            # only if the gap survives REFINE_SIMS, as in generate_position.
+            ranked = _full_rank(position, analysis, sims=quiz.REFINE_SIMS)
             playable = [entry for entry in ranked if not entry.is_fold]
             if len(playable) < 2:
                 continue

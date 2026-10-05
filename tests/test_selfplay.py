@@ -1,5 +1,6 @@
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import math
 import pytest
@@ -23,7 +24,7 @@ from taimahjong.calibration import (
     write_merged_table,
 )
 from taimahjong.config import DEFAULT_RULES, resolve_ron_claims
-from taimahjong.danger import OpponentView, danger_score
+from taimahjong.danger import OpponentView, danger_score, tenpai_score
 from taimahjong.selfplay import (
     KONG_DEAD_WALL_BACKFILL_TILES,
     Player,
@@ -139,6 +140,26 @@ def _ron_settlement(winner, discarder, dealer_streak=0):
     return _settlement("ron", winner, discarder, players, winning, tile, dealer_streak)
 
 
+@pytest.mark.parametrize("outcome", ["ron", "tsumo"])
+@pytest.mark.parametrize("winner,wind,extra_tai", [(0, "1", 2), (1, "2", 1), (2, "3", 1), (3, "4", 1)])
+def test_settlement_scores_seat_and_fixed_east_round_winds(outcome, winner, wind, extra_tai):
+    # Only the honor triplet changes: a guest wind pays no tai, each seat's
+    # wind pays one, and the dealer's East also earns the fixed round wind.
+    players = [Player("attack") for _ in range(4)]
+    guest = "3" if wind == "4" else "4"
+    tile = next(index for index, count in enumerate(parse_tiles("6s")) if count)
+    discarder = (winner + 1) % 4 if outcome == "ron" else None
+    guest_hand = parse_tiles(f"123456m123p11678s{guest * 3}z")
+    wind_hand = parse_tiles(f"123456m123p11678s{wind * 3}z")
+    guest_deltas, guest_value = _settlement(outcome, winner, discarder, players, guest_hand, tile)
+    wind_deltas, wind_value = _settlement(outcome, winner, discarder, players, wind_hand, tile)
+
+    assert wind_value == guest_value + extra_tai
+    payments = 1 if outcome == "ron" else 3
+    assert wind_deltas[winner] == guest_deltas[winner] + payments * extra_tai
+    assert sum(guest_deltas) == sum(wind_deltas) == 0
+
+
 def test_non_dealer_ron_off_dealer_adds_bilateral_premium_even_at_streak_zero():
     # Intentional behavior change (雙向計): the dealer's payment leg carries
     # DEALER_TAI even at streak 0, so the same hand ron'd off the dealer pays
@@ -192,6 +213,18 @@ def test_cautious_avoids_feeding_the_dealer(monkeypatch):
     assert without_weight == one_m
 
 
+def test_tenpai_factor_counts_called_away_discards():
+    # Six discards with two called away leave four river tiles, but the
+    # risk factor must use the next-discard (turn 7) key, not river length.
+    opponent = OpponentView([0, 1, 2, 3], [], discard_count=6)
+    assert opponent.lookup_turn == 7
+    assert tenpai_score(opponent, len(opponent.river)).score == pytest.approx(0.072)
+    assert tenpai_score(opponent, 7).score == pytest.approx(0.126)
+    assert selfplay._tenpai_factor(opponent) == pytest.approx(
+        0.126 / selfplay.BASELINE_TENPAI_RATE
+    )
+
+
 def test_ev_aware_is_deterministic_and_chooses_the_safe_known_case(monkeypatch):
     # This 17-tile state is the first seat-zero decision from fixed seed 1.
     # Attack's M2 choice is 2s (19); the calibrated policy instead takes the
@@ -212,6 +245,82 @@ def test_ev_aware_is_deterministic_and_chooses_the_safe_known_case(monkeypatch):
 
     monkeypatch.setattr(selfplay, "_default_calibration", forbidden_load)
     assert _choose_discard(0, 8, players, consume_calibration=False) == (19, False)
+
+
+def test_valuable_hand_pushes_where_equal_speed_cheap_hand_folds(monkeypatch):
+    # Hold speed and opponent risk fixed: the extra seat-wind tai must tip
+    # this marginal decision toward pushing. The old flat proxy folds both.
+    analyses = (
+        selfplay.DiscardAnalysis(0, 0, {23: 4}, 4),
+        selfplay.DiscardAnalysis(3, 1, {23: 4}, 4),
+    )
+    monkeypatch.setattr(selfplay, "danger_score", lambda tile, *args: SimpleNamespace(score=float(tile == 0)))
+    monkeypatch.setattr(selfplay, "_default_calibration", lambda: SimpleNamespace(deal_in_probability=lambda danger: 0.05 * danger))
+    monkeypatch.setattr(selfplay, "opponent_value_estimate", lambda *args: 20.0)
+    monkeypatch.setattr(selfplay, "_tenpai_factor", lambda *args: 1.0)
+    choices = []
+    for wind in ("444", "222"):
+        players = [Player("attack") for _ in range(4)]
+        players[1].hand = list(parse_tiles(f"1123456m123p1178s{wind}z"))
+        choices.append(selfplay._ev_aware_discard(1, analyses, players))
+    assert choices == [3, 0]
+
+
+@pytest.mark.parametrize("shanten_after", [0, 1])
+def test_valuable_hands_have_higher_attack_value(shanten_after):
+    # Equal speed/ukeire and risk must reward the South seat's own wind:
+    # bots should push harder with valuable hands, not defend identically.
+    tile = next(index for index, count in enumerate(parse_tiles("6s")) if count)
+    analysis = selfplay.DiscardAnalysis(0, shanten_after, {tile: 4}, 4)
+    values = []
+    for wind in ("444", "222"):
+        post = list(parse_tiles(f"123456m123p1178s{wind}z"))
+        player = Player("ev_aware", hand=post)
+        values.append(selfplay._attack_value(
+            1, player, tuple(post), analysis, 4, 0, selfplay.DEFAULT_SCHEME,
+        ))
+    assert values[1] > values[0]
+    assert values[1] - values[0] == pytest.approx(
+        2 * selfplay.SHANTEN_WIN_WEIGHT[shanten_after],
+    )
+
+
+@pytest.mark.parametrize("menqing_three", [False, True])
+@pytest.mark.parametrize("seat,streak", [(0, 0), (0, 2), (1, 0), (1, 2)])
+@pytest.mark.parametrize("scheme", [selfplay.DEFAULT_SCHEME, selfplay.ScoringScheme(5, 2)])
+def test_own_win_estimate_matches_weighted_settlement_income(seat, streak, scheme, menqing_three):
+    # Winner income includes all three tsumo payments and the bilateral
+    # dealer leg; score-hand's one-leg value alone would underprice attack.
+    rules = replace(DEFAULT_RULES, menqing_self_draw_three=menqing_three)
+    post = parse_tiles("123456m123p1178s222z")
+    players = [Player("ev_aware") for _ in range(4)]
+    players[seat].hand = list(post)
+    waits = dict(selfplay._cached_ukeire(post, 0, (0,) * 34))
+    analysis = selfplay.DiscardAnalysis(0, 0, waits, sum(waits.values()))
+    expected = 0.0
+    for tile, remaining in waits.items():
+        completed = list(post)
+        completed[tile] += 1
+        ron = sum(
+            _settlement("ron", seat, payer, players, tuple(completed), tile, streak, scheme, rules=rules)[0][seat]
+            for payer in range(4) if payer != seat
+        ) / 3
+        tsumo = _settlement("tsumo", seat, None, players, tuple(completed), tile, streak, scheme, rules=rules)[0][seat]
+        expected += remaining * (0.5 * ron + 0.5 * tsumo)
+    expected /= analysis.total
+    assert selfplay._own_win_value(seat, players[seat], post, analysis, streak, scheme, rules=rules) == pytest.approx(expected)
+
+
+def test_own_win_estimate_ignores_exhausted_waits():
+    post = parse_tiles("123456m123p1178s222z")
+    player = Player("ev_aware", hand=list(post))
+    waits = dict(selfplay._cached_ukeire(post, 0, (0,) * 34))
+    live_tile, dead_tile = sorted(waits)
+    one_wait = selfplay.DiscardAnalysis(0, 0, {live_tile: 2}, 2)
+    dead_wait = selfplay.DiscardAnalysis(0, 0, {live_tile: 2, dead_tile: 0}, 2)
+    assert selfplay._own_win_value(1, player, post, one_wait, 0, selfplay.DEFAULT_SCHEME) == selfplay._own_win_value(
+        1, player, post, dead_wait, 0, selfplay.DEFAULT_SCHEME,
+    )
 
 
 def test_head_to_head_smoke_batch_records_point_deltas():
@@ -566,3 +675,82 @@ def test_metadata_free_legacy_table_still_loads_and_merges(tmp_path):
     assert "13+" in format_report(document)
     merged = write_merged_table(path, empty_counts(LEGACY_DANGER_BUCKETS))
     assert Calibration(merged).deal_in_probability(20) == pytest.approx(10.5 / 101)
+
+
+@pytest.mark.parametrize('outcome', ['tsumo', 'ron'])
+def test_settlement_scores_exhausted_live_wall(outcome):
+    players = [Player('attack') for _ in range(4)]
+    hand = parse_tiles('111m456789p234s55789s')
+    tile = 19  # 2s
+    discarder = 2 if outcome == 'ron' else None
+    ordinary, plain = _settlement(outcome, 1, discarder, players, hand, tile, wall_remaining=1)
+    last, bonus = _settlement(outcome, 1, discarder, players, hand, tile, wall_remaining=0)
+    assert bonus == plain + 1
+    assert last[1] == ordinary[1] + (3 if outcome == 'tsumo' else 1)
+    assert sum(last) == 0
+
+
+def test_settlement_cache_keeps_menqing_rule_options_separate():
+    players = [Player('attack') for _ in range(4)]
+    hand = parse_tiles('111m456789p234s55789s')
+    args = ('tsumo', 1, None, players, hand, 19)
+    _, plain = _settlement(*args)
+    _, enabled = _settlement(*args, rules=replace(DEFAULT_RULES, menqing_self_draw_three=True))
+    _, again = _settlement(*args)
+    assert enabled == plain + 1
+    assert again == plain
+
+
+def test_play_game_passes_last_live_draw_to_settlement(monkeypatch):
+    calls = []
+    original_shanten = selfplay._cached_shanten
+    monkeypatch.setattr(selfplay, 'FLOWERLESS_DEAD_WALL_TILES', 71)
+    monkeypatch.setattr(selfplay, '_assert_conservation', lambda *args: None)
+    def win_on_draw(hand, melds):
+        return -1 if sum(hand) == 17 else original_shanten(hand, melds)
+    monkeypatch.setattr(selfplay, '_cached_shanten', win_on_draw)
+    def capture(*args, **kwargs):
+        calls.append(kwargs)
+        return (0, 0, 0, 0), 0
+    monkeypatch.setattr(selfplay, '_settlement', capture)
+    game = play_game(seed=7)
+    assert game.outcome == 'tsumo'
+    assert calls[0]['wall_remaining'] == 0
+
+
+@pytest.mark.parametrize('outcome, flags', [
+    ('tsumo', {'kong_bloom': True}), ('ron', {'robbed_kong': True}),
+])
+def test_empty_live_wall_does_not_make_kong_win_a_last_tile(outcome, flags):
+    players = [Player('attack') for _ in range(4)]
+    hand = parse_tiles('111m456789p234s55789s')
+    args = (outcome, 1, 2 if outcome == 'ron' else None, players, hand, 19)
+    assert _settlement(*args, **flags, wall_remaining=0) == _settlement(*args, **flags)
+
+
+@pytest.mark.parametrize("shanten_after", [0, 1])
+def test_own_win_value_concealed_self_draw_option_increases_income(shanten_after):
+    post = parse_tiles("123456m123p1178s222z")
+    player = Player("ev_aware", hand=list(post))
+    waits = dict(selfplay._cached_ukeire(post, 0, (0,) * 34))
+    analysis = selfplay.DiscardAnalysis(0, shanten_after, waits, sum(waits.values()))
+    ordinary = selfplay._own_win_value(1, player, post, analysis, 0, selfplay.DEFAULT_SCHEME)
+    enabled = selfplay._own_win_value(
+        1, player, post, analysis, 0, selfplay.DEFAULT_SCHEME,
+        rules=replace(DEFAULT_RULES, menqing_self_draw_three=True),
+    )
+    assert enabled - ordinary == pytest.approx(1.5 * selfplay.DEFAULT_SCHEME.tai_units)
+
+
+def test_play_game_passes_active_rules_to_own_win_value(monkeypatch):
+    rules = replace(DEFAULT_RULES, menqing_self_draw_three=True)
+    original = selfplay._own_win_value
+    seen = []
+
+    def capture(*args, **kwargs):
+        seen.append(kwargs.get("rules", args[6] if len(args) > 6 else DEFAULT_RULES))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(selfplay, "_own_win_value", capture)
+    play_game(7, policies=("ev_aware",) * 4, rules=rules)
+    assert seen and all(configured == rules for configured in seen)

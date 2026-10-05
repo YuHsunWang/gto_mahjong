@@ -36,6 +36,8 @@ DEALER_TAI = 1
 STREAK_TAI_PER_WIN = 2  # 連N拉N: 2 tai per consecutive dealer repeat
 MENQING_TAI = 1
 SELF_DRAW_TAI = 1
+LAST_TILE_TAI = 1
+MENQING_SELF_DRAW_TAI = 3
 SINGLE_WAIT_TAI = 1
 PINGHU_TAI = 2
 ALL_CALLED_TAI = 2
@@ -121,8 +123,9 @@ class WinContext:
     # sets the flag when eligible; scoring just honours it.
     kong_bloom: bool = False
     robbed_kong: bool = False  # 搶槓: ron on an opponent's added-kong tile
+    last_tile: bool = False  # last live draw, or the discard immediately after it
     extra: tuple[tuple[str, int], ...] = ()  # reserved: flowers, ...
-    rules: RulesConfig | None = field(default=None, repr=False, compare=False)
+    rules: RulesConfig | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not 0 <= self.winning_tile < 34:
@@ -285,11 +288,19 @@ def _score_decomposition(
         items.append(("dealer (莊家)", DEALER_TAI))
     if context.dealer_streak:
         items.append((f"dealer streak x{context.dealer_streak} (連莊拉莊)", STREAK_TAI_PER_WIN * context.dealer_streak))
-    if not meld_sets and not open_kong_count:
+    concealed_hand = not meld_sets and not open_kong_count
+    if concealed_hand:
         # Concealed kongs keep the hand 門清; only open calls break it.
         items.append(("concealed hand (門清)", MENQING_TAI))
     if context.self_draw:
         items.append(("self-draw (自摸)", SELF_DRAW_TAI))
+    if (concealed_hand and context.self_draw and context.rules is not None
+            and context.rules.menqing_self_draw_three):
+        items.append(("concealed self-draw bonus (門清自摸)",
+                      MENQING_SELF_DRAW_TAI - MENQING_TAI - SELF_DRAW_TAI))
+    if context.last_tile:
+        name = "last live tile (海底撈月)" if context.self_draw else "last discard (河底撈魚)"
+        items.append((name, LAST_TILE_TAI))
     if context.kong_bloom:
         items.append(("kong bloom (槓上開花)", KONG_BLOOM_TAI))
     if context.robbed_kong:

@@ -18,15 +18,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from random import Random
+from typing import Literal
 
 from . import quiz  # budget/adaptive constants read live (quiz.*) so tests can monkeypatch them
 from .analysis import AnalysisContext, DEFAULT_ANALYSIS_CONTEXT
 from .calibration import Calibration
 from .config import DEFAULT_RULES, RulesConfig, resolve_ron_claims
 from .danger import DeclaredKong, DeclaredMeld, KongLike, MeldLike, kong_tiles, meld_tiles
-from .ev import FLOWERLESS_DEAD_WALL_TILES, WinValueContext, declaration_ev, evaluate_discard, evaluate_pass, ev_rank
+from .ev import EVRankEntry, FLOWERLESS_DEAD_WALL_TILES, WinValueContext, paired_delta_moments, declaration_ev, evaluate_discard, evaluate_pass, ev_rank
+from .moments import SampleMoments
+from .opponent_shanten import OpponentShanten
 from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
-from .scoring import DEFAULT_SCHEME, ScoringScheme
+from .scoring import DEFAULT_SCHEME, ScoreResult, ScoringScheme, WinContext
 from .selfplay import (
     DEALER_SEAT,
     Player,
@@ -34,6 +37,7 @@ from .selfplay import (
     _apply_big_kong,
     _best_call,
     _cached_shanten,
+    _cached_score_hand,
     _choose_discard,
     _declare_kong,
     _declared,
@@ -110,16 +114,13 @@ class CallVerdict(quiz.Verdict):
 class CallEvaluation:
     """EV of each call option plus passing, analysis-tool style.
 
-    ``pass_ev`` and ``option_evs`` are the cheap EV_SIMS estimates that rank the
-    actions and populate the table. ``best_ev`` is the *best* action re-estimated
-    at REFINE_SIMS; :meth:`verdict_for` re-estimates the chosen action at the
-    same budget and CRN base seed, escalating both to ESCALATE_SIMS when the
-    ev_delta lands on a verdict boundary — the same adaptive scheme as the
-    discard grader. ``decision``/``base_seed`` are carried so the chosen action
-    can be refined on demand."""
+    ``pass_ev`` and ``option_evs`` use REFINE_SIMS, as does the best action.
+    The cheap stage selects only each option's post-call discard. Grading can
+    escalate the best/chosen pair near a verdict boundary.
+    """
 
     pass_ev: float
-    option_evs: tuple[float, ...]  # cheap EV_SIMS estimates, aligned with options
+    option_evs: tuple[float, ...]  # REFINE_SIMS estimates, aligned with options
     best_index: int | None  # index into options, or None if passing ranks best
     best_ev: float  # best action re-estimated at ``best_ev_sims``
     best_ev_sims: int  # budget that produced ``best_ev``
@@ -132,17 +133,33 @@ class CallEvaluation:
     scheme: ScoringScheme = DEFAULT_SCHEME
     analysis: AnalysisContext = field(default=DEFAULT_ANALYSIS_CONTEXT, compare=False, repr=False)
 
+    action_estimates: tuple[EVRankEntry | None, ...] = field(default=(), compare=False, repr=False)
+
+    @property
+    def indistinguishable_indices(self) -> tuple[int | None, ...]:
+        return _option_uncertainty(self)[0]
+
+    @property
+    def ranking_state(self) -> str:
+        return _option_uncertainty(self)[1]
+
+    @property
+    def ranking_uncertain(self) -> bool:
+        return self.ranking_state != "clear"
+
     def _action_ev(self, choice: int | None, sims: int) -> float:
         """Re-estimate one action (pass or an option) at ``sims`` under the seed."""
         if choice is None:
             return _refine_pass(
                 self.decision, self.base_seed, sims, self.scheme,
                 self.analysis.calibration.calibration,
+                self.analysis.calibration.opponent_shanten,
             )
         return _refine_option(
             self.decision, self.decision.options[choice],
             self.option_best_discards[choice], self.base_seed, sims, self.scheme,
             self.analysis.calibration.calibration,
+            self.analysis.calibration.opponent_shanten,
         )
 
     def _action_shanten(self, choice: int | None) -> int:
@@ -174,12 +191,15 @@ class CallEvaluation:
         def estimate(sims: int) -> tuple[float, float]:
             # Reuse only the budget that actually produced self.best_ev.
             best_ev = self.best_ev if sims == self.best_ev_sims else self._action_ev(self.best_index, sims)
-            return best_ev - self._action_ev(choice, sims), best_ev
+            return best_ev - (
+                (self.pass_ev if choice is None else self.option_evs[choice])
+                if sims == self.best_ev_sims else self._action_ev(choice, sims)
+            ), best_ev
 
         # Gate on whichever refined hand is farther from tenpai, keeping both
         # actions' escalation cheap.
         gate_shanten = max(self._action_shanten(self.best_index), self._action_shanten(choice))
-        outcome, best_ev = quiz.resolve_adaptive(estimate, gate_shanten)
+        outcome, best_ev = quiz.resolve_adaptive(estimate, gate_shanten, self.scheme)
         return CallVerdict(outcome.verdict, outcome.ev_delta, outcome.refined_sims, outcome.marginal, best_ev)
 
 
@@ -194,7 +214,7 @@ class KongVerdict(quiz.Verdict):
 class KongEvaluation:
     """EV of declaring each offered kong versus not konging.
 
-    ``pass_ev`` and ``option_evs`` are cheap shared-CRN estimates. The best
+    ``pass_ev`` and ``option_evs`` are refined shared-CRN estimates. The best
     action and the chosen action are refined through :func:`quiz.resolve_adaptive`
     exactly like call grading. A declared kong is valued as the one-step
     expectation over its dead-wall replacement tile, followed by the best
@@ -213,15 +233,31 @@ class KongEvaluation:
     scheme: ScoringScheme = DEFAULT_SCHEME
     analysis: AnalysisContext = field(default=DEFAULT_ANALYSIS_CONTEXT, compare=False, repr=False)
 
+    action_estimates: tuple[EVRankEntry | None, ...] = field(default=(), compare=False, repr=False)
+
+    @property
+    def indistinguishable_indices(self) -> tuple[int | None, ...]:
+        return _option_uncertainty(self)[0]
+
+    @property
+    def ranking_state(self) -> str:
+        return _option_uncertainty(self)[1]
+
+    @property
+    def ranking_uncertain(self) -> bool:
+        return self.ranking_state != "clear"
+
     def _action_ev(self, choice: int | None, sims: int) -> float:
         if choice is None:
             return _kong_pass_ev(
                 self.decision, self.base_seed, sims, self.scheme,
                 self.analysis.calibration.calibration,
+                self.analysis.calibration.opponent_shanten,
             )
         return _kong_option_ev(
             self.decision, self.decision.options[choice], self.base_seed, sims,
             self.scheme, self.analysis.calibration.calibration,
+            self.analysis.calibration.opponent_shanten,
         )
 
     def _action_shanten(self, choice: int | None) -> int:
@@ -235,10 +271,13 @@ class KongEvaluation:
 
         def estimate(sims: int) -> tuple[float, float]:
             best_ev = self.best_ev if sims == self.best_ev_sims else self._action_ev(self.best_index, sims)
-            return best_ev - self._action_ev(choice, sims), best_ev
+            return best_ev - (
+                (self.pass_ev if choice is None else self.option_evs[choice])
+                if sims == self.best_ev_sims else self._action_ev(choice, sims)
+            ), best_ev
 
         gate_shanten = max(self._action_shanten(self.best_index), self._action_shanten(choice))
-        outcome, best_ev = quiz.resolve_adaptive(estimate, gate_shanten)
+        outcome, best_ev = quiz.resolve_adaptive(estimate, gate_shanten, self.scheme)
         return KongVerdict(outcome.verdict, outcome.ev_delta, outcome.refined_sims, outcome.marginal, best_ev)
 
 
@@ -260,6 +299,13 @@ class TrainerOutcome:
     next_dealer_streak: int = 0
     next_human_seat: int = 0
     robbed_kong: bool = False
+    migi_declared: bool = False
+    winner_hand: tuple[int, ...] | None = None  # concealed counts, including winning tile
+    winning_tile: int | None = None
+    winner_melds: tuple[MeldLike, ...] = ()
+    winner_kongs: tuple[KongLike, ...] = ()
+    score: ScoreResult | None = None
+    winner_value: int | None = None
 
     @property
     def headline(self) -> str:
@@ -294,7 +340,36 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
              human_seat: int, deltas: tuple[int, int, int, int], turns: int,
              dealer_streak: int = 0, robbed_kong: bool = False,
              rules: RulesConfig = DEFAULT_RULES,
-             winners: tuple[int, ...] = ()) -> TrainerOutcome:
+             winners: tuple[int, ...] = (),
+             migi_declared: bool = False,
+             winning_player: Player | None = None,
+             winning_hand: tuple[int, ...] | None = None,
+             winning_tile: int | None = None,
+             scheme: ScoringScheme = DEFAULT_SCHEME,
+             kong_bloom: bool = False,
+             wall_remaining: int | None = None) -> TrainerOutcome:
+    score = None
+    if winning_player is not None:
+        assert winner is not None and winning_hand is not None and winning_tile is not None
+        # Retrieve the same cached ScoreResult used by settlement, with its
+        # exact context; the displayed value excludes bilateral payment premiums.
+        score = _cached_score_hand(
+            winning_hand, tuple(winning_player.melds),
+            WinContext(
+                winning_tile=winning_tile,
+                self_draw=outcome == "tsumo",
+                round_wind=27,
+                seat_wind=27 + (winner - DEALER_SEAT) % 4,
+                dealer=winner == DEALER_SEAT,
+                dealer_streak=dealer_streak if winner == DEALER_SEAT else 0,
+                migi_declared=winning_player.declared,
+                kong_bloom=kong_bloom,
+                robbed_kong=robbed_kong,
+                last_tile=wall_remaining == 0 and not kong_bloom and not robbed_kong,
+                rules=rules,
+            ),
+            tuple(winning_player.kongs),
+        )
     # 流局連莊: the dealer (seat 0) keeps dealership and the streak grows on a
     # draw or a dealer win; otherwise dealership passes to the dealer's 下家
     # (seat 1, next in turn order). The new dealer is renumbered seat 0, so
@@ -317,6 +392,13 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
         next_dealer_streak=dealer_streak + 1 if dealer_keeps else 0,
         next_human_seat=human_seat if dealer_keeps else (human_seat - 1) % 4,
         robbed_kong=robbed_kong,
+        migi_declared=migi_declared,
+        winner_hand=winning_hand,
+        winning_tile=winning_tile,
+        winner_melds=tuple(winning_player.melds) if winning_player is not None else (),
+        winner_kongs=tuple(winning_player.kongs) if winning_player is not None else (),
+        score=score,
+        winner_value=score.value_in(scheme) if score is not None else None,
     )
 
 
@@ -345,6 +427,7 @@ def _trainer_position(
     wall_remaining: int,
     seed: int,
     migi_eligible: bool = False,
+    opening_live_draw: bool = False,
 ) -> QuizPosition:
     """Build a trainer quiz view, preserving own kong visibility and type."""
     player = players[player_index]
@@ -360,6 +443,7 @@ def _trainer_position(
         shanten=_cached_shanten(tuple(player.hand), _declared(player)),
         migi_declared=player.declared,
         migi_eligible=migi_eligible,
+        opening_live_draw=opening_live_draw,
     )
 
 
@@ -435,19 +519,21 @@ def _post_call(
     assert option.kind in ("pon", "chi")
     post = list(position.hand)
     public = list(position.public_counts)
+    # The claimed discard is already public in the discarder's river.
     for consumed in option.consumed:
         post[consumed] -= 1
         public[consumed] += 1
     return tuple(post), position.own_melds + (option.meld,), tuple(public)
 
 
-def _pass_ev(
+def _pass_estimate(
     decision: TrainerCallDecision,
     base_seed: int,
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
-) -> float:
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
+) -> EVRankEntry:
     """Signed net payment of declining the call and keeping the concealed hand.
 
     Passing owes no discard this turn, so it cannot be priced as a discard EV.
@@ -464,10 +550,21 @@ def _pass_ev(
         position.draws_remaining,
         sims,
         base_seed,
-        _score_template(position),
-        calibration=calibration,
+        replace(_score_template(position), opening_live_draw=False),
+        calibration=calibration, opponent_shanten=opponent_shanten,
         scheme=scheme,
-    ).net_ev
+    )
+
+
+def _pass_ev(
+    decision: TrainerCallDecision,
+    base_seed: int,
+    sims: int,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
+) -> float:
+    return _pass_estimate(decision, base_seed, sims, scheme, calibration, opponent_shanten).net_ev
 
 
 def _refine_pass(
@@ -476,9 +573,10 @@ def _refine_pass(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> float:
     """Re-estimate the pass action at ``sims`` under the shared CRN seed."""
-    return _pass_ev(decision, base_seed, sims, scheme, calibration)
+    return _pass_ev(decision, base_seed, sims, scheme, calibration, opponent_shanten)
 
 
 def _option_rank(
@@ -488,18 +586,20 @@ def _option_rank(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> tuple[float, int | None]:
     """Cheap best post-call discard EV of declaring ``option``, and its tile."""
     if option.kind == "kong":
         return _open_kong_call_ev(
-            decision, option, base_seed, sims, scheme, calibration,
+            decision, option, base_seed, sims, scheme, calibration, opponent_shanten,
         ), None
     position = decision.position
     post, melds, public = _post_call(position, option)
     ranked = ev_rank(
         post, [opponent.view() for opponent in position.opponents], public,
         len(melds) + len(position.own_kongs), position.draws_remaining, sims, base_seed,
-        _score_template(position, melds), calibration=calibration, top_k=EV_TOP_K,
+        replace(_score_template(position, melds), opening_live_draw=False), calibration=calibration, top_k=EV_TOP_K,
+        opponent_shanten=opponent_shanten,
         scheme=scheme,
     )
     playable = [entry for entry in ranked if not entry.is_fold]
@@ -517,26 +617,41 @@ def _refine_option(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> float:
     """Re-estimate declaring ``option`` at ``sims`` by re-scoring just its
     cheap-best post-call discard — the single deciding candidate, exactly as the
     discard grader refines one tile rather than re-ranking the whole set."""
     if option.kind == "kong":
         return _open_kong_call_ev(
-            decision, option, base_seed, sims, scheme, calibration,
+            decision, option, base_seed, sims, scheme, calibration, opponent_shanten,
         )
     if discard is None:
         return 0.0
+    return _refine_call_discard(
+        decision, option, discard, base_seed, sims, scheme, calibration, opponent_shanten,
+    ).net_ev
+
+
+def _refine_call_discard(
+    decision: TrainerCallDecision,
+    option: CallOption,
+    discard: int,
+    base_seed: int,
+    sims: int,
+    scheme: ScoringScheme = DEFAULT_SCHEME,
+    calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
+) -> EVRankEntry:
     position = decision.position
     post, melds, public = _post_call(position, option)
-    entry = evaluate_discard(
+    return evaluate_discard(
         post, discard, [opponent.view() for opponent in position.opponents],
         public, len(melds) + len(position.own_kongs), position.draws_remaining,
-        sims, base_seed, _score_template(position, melds),
-        calibration=calibration,
+        sims, base_seed, replace(_score_template(position, melds), opening_live_draw=False),
+        calibration=calibration, opponent_shanten=opponent_shanten,
         scheme=scheme,
     )
-    return entry.net_ev
 
 
 def _best_discard_ev(
@@ -549,12 +664,18 @@ def _best_discard_ev(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
+    opening_live_draw: bool | None = None,
 ) -> float:
     """Best non-fold discard EV for one post-draw hand under the shared seed."""
+    template = _score_template(position, melds, kongs)
+    if opening_live_draw is not None:
+        template = replace(template, opening_live_draw=opening_live_draw)
     ranked = ev_rank(
         hand, [opponent.view() for opponent in position.opponents], public_counts,
         len(melds) + len(kongs), position.draws_remaining, sims, base_seed,
-        _score_template(position, melds, kongs), calibration=calibration, top_k=EV_TOP_K,
+        template, calibration=calibration, top_k=EV_TOP_K,
+        opponent_shanten=opponent_shanten,
         scheme=scheme,
     )
     playable = [entry.net_ev for entry in ranked if not entry.is_fold]
@@ -568,6 +689,7 @@ def _open_kong_call_ev(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> float:
     """Replacement-draw expectation for one legal 大明槓 call."""
     position = decision.position
@@ -591,7 +713,7 @@ def _open_kong_call_ev(
         post[replacement] += 1
         expected += copies * _best_discard_ev(
             position, tuple(post), position.own_melds, kongs, public_counts,
-            base_seed, sims, scheme, calibration,
+            base_seed, sims, scheme, calibration, opponent_shanten, opening_live_draw=False,
         )
     return expected / total
 
@@ -634,12 +756,13 @@ def _kong_pass_ev(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> float:
     """EV of declining a kong and taking the ordinary current-hand discard."""
     position = decision.position
     return _best_discard_ev(
         position, position.hand, position.own_melds, position.own_kongs,
-        position.public_counts, base_seed, sims, scheme, calibration,
+        position.public_counts, base_seed, sims, scheme, calibration, opponent_shanten,
     )
 
 
@@ -650,6 +773,7 @@ def _kong_option_ev(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> float:
     """One-step replacement-draw expectation for declaring ``option``.
 
@@ -671,7 +795,7 @@ def _kong_option_ev(
         replacement[tile] += 1
         expected += copies * _best_discard_ev(
             position, tuple(replacement), melds, kongs, public, base_seed, sims,
-            scheme, calibration,
+            scheme, calibration, opponent_shanten, opening_live_draw=False,
         )
     return expected / total
 
@@ -684,13 +808,9 @@ def evaluate_call(
 ) -> CallEvaluation:
     """EV of each call option and of passing, under shared random numbers.
 
-    Two-stage, mirroring the discard grader: every action is ranked cheaply at
-    EV_SIMS (CRN base seed) to pick the best and each option's best post-call
-    discard, then only the two actions a verdict depends on — the best and the
-    chosen (via :meth:`CallEvaluation.verdict_for`) — are re-estimated at
-    REFINE_SIMS under the same seed by re-scoring that one deciding discard. This
-    cuts verdict noise ~sqrt(EV_SIMS/REFINE_SIMS) without paying the high budget
-    on every option.
+    EV_SIMS selects each option's post-call discard. All actions are then
+    estimated at REFINE_SIMS under the same seed for display and selection.
+    Grading reuses those estimates before optionally escalating the pair.
 
     Approximations (documented, Phase 2a): pon/chi opens the hand (loses 門清
     and the migi option) and lets the player act now; its value is the best
@@ -704,28 +824,34 @@ def evaluate_call(
     context = quiz._analysis_context(scheme, analysis)
     scheme = context.game.scheme
     calibration = context.calibration.calibration
+    opponent_shanten = context.calibration.opponent_shanten
     base_seed = _evaluation_seed(decision.position) if seed is None else seed
 
-    pass_ev = _pass_ev(decision, base_seed, quiz.EV_SIMS, scheme, calibration)
     ranked = [
-        _option_rank(decision, option, base_seed, quiz.EV_SIMS, scheme, calibration)
+        _option_rank(decision, option, base_seed, quiz.EV_SIMS, scheme, calibration, opponent_shanten)
         for option in decision.options
     ]
-    option_evs = tuple(ev for ev, _ in ranked)
     option_best_discards = tuple(tile for _, tile in ranked)
-
+    pass_estimate = _pass_estimate(decision, base_seed, quiz.REFINE_SIMS, scheme, calibration, opponent_shanten)
+    estimates = tuple(
+        _refine_call_discard(decision, option, discard, base_seed, quiz.REFINE_SIMS, scheme, calibration, opponent_shanten)
+        if option.kind != "kong" and discard is not None else None
+        for option, discard in zip(decision.options, option_best_discards)
+    )
+    pass_ev = pass_estimate.net_ev
+    option_evs = tuple(
+        estimate.net_ev if estimate is not None else _refine_option(
+            decision, option, discard, base_seed, quiz.REFINE_SIMS, scheme, calibration, opponent_shanten,
+        )
+        for option, discard, estimate in zip(decision.options, option_best_discards, estimates)
+    )
     best_option_ev = max(option_evs, default=float("-inf"))
     best_index = option_evs.index(best_option_ev) if best_option_ev > pass_ev else None
-    if best_index is None:
-        best_ev = _refine_pass(decision, base_seed, quiz.REFINE_SIMS, scheme, calibration)
-    else:
-        best_ev = _refine_option(
-            decision, decision.options[best_index], option_best_discards[best_index],
-            base_seed, quiz.REFINE_SIMS, scheme, calibration,
-        )
+    best_ev = pass_ev if best_index is None else option_evs[best_index]
     return CallEvaluation(
         pass_ev, option_evs, best_index, best_ev, quiz.REFINE_SIMS,
         decision, base_seed, option_best_discards, scheme, context,
+        (pass_estimate, *estimates),
     )
 
 
@@ -748,26 +874,44 @@ def evaluate_kong(
     context = quiz._analysis_context(scheme, analysis)
     scheme = context.game.scheme
     calibration = context.calibration.calibration
+    opponent_shanten = context.calibration.opponent_shanten
     base_seed = _evaluation_seed(decision.position) if seed is None else seed
-    pass_ev = _kong_pass_ev(decision, base_seed, quiz.EV_SIMS, scheme, calibration)
+    pass_ev = _kong_pass_ev(decision, base_seed, quiz.REFINE_SIMS, scheme, calibration, opponent_shanten)
     option_evs = tuple(
-        _kong_option_ev(decision, option, base_seed, quiz.EV_SIMS, scheme, calibration)
+        _kong_option_ev(decision, option, base_seed, quiz.REFINE_SIMS, scheme, calibration, opponent_shanten)
         for option in decision.options
     )
     best_option_ev = max(option_evs, default=float("-inf"))
     best_index = option_evs.index(best_option_ev) if best_option_ev > pass_ev else None
-    best_ev = (
-        _kong_pass_ev(decision, base_seed, quiz.REFINE_SIMS, scheme, calibration)
-        if best_index is None
-        else _kong_option_ev(
-            decision, decision.options[best_index], base_seed, quiz.REFINE_SIMS,
-            scheme, calibration,
-        )
-    )
+    best_ev = pass_ev if best_index is None else option_evs[best_index]
+
     return KongEvaluation(
         pass_ev, option_evs, best_index, best_ev, quiz.REFINE_SIMS,
         decision, base_seed, scheme, context,
     )
+
+
+def _option_uncertainty(evaluation: CallEvaluation | KongEvaluation) -> tuple[tuple[int | None, ...], str]:
+    """Reuse discard paired-gap uncertainty; missing trial paths stay uncertain."""
+    indices = (None, *range(len(evaluation.option_evs)))
+    estimates = evaluation.action_estimates
+    best_slot = indices.index(evaluation.best_index)
+    unresolved = []
+    state = "clear"
+    for slot, index in enumerate(indices):
+        if slot == best_slot:
+            continue
+        gap = (
+            paired_delta_moments(estimates[best_slot], estimates[slot])
+            if estimates and estimates[best_slot] is not None and estimates[slot] is not None
+            else SampleMoments(post_selection=True)
+        )
+        wording = gap.payload(quiz.scaled_threshold(quiz.EV_EFFECT_SIZE_MIN, evaluation.scheme))["wording"]
+        if wording != "clear":
+            unresolved.append(index)
+            if wording == "uncertain" or state == "clear":
+                state = wording
+    return ((evaluation.best_index, *unresolved) if unresolved else (), state)
 
 
 def play_trainer(
@@ -831,6 +975,7 @@ def play_trainer(
         player = players[current]
         drawn_tile = pending_drawn_tile
         pending_drawn_tile = None
+        live_draw = False
 
         if needs_draw:
             if not wall:
@@ -840,24 +985,33 @@ def play_trainer(
                 yield _outcome(
                     "draw", None, None, human_seat, deltas, actions,
                     dealer_streak, rules=rules,
+                    migi_declared=players[human_seat].declared,
                 )
                 return
             drawn_tile = wall.pop()
+            live_draw = True
             player.hand[drawn_tile] += 1
             if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                 winning_hand = tuple(player.hand)
                 deltas, _ = _settlement(
                     "tsumo", current, None, players, winning_hand, drawn_tile,
                     dealer_streak, scheme,
+                    wall_remaining=len(wall), rules=rules,
                 )
                 yield _outcome(
                     "tsumo", current, None, human_seat, deltas, actions,
-                    dealer_streak, rules=rules,
+                    dealer_streak, rules=rules, winning_player=player,
+                    winning_hand=winning_hand, winning_tile=drawn_tile, scheme=scheme,
+                    wall_remaining=len(wall),
+                    migi_declared=players[human_seat].declared,
                 )
                 return
 
         if drawn_tile is not None and current == human_seat and not player.declared and dead:
-            position = _trainer_position(current, drawn_tile, players, len(wall), seed)
+            position = _trainer_position(
+                current, drawn_tile, players, len(wall), seed,
+                opening_live_draw=live_draw,
+            )
             options = _human_kong_options(player)
             if options:
                 choice = yield TrainerKongDecision(position, options)
@@ -884,24 +1038,32 @@ def play_trainer(
                                 dealer_streak,
                                 scheme,
                                 robbed_kong=True,
+                                rules=rules,
                             )
                             robber = robbers[0]
                             yield _outcome(
                                 "ron", robber, current, human_seat, deltas, actions,
                                 dealer_streak, robbed_kong=True, rules=rules,
-                                winners=robbers,
+                                winners=robbers, winning_player=players[robber],
+                                winning_hand=winning_hands[robber],
+                                winning_tile=option.tile, scheme=scheme,
+                                migi_declared=players[human_seat].declared,
                             )
                             return
                     drawn_tile = _declare_kong(player, option.tile, option.kind == "concealed", dead, wall)
+                    live_draw = False
                     if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                         winning_hand = tuple(player.hand)
                         deltas, _ = _settlement(
                             "tsumo", current, None, players, winning_hand, drawn_tile,
-                            dealer_streak, scheme, kong_bloom=True,
+                            dealer_streak, scheme, kong_bloom=True, rules=rules,
                         )
                         yield _outcome(
                             "tsumo", current, None, human_seat, deltas, actions,
-                            dealer_streak, rules=rules,
+                            dealer_streak, rules=rules, winning_player=player,
+                            winning_hand=winning_hand, winning_tile=drawn_tile,
+                            scheme=scheme, kong_bloom=True,
+                            migi_declared=players[human_seat].declared,
                         )
                         return
                 else:
@@ -912,6 +1074,7 @@ def play_trainer(
             position = _trainer_position(
                 current, drawn_tile, players, len(wall), seed,
                 migi_eligible=migi_eligible,
+                opening_live_draw=live_draw,
             )
             chosen = yield TrainerDecision(position)
             if not (isinstance(chosen, int) and not isinstance(chosen, bool) and 0 <= chosen < 34):
@@ -920,7 +1083,7 @@ def play_trainer(
                 raise ValueError("sent discard is not in the hand")
             tile = chosen
         else:
-            tile, _ = _choose_discard(current, drawn_tile, players, scheme)
+            tile, _ = _choose_discard(current, drawn_tile, players, scheme, rules=rules)
 
         origin = "tsumogiri" if drawn_tile == tile else "tedashi"
         player.hand[tile] -= 1
@@ -943,11 +1106,16 @@ def play_trainer(
             deltas, _ = _settle_ron_winners(
                 winners, current, players, winning_hands, tile,
                 dealer_streak, scheme,
+                wall_remaining=len(wall) if live_draw else None, rules=rules,
             )
             winner = winners[0]
             yield _outcome(
                 "ron", winner, current, human_seat, deltas, actions,
                 dealer_streak, rules=rules, winners=winners,
+                migi_declared=players[human_seat].declared,
+                winning_player=players[winner], winning_hand=winning_hands[winner],
+                winning_tile=tile, scheme=scheme,
+                wall_remaining=len(wall) if live_draw else None,
             )
             return
 
@@ -1037,10 +1205,13 @@ def play_trainer(
                     deltas, _ = _settlement(
                         "tsumo", human_seat, None, players, winning_hand,
                         replacement, dealer_streak, scheme,
+                        rules=rules,
                     )
                     yield _outcome(
                         "tsumo", human_seat, None, human_seat, deltas, actions,
-                        dealer_streak, rules=rules,
+                        dealer_streak, rules=rules, winning_player=players[human_seat],
+                        winning_hand=winning_hand, winning_tile=replacement, scheme=scheme,
+                        migi_declared=players[human_seat].declared,
                     )
                     return
                 pending_drawn_tile = replacement
