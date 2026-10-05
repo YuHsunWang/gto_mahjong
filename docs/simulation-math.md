@@ -41,7 +41,7 @@ Five items change the numbers, not just the wording:
 
 | Item | Previous | This revision |
 |---|---|---|
-| Ron events | Draw `u ~ U(0,1)`, compare against the calibration table `C(g)` | Decided by the drawn hidden hand `H`; the remaining randomness is taken in conditional expectation rather than tossed for. **Implemented in `68f8fd3`.** |
+| Ron events | Draw `u ~ U(0,1)`, compare against the calibration table `C(g)` | Decided by the drawn hidden hand `H`; the remaining randomness is taken in conditional expectation rather than tossed for. **Partly implemented:** `68f8fd3` replaced the coin with the conditional expectation. Deciding opponents' rons by `H` waits on §2, so production still prices them with the marginal `C(g)` at every discard; only the actor's own ron is decided by its hand (§4.1). |
 | Hidden-hand distribution | Uniform draw from the unseen pool | Uniform draw as the proposal, reweighted by discard likelihood (self-normalized). **Not implemented.** |
 | Common random numbers | Candidates share one `(H,U)` stream | Alignment is by wall *position*, not by count of random calls. See §5 — the misalignment this row used to describe no longer has a cause. |
 | Confidence intervals | `x̄ ± 1.96·SE` on the pilot-selected winner | Pilot samples excluded from the final estimate; t or empirical-Bernstein intervals; effective sample size reported. **Not implemented — `moments.ci95` still uses a fixed normal quantile.** |
@@ -340,6 +340,15 @@ understated.
 
 **Implemented in `68f8fd3`**, which removed the ron coin in favour of the
 conditional expectation.
+
+Until §2 puts the river information into `π(H)`, the sampled `H` carries no
+river reads, so production keeps `C(g)` as each opponent's marginal ron rate
+at every discard and uses `H` only to value the ron. Between `01774c0`
+(2026-09-07) and the 2026-10-04 fix, that marginal fired only when the sampled
+hand already waited on the discard: the conditioning error above, applied on
+top of `H`'s own chance of waiting. It priced deal-in about 80-100× too low.
+The actor's own ron is decided by its real hand, behind any seat with
+nearest-claim priority.
 
 ### 4.2 Zero sum and between-hand continuation value
 

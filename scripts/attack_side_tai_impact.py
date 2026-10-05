@@ -62,14 +62,18 @@ def tai_aware_policy(scheme):
 
 def _exploitability_column(sims: int, seed: int) -> dict:
     rows = []
+    calibration = quiz.DEFAULT_ANALYSIS_CONTEXT.calibration.calibration
     for index, case in enumerate(representative_reference_cases()):
-        base = exploitability(case, sims=sims, seed=seed, holdout=True)
+        base = exploitability(
+            case, sims=sims, seed=seed, holdout=True, calibration=calibration,
+        )
         tai = exploitability(
             case,
             sims=sims,
             seed=seed,
             holdout=True,
             measured_policy=tai_aware_policy(case.state.scheme),
+            calibration=calibration,
         )
         rows.append({
             "case": index,

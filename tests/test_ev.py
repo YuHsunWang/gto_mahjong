@@ -145,7 +145,107 @@ def test_determinized_opponents_track_public_tenpai_state_and_conserve_tiles():
     assert sampled_rate(declared, samples=32) == 1.0
 
 
-def test_calibrated_ron_conditions_on_fixed_hands_and_keeps_actor_physical():
+def test_world_sampler_takes_tenpai_rates_from_the_calibration_table():
+    # The self-play table measures the opponent tenpai rate directly; the
+    # uncalibrated heuristic ran 3-20x above it early in the hand. With a
+    # table the sampler follows it, and uses the heuristic only for a cell the
+    # table does not cover (None).
+    class TableCalibration:
+        def __init__(self, rate):
+            self.rate = rate
+
+        def deal_in_probability(self, _danger_score):
+            return 0.0
+
+        def tenpai_probability(self, _melds, _turn, _run):
+            return self.rate
+
+    hand = parse_tiles("123m456m789m11223p345s")
+    river_tiles = (6, 7, 8, 14, 15, 16, 18, 19, 20, 21, 22, 23, 24, 25)
+    opponent = OpponentView(list(river_tiles), [])
+    visible = _visible_with_opponent(opponent)
+    acting_seat, seats, _ = ev._production_seats((opponent,), None)
+    opponent_seat = next(
+        seat for seat, view in enumerate(seats)
+        if seat != acting_seat and view is opponent
+    )
+
+    def tenpai_share(calibration, samples=100):
+        hits = 0
+        for index in range(samples):
+            world = ev._sample_production_world(
+                hand, visible, (opponent,), 8, None, 200_000 + index,
+                calibration=calibration,
+            )
+            hits += ev._production_shanten(
+                tuple(world.players[opponent_seat].hand), 0,
+            ) == 0
+        return hits / samples
+
+    assert tenpai_share(TableCalibration(0.0)) == 0.0
+    assert tenpai_share(TableCalibration(1.0)) == 1.0
+    heuristic = ev.tenpai_score(opponent, len(river_tiles)).score
+    assert abs(tenpai_share(TableCalibration(None)) - heuristic) < 0.1
+
+
+def test_calibrated_rank_is_exact_with_and_without_settlement_cache(monkeypatch):
+    import taimahjong.rollout as rollout
+
+    class FixedCalibration:
+        def deal_in_probability(self, _danger_score):
+            return 0.2
+
+        def tenpai_probability(self, _melds, _turn, _run):
+            return None
+
+    def rank():
+        return ev_rank(
+            POST_DRAW, (), (0,) * 34, turns=2, sims=4, seed=19,
+            exhaustive=True, calibration=FixedCalibration(),
+        )
+
+    cache = rollout._cached_ron_settlement
+    cache.cache_clear()
+    cached = rank()
+    assert cache.cache_info().hits > 0
+    monkeypatch.setattr(rollout, "_cached_ron_settlement", cache.__wrapped__)
+    # Pin whole entries, including each trial's payment and ranking order.
+    # A rounding tolerance would hide a key that loses settlement state.
+    assert cached == rank()
+
+
+def test_calibrated_ron_incremental_public_state_matches_fresh_callback():
+    class FixedCalibration:
+        def deal_in_probability(self, score):
+            return min(0.3, score / 100)
+
+    hand = parse_tiles("123m123p123s1112223z")
+    value_hand = (parse_tiles("123m123p123s11122233z"), _tile("3z"))
+    value_hands = (None, value_hand, value_hand, value_hand)
+    players = [Player("attack", list(hand)) for _ in range(4)]
+    players[2].declared_at = 0
+    players[2].river = parse_river("9m")
+    calibration = FixedCalibration()
+    cached = ev._calibrated_ron(calibration, 0, value_hands)
+    for step in range(12):
+        discarder = step % 4
+        tile = step % 9
+        fresh = ev._calibrated_ron(calibration, 0, value_hands)
+        assert cached(players, discarder, tile) == fresh(players, discarder, tile)
+        # Terminal continuations append one public discard after each claim.
+        players[discarder].river.append(ev.RiverEntry(tile))
+    # The callback must reset when handed a new trial's player sequence.
+    players = [Player("attack", list(hand)) for _ in range(4)]
+    fresh = ev._calibrated_ron(calibration, 0, value_hands)
+    assert cached(players, 0, 4) == fresh(players, 0, 4)
+
+
+def test_calibrated_ron_prices_every_opponent_and_keeps_actor_physical():
+    # The deal-in table counts every discard against every opponent, so its
+    # rate already integrates over hidden hands. It must price an opponent
+    # whatever that opponent's sampled hand is: firing it only when the sampled
+    # hand waits on the tile multiplied the rate by that chance a second time
+    # (deal-in risk 80-100x too low). The sampled hand only values the ron.
     class FixedCalibration:
         def deal_in_probability(self, _danger_score):
             return 0.2
@@ -153,11 +253,14 @@ def test_calibrated_ron_conditions_on_fixed_hands_and_keeps_actor_physical():
     waiting = parse_tiles("123m123p123s1112223z")
     winning = parse_tiles("123456m123p123s333z9m")
     winning_tile = _tile("9m")
+    value_hand = (parse_tiles("123m123p123s11122233z"), _tile("3z"))
     players = [Player("attack", list(waiting)) for _ in range(4)]
     players[2].hand = list(winning)
-    claims = ev._calibrated_ron(FixedCalibration(), 0)
+    claims = ev._calibrated_ron(
+        FixedCalibration(), 0, (None, value_hand, value_hand, value_hand),
+    )
 
-    probabilities, _ = _calibrated_claim_probabilities(
+    probabilities, estimates = _calibrated_claim_probabilities(
         players, 1, winning_tile, 0, claims,
     )
     distribution = _winner_distribution(probabilities, 1, ev.DEFAULT_RULES)
@@ -165,10 +268,18 @@ def test_calibrated_ron_conditions_on_fixed_hands_and_keeps_actor_physical():
     completed_actor = list(players[0].hand)
     completed_actor[winning_tile] += 1
     assert ev._production_shanten(tuple(completed_actor), 0) == 0
-    assert probabilities == {2: 0.2, 0: 0.0}
-    assert distribution == pytest.approx({(2,): 0.2, (): 0.8})
-    assert sum(distribution.values()) == pytest.approx(1.0)
+    assert probabilities == {2: 0.2, 3: 0.2, 0: 0.0}
+    assert distribution == pytest.approx({(2,): 0.2, (3,): 0.2, (): 0.6})
+    # Seat 2 waits on the discard and is valued on it; seat 3 cannot win on
+    # it and is valued by the world's value hand instead.
+    completed_seat2 = list(winning)
+    completed_seat2[winning_tile] += 1
+    assert estimates[2].winning_hand == tuple(completed_seat2)
+    assert estimates[2].scoring_tile == winning_tile
+    assert (estimates[3].winning_hand, estimates[3].scoring_tile) == value_hand
 
+    # The actor's own claim stays physical but keeps the nearest-claim order:
+    # seats 2 and 3 sit between discarder 1 and the actor, so they claim first.
     players[0].hand = list(winning)
     players[2].hand = list(waiting)
     probabilities, _ = _calibrated_claim_probabilities(
@@ -176,10 +287,53 @@ def test_calibrated_ron_conditions_on_fixed_hands_and_keeps_actor_physical():
     )
     distribution = _winner_distribution(probabilities, 1, ev.DEFAULT_RULES)
 
-    assert probabilities == {0: 1.0}
-    assert distribution == {(0,): 1.0}
+    assert probabilities == pytest.approx({2: 0.2, 3: 0.2, 0: 0.6})
+    assert distribution == pytest.approx({(2,): 0.2, (3,): 0.2, (0,): 0.6})
     assert distribution.get((), 0.0) == 0.0
-    assert sum(distribution.values()) == pytest.approx(1.0)
+
+    # Discarder 3 sits right before the actor: nobody is nearer.
+    probabilities, _ = _calibrated_claim_probabilities(
+        players, 3, winning_tile, 0, claims,
+    )
+    assert probabilities == {0: 1.0}
+    assert _winner_distribution(probabilities, 3, ev.DEFAULT_RULES) == {(0,): 1.0}
+
+
+def test_calibrated_opening_deal_in_matches_the_table_rate():
+    # No draws left: the only RON chance is the opening discard, so the
+    # deal-in mass must be the three opponents' table rates for every
+    # candidate. The old gate fired a rate only when that opponent's sampled
+    # hand waited on that very tile, so almost all of the mass went missing.
+    class FixedCalibration:
+        def deal_in_probability(self, _danger_score):
+            return 0.2
+
+        def tenpai_probability(self, _melds, _turn, _run):
+            return None
+
+    opponents = [
+        OpponentView(parse_river(river), [])
+        for river in ("9m9p1z", "4z5s6s", "7s8s9s")
+    ]
+    visible = [0] * 34
+    for opponent in opponents:
+        for count_index, count in enumerate(_visible_with_opponent(opponent)):
+            visible[count_index] += count
+    entries = ev_rank(
+        POST_DRAW,
+        opponents,
+        tuple(visible),
+        turns=0,
+        sims=40,
+        seed=17,
+        calibration=FixedCalibration(),
+        exhaustive=True,
+    )
+
+    assert entries
+    for entry in entries:
+        assert entry.p_draw == pytest.approx(1.0 - 3 * 0.2)
+        assert entry.risk_ev > 0.0
 
 
 def test_immediate_actor_deal_in_is_a_negative_terminal_payment():
@@ -236,6 +390,9 @@ def test_determinized_rollout_has_physical_risk_without_calibration():
         def deal_in_probability(self, _danger_score):
             return 1.0
 
+        def tenpai_probability(self, _melds, _turn, _run):
+            return None
+
     # The opponent has to be credibly close to tenpai for a physical deal-in to
     # be possible at all. Two melds and a seven-tile river put tenpai_score near
     # 0.556; a silent opponent on turn one sits near 0.018, because that is the
@@ -266,11 +423,16 @@ def test_determinized_rollout_has_physical_risk_without_calibration():
     )
 
     assert any(entry.risk_ev > 0.0 for entry in uncalibrated)
-    assert [entry.risk_ev for entry in calibrated] == [
-        entry.risk_ev for entry in uncalibrated
-    ]
+    # A table that says every discard deals in prices the opening discard as a
+    # certain ron, whatever the sampled hands wait on.
     assert all(
-        entry.net_ev == entry.attack_ev - entry.risk_ev
+        entry.p_draw == 0.0 and entry.attack_ev == 0.0 and entry.risk_ev > 0.0
+        for entry in calibrated
+    )
+    # net_ev is the mean payment, not attack minus risk, so the identity holds
+    # only up to float summation order (Python 3.11 sum() differs from 3.12+).
+    assert all(
+        entry.net_ev == pytest.approx(entry.attack_ev - entry.risk_ev)
         for entry in calibrated
     )
 

@@ -8,11 +8,15 @@ structural properties that leakage would break.
 from __future__ import annotations
 
 from fractions import Fraction
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import taimahjong.best_response as best_response
+from taimahjong.analysis import CalibrationProvider
+from taimahjong.calibration import Calibration, empty_counts
+from taimahjong.danger import tenpai_score
 from taimahjong.best_response import (
     exploitability,
     observation_for,
@@ -40,6 +44,53 @@ SPANNING_CASES = tuple(
     next(case for case in CASES if len(case.state.wall) == depth)
     for depth in (1, 2, 3, 4)
 )
+
+
+def test_sample_worlds_uses_productions_calibrated_belief(monkeypatch):
+    """A best response against heuristic worlds measures a different belief."""
+    case = SPANNING_CASES[0]
+    observation = observation_for(case)
+    calibration = Calibration({
+        "counts": empty_counts(),
+        "tables": {
+            "tenpai": {"0|1-6|0": {"observations": 100, "probability": 0.0}},
+            "deal_in": {},
+        },
+    })
+    assert calibration.tenpai_probability(0, 1, 0) != tenpai_score(
+        observation.views[0], 1,
+    ).score
+    captured = []
+
+    def fake_sampler(*args, **kwargs):
+        captured.append(kwargs.get("calibration"))
+        return SimpleNamespace(players=case.state.players, wall=case.state.wall)
+
+    monkeypatch.setattr(best_response, "_sample_production_world", fake_sampler)
+    worlds = sample_worlds(observation, 2, 11, calibration=calibration)
+    assert len(worlds) == 2
+    assert captured == [calibration, calibration]
+
+
+@pytest.mark.parametrize("explicit_none", [False, True])
+def test_sample_worlds_defaults_to_productions_committed_table(monkeypatch, explicit_none):
+    """Omitting calibration must load the same table as the CLI/API context."""
+    case = SPANNING_CASES[0]
+    captured = []
+
+    def fake_sampler(*args, **kwargs):
+        captured.append(kwargs.get("calibration"))
+        return SimpleNamespace(players=case.state.players, wall=case.state.wall)
+
+    monkeypatch.setattr(best_response, "_sample_production_world", fake_sampler)
+    kwargs = {"calibration": None} if explicit_none else {}
+    sample_worlds(observation_for(case), 1, 11, **kwargs)
+    expected = CalibrationProvider(
+        Path(best_response.__file__).resolve().parents[1] / "data" / "calibration.json"
+    ).load().calibration
+    assert expected is not None, "the production table must be available in this repo"
+    assert captured[0] is not None
+    assert captured[0].document == expected.document
 
 
 def test_exploitability_is_never_negative():
@@ -83,8 +134,11 @@ def test_holdout_fits_first_half_and_scores_that_action_on_second(monkeypatch):
     fit_winner, measured = tiles
     sampled = []
 
-    def fake_sample_worlds(_observation, sims, _seed):
+    passed_calibration = Calibration({"counts": empty_counts()})
+
+    def fake_sample_worlds(_observation, sims, _seed, *, calibration):
         assert sims == 4
+        assert calibration is passed_calibration
         return ("fit-0", "fit-1", "score-0", "score-1")
 
     def fake_analyse(world, _observation, discard, _rules):
@@ -104,6 +158,7 @@ def test_holdout_fits_first_half_and_scores_that_action_on_second(monkeypatch):
         mode="opening",
         measured_opening=measured,
         holdout=True,
+        calibration=passed_calibration,
     )
 
     assert {world for world, _ in sampled if world.startswith("fit")} == {
@@ -148,7 +203,10 @@ def test_clairvoyant_bounds_the_information_set_answer():
         assert free.exploitability >= constrained.exploitability - 1e-9, case.name
 
 
-def test_production_rank_policy_keeps_the_winning_branch_continuation(monkeypatch):
+@pytest.mark.parametrize("use_explicit_calibration", [False, True])
+def test_production_rank_policy_keeps_the_winning_branch_continuation(
+    monkeypatch, use_explicit_calibration,
+):
     """The root winner includes the fold entry, and a fold must keep defending
     from public counts that include every discard watched after the root."""
     observation = observation_for(DEEP_CASES[0])
@@ -171,8 +229,10 @@ def test_production_rank_policy_keeps_the_winning_branch_continuation(monkeypatc
 
     monkeypatch.setattr(best_response, "ev_rank", fake_rank)
     monkeypatch.setattr(best_response, "_fold_choice", fake_fold)
+    calibration = Calibration({"counts": empty_counts()})
+    kwargs = {"calibration": calibration} if use_explicit_calibration else {}
     choice = production_rank_policy(
-        observation, sims=7, seed=13,
+        observation, sims=7, seed=13, **kwargs,
     )
     assert choice.discard == fold_tile
     assert choice.is_fold
@@ -182,6 +242,14 @@ def test_production_rank_policy_keeps_the_winning_branch_continuation(monkeypatc
     assert captured["rank_kwargs"]["turns"] == 1
     assert "rollout_players" not in captured["rank_kwargs"]
     assert "rollout_wall" not in captured["rank_kwargs"]
+    ranked_calibration = captured["rank_kwargs"]["calibration"]
+    if use_explicit_calibration:
+        assert ranked_calibration is calibration
+    else:
+        expected = CalibrationProvider(
+            Path(best_response.__file__).resolve().parents[1] / "data" / "calibration.json"
+        ).load().calibration
+        assert ranked_calibration.document == expected.document
 
     watched_tile = next(
         tile
@@ -193,6 +261,7 @@ def test_production_rank_policy_keeps_the_winning_branch_continuation(monkeypatc
         ((observation.next_seat, watched_tile),),
     )
     assert choice.continuation(observation.hand, remaining, 0) == fold_tile
+    assert captured["fold"][3] is ranked_calibration
     reconstructed = captured["fold"][1]
     assert reconstructed == tuple(
         4 - observation.hand[tile] - remaining[tile]
@@ -271,7 +340,7 @@ def test_a_tenpai_actor_that_tsumos_has_nothing_left_on_the_table(monkeypatch):
             continue
         monkeypatch.setattr(
             best_response, "sample_worlds",
-            lambda observation, sims, seed, state=case.state: (state,) * sims,
+            lambda observation, sims, seed, *, calibration, state=case.state: (state,) * sims,
         )
         result = exploitability(
             case, sims=4, seed=1, mode="opening", measured_opening=0,

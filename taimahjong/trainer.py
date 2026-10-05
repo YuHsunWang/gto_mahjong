@@ -159,7 +159,7 @@ class CallEvaluation:
                 + len(self.decision.position.own_kongs)
                 + 1,
             )
-        post, melds = _post_call(self.decision.position, option)
+        post, melds, _ = _post_call(self.decision.position, option)
         return _cached_shanten(post, len(melds) + len(self.decision.position.own_kongs))
 
     def verdict_for(self, choice: int | None) -> CallVerdict:
@@ -296,8 +296,9 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
              rules: RulesConfig = DEFAULT_RULES,
              winners: tuple[int, ...] = ()) -> TrainerOutcome:
     # 流局連莊: the dealer (seat 0) keeps dealership and the streak grows on a
-    # draw or a dealer win; otherwise dealership passes, which we emulate by
-    # rotating the human one seat downstream and resetting the streak.
+    # draw or a dealer win; otherwise dealership passes to the dealer's 下家
+    # (seat 1, next in turn order). The new dealer is renumbered seat 0, so
+    # every seat index, the human's included, drops by one; the streak resets.
     terminal_winners = winners or (() if winner is None else (winner,))
     dealer_keeps = (
         outcome == "draw" and rules.dealer_continues_on_draw
@@ -314,7 +315,7 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
         turns=turns,
         dealer_streak_in=dealer_streak,
         next_dealer_streak=dealer_streak + 1 if dealer_keeps else 0,
-        next_human_seat=human_seat if dealer_keeps else (human_seat + 1) % 4,
+        next_human_seat=human_seat if dealer_keeps else (human_seat - 1) % 4,
         robbed_kong=robbed_kong,
     )
 
@@ -423,13 +424,21 @@ def _apply_call(
     )
 
 
-def _post_call(position: QuizPosition, option: CallOption) -> tuple[tuple[int, ...], tuple[MeldLike, ...]]:
-    """The concealed hand and meld set after declaring a pon/chi."""
+def _post_call(
+    position: QuizPosition, option: CallOption,
+) -> tuple[tuple[int, ...], tuple[MeldLike, ...], tuple[int, ...]]:
+    """The concealed hand, meld set, and public counts after declaring a pon/chi.
+
+    The two hand tiles that join the meld become public. Leaving them out of
+    the public counts would let the world sampler deal those copies again.
+    """
     assert option.kind in ("pon", "chi")
     post = list(position.hand)
+    public = list(position.public_counts)
     for consumed in option.consumed:
         post[consumed] -= 1
-    return tuple(post), position.own_melds + (option.meld,)
+        public[consumed] += 1
+    return tuple(post), position.own_melds + (option.meld,), tuple(public)
 
 
 def _pass_ev(
@@ -486,9 +495,9 @@ def _option_rank(
             decision, option, base_seed, sims, scheme, calibration,
         ), None
     position = decision.position
-    post, melds = _post_call(position, option)
+    post, melds, public = _post_call(position, option)
     ranked = ev_rank(
-        post, [opponent.view() for opponent in position.opponents], position.public_counts,
+        post, [opponent.view() for opponent in position.opponents], public,
         len(melds) + len(position.own_kongs), position.draws_remaining, sims, base_seed,
         _score_template(position, melds), calibration=calibration, top_k=EV_TOP_K,
         scheme=scheme,
@@ -519,10 +528,10 @@ def _refine_option(
     if discard is None:
         return 0.0
     position = decision.position
-    post, melds = _post_call(position, option)
+    post, melds, public = _post_call(position, option)
     entry = evaluate_discard(
         post, discard, [opponent.view() for opponent in position.opponents],
-        position.public_counts, len(melds) + len(position.own_kongs), position.draws_remaining,
+        public, len(melds) + len(position.own_kongs), position.draws_remaining,
         sims, base_seed, _score_template(position, melds),
         calibration=calibration,
         scheme=scheme,
@@ -708,7 +717,7 @@ def evaluate_call(
     best_option_ev = max(option_evs, default=float("-inf"))
     best_index = option_evs.index(best_option_ev) if best_option_ev > pass_ev else None
     if best_index is None:
-        best_ev = _refine_pass(decision, base_seed, quiz.REFINE_SIMS, scheme)
+        best_ev = _refine_pass(decision, base_seed, quiz.REFINE_SIMS, scheme, calibration)
     else:
         best_ev = _refine_option(
             decision, decision.options[best_index], option_best_discards[best_index],

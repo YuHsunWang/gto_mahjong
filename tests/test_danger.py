@@ -38,6 +38,31 @@ def _shape_map(assessment):
     return {(shape.name, shape.required_tiles): shape for shape in assessment.feasible_shapes}
 
 
+def test_danger_cache_tracks_local_blockers_and_public_reads():
+    from taimahjong.danger import _danger_result
+
+    _danger_result.cache_clear()
+    opponent = OpponentView([27], [], declared_at=0)
+    seen = [0] * 34
+    seen[27] = 1
+    first = danger_score(4, opponent, seen, (0,) * 34)
+    seen[20] = 4  # A different suit cannot block a wait on 5m.
+    assert danger_score(4, opponent, seen, (0,) * 34) == first
+    assert _danger_result.cache_info().hits == 1
+    seen[3] = 4  # This neighbour does block two of the original shapes.
+    blocked = danger_score(4, opponent, seen, (0,) * 34)
+    assert blocked.score < first.score
+    opponent.river.extend([0, 4])
+    seen[0] = seen[4] = 1
+    safe = danger_score(4, opponent, seen, (0,) * 34)
+    assert safe.modifiers == {"declared_safe": 1.0}
+    safe.modifiers.clear()
+    safe.feasible_shapes.append(first.feasible_shapes[0])
+    repeated = danger_score(4, opponent, seen, (0,) * 34)
+    assert repeated.modifiers == {"declared_safe": 1.0}
+    assert repeated.feasible_shapes == []
+
+
 def test_wait_shape_known_answers_for_honor_terminal_and_middle():
     honor = _assessment(27)
     assert [(shape.name, shape.required_tiles) for shape in honor.feasible_shapes] == [
