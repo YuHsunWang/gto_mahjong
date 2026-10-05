@@ -27,6 +27,54 @@ def _discard_drawn(position):
     return next(tile for tile, count in enumerate(position.hand) if count)
 
 
+@pytest.mark.parametrize("menqing_three", [False, True])
+@pytest.mark.parametrize("outcome", ["tsumo", "ron"])
+def test_trainer_last_live_win_reports_one_extra_tai(monkeypatch, menqing_three, outcome):
+    from dataclasses import replace
+    from random import Random
+
+    from taimahjong.tiles import parse_tiles
+
+    tile = 19  # 2s
+    waiting = list(parse_tiles("111m456789p234s55789s"))
+    waiting[tile] -= 1
+    hand_tiles = [index for index, copies in enumerate(waiting) for _ in range(copies)]
+    scattered = parse_tiles("147m147p147s1234567z")
+    scattered_tiles = [index for index, copies in enumerate(scattered) for _ in range(copies)]
+    winner = 0 if outcome == "tsumo" else 1
+    hands = [hand_tiles if seat == winner else scattered_tiles for seat in range(4)]
+    rules = replace(DEFAULT_RULES, menqing_self_draw_three=menqing_three)
+
+    def run(live_tiles, configured_rules=rules):
+        def fixed_wall(_rng, tiles):
+            # Deal the waiting hand to the winner; reserve 14 dead tiles.
+            dealt = [hands[seat][index] for index in range(16) for seat in range(4)]
+            tiles[:] = [tile] * live_tiles + [0] * 14 + list(reversed(dealt))
+
+        monkeypatch.setattr(Random, "shuffle", fixed_wall)
+        game = play_trainer(1, human_seat=winner, rules=configured_rules)
+        return next(game)
+
+    # The bot discards its draw, allowing seat 1 to win immediately by ron.
+    if outcome == "ron":
+        import taimahjong.trainer as trainer
+
+        monkeypatch.setattr(
+            trainer, "_choose_discard", lambda _seat, drawn, *_, **_kwargs: (drawn, False),
+        )
+
+    ordinary = run(2)
+    last = run(1)
+    default = run(1, DEFAULT_RULES)
+    assert isinstance(last, TrainerOutcome)
+    assert last.outcome == ordinary.outcome == outcome
+    assert last.human_won
+    payment_legs = 3 if outcome == "tsumo" else 1
+    assert last.point_delta == ordinary.point_delta + payment_legs
+    menqing_bonus = 3 * int(menqing_three) if outcome == "tsumo" else 0
+    assert last.point_delta == default.point_delta + menqing_bonus
+
+
 def _play(seed, pick, call_pick=lambda decision: None):
     """Drive one game; ``pick`` chooses each discard, ``call_pick`` each call
     (default: pass every call, so the human stays concealed)."""
@@ -77,6 +125,7 @@ def test_trainer_positions_are_gradeable():
 def test_trainer_rejects_illegal_discard():
     gen = play_trainer(5, human_seat=0)
     position = next(gen).position  # dealer's first action is always a discard
+    assert position.opening_live_draw is True
     missing = next(tile for tile, count in enumerate(position.hand) if count == 0)
     with pytest.raises(ValueError):
         gen.send(missing)
@@ -177,6 +226,7 @@ def test_taking_open_kong_draws_replacement_and_records_kong():
         item = gen.send(None)
 
     assert isinstance(item, TrainerDecision)
+    assert item.position.opening_live_draw is False
     assert item.position.drawn_tile is not None
     assert item.position.own_kongs == ((kong_tile, False),)
     kong = item.position.own_kongs[0]
@@ -200,6 +250,7 @@ def _first_call(seed_range=range(1, 20)):
 def test_trainer_offers_and_evaluates_call_decisions():
     decision = _first_call()
     assert decision is not None, "expected a call decision in seeds 1-19"
+    assert decision.position.opening_live_draw is False
     assert decision.options, "a call decision must offer at least one legal call"
     assert all(option.kind in {"kong", "pon", "chi"} for option in decision.options)
     # Every consumed tile is actually held; the meld includes the offered tile.
@@ -338,10 +389,9 @@ def test_call_ev_credits_dealer_tai_for_dealer_seat():
             context,
         ).net_ev
 
-    stripped = WinValueContext(
-        replace(template.context, dealer=False, dealer_streak=0),
-        position.own_melds,
-        position.own_kongs,
+    stripped = replace(
+        template,
+        context=replace(template.context, dealer=False, dealer_streak=0, seat_wind=None),
     )
     assert _pass_ev(decision, base, 200) == pass_ev(template)
     assert pass_ev(template) != pass_ev(stripped), (
@@ -493,10 +543,10 @@ def test_trainer_ev_preserves_concealed_kong_for_menqing_tai():
     position = replace(position, hand=hand, own_melds=(), own_kongs=((kong_tile, True),))
 
     # play_trainer(1) seat 0 is the dealer, and _score_value scores as a self-draw,
-    # so preserving the concealed kong's 門清 gives 莊家1 + 門清1 + 自摸1 = 3 tai =>
-    # 底3台1 value 6. If the kong were disguised as an exposed meld (the bug), 門清
-    # would be lost, dropping this to 5 — so 6 is exactly what proves the fix.
-    assert _score_value(hand, win_tile, _score_template(position)) == 6
+    # Its concealed East kong now also earns the real seat-wind tai:
+    # 莊家1 + 門清1 + 自摸1 + 東風1 = 4 tai => 底3台1 value 7.
+    # Disguising the kong as an exposed meld would lose 門清 and drop this to 6.
+    assert _score_value(hand, win_tile, _score_template(position)) == 7
 
 
 def test_human_added_kong_can_be_robbed_and_skip_reaches_discard(monkeypatch):

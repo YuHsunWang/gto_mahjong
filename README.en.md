@@ -225,8 +225,18 @@ The project defaults to the following tai and house-rule choices: dealer 1,
 3 tai. 天胡/地胡 are 16/8 tai. It enumerates every way to read the hand and takes the
 highest-scoring one.
 
+海底撈月 (tsumo on the last live tile) and 河底撈魚 (ron on the discard immediately
+after that draw) each add 1 tai and are always enabled. 門清自摸 defaults to 2 tai
+(門清 1 + 自摸 1); enabling `RulesConfig.menqing_self_draw_three` makes it 3 total.
+The score tool accepts CLI `--last-tile` and `--menqing-self-draw-three`, or
+`last_tile` and `menqing_self_draw_three` in `/api/score`. Live tiles exclude the
+14-tile dead wall; kong replacement draws do not qualify for 海底撈月.
+
 A few documented house-rule calls:
 
+- **Winds**: self-play, EV rollout, and trainer settlement use a fixed East round wind.
+  The dealer (seat 0) is East; seats 1/2/3 are South/West/North in counterclockwise
+  play order. Round-wind and seat-wind triplets each score 1 tai and can stack.
 - A **kong** scores no tai by itself. Only winning on a kong's replacement tile
   (槓上開花) and robbing a kong (搶槓) score, 1 tai each. A 大明槓 is actually bad here
   (no tai, breaks 門清, and forfeits 槓上開花).
@@ -355,7 +365,7 @@ currently fixed at zero. The table below splits the model by *how* each piece is
 | **Modeled and calculated exactly** | Given one sampled four-seat world, it validates ordinary-tile wins, scores the selected house rules, and performs zero-sum four-seat settlement. Each trial produces exactly one of `self_tsumo`, `self_ron`, `opponent_ron`, `opponent_tsumo`, or `draw`; `net_ev` is exactly the acting seat's mean sampled terminal payment. | “Exact” covers rules, settlement, and aggregation inside that sampled world—not exact terminal probabilities or human play. Draw payment is currently fixed at zero. |
 | **Heuristic approximation** | Public information drives hidden-hand sampling; efficiency-discard and fixed defense policies advance future play. Wall and terminal frequencies are fixed-seed Monte Carlo estimates. Where a calibration cell has too few observations, the opponent-tenpai rate falls back to a heuristic estimate. | Opponents do not fully adapt; the hidden-world distribution and policies are model assumptions, and finite sampling leaves error. |
 | **Calibrated by a calibration table** | The per-opponent `danger_score` lookup supplies ron/deal-in probabilities on the opening and later discards: every opponent wins on a discard at the table's rate, and its sampled hand only sets how much the win is worth; your own ron follows your real hand and nearest-claim priority. The opponent-tenpai rate comes from the same table's P(tenpai \| melds, turn, tsumogiri run). A non-tenpai opponent's shanten is drawn from `data/opponent-shanten.json`, the distribution the same self-play observed (see `docs/opponent-shanten.md`), rather than uniformly from the unseen pool. Both data sets live in the built-in-bot self-play ecology. | It is not calibrated on human games. If a calibrated event conflicts with the sampled concealed hand, a physically winning hand is redeterminized for valuation. If no usable calibration table is available, a reported heuristic fallback is used. |
-| **Not modeled** | Future chi, pon, kong/replacement draws and flowers, special hands, complete pass-on-ron decisions, and a full best response by every seat. | These events are absent from the terminal rollout transitions; draws also have no tenpai/noten settlement. |
+| **Not modeled** | Future chi, pon, kong/replacement draws and flowers, special hands, complete pass-on-ron decisions, and a full best response by every seat; round-wind progression is also absent (fixed East). | These events are absent from the terminal rollout transitions; draws also have no tenpai/noten settlement. |
 
 **Calibration domain**: only the ron/deal-in probability and opponent-tenpai lookups are calibrated, and their domain is
 the built-in-bot self-play ecology, not human game records. When no usable calibration table is

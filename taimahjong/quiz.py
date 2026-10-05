@@ -206,6 +206,7 @@ class QuizPosition:
     own_kongs: tuple[KongLike, ...] = ()
     migi_declared: bool = False
     migi_eligible: bool = False
+    opening_live_draw: bool = True
 
     @property
     def is_dealer(self) -> bool:
@@ -371,12 +372,15 @@ def _score_template(position: QuizPosition) -> WinValueContext:
     return WinValueContext(
         WinContext(
             winning_tile=0,
+            seat_wind=27 + position.seat,
             dealer=position.is_dealer,
             dealer_streak=position.dealer_streak if position.is_dealer else 0,
             migi_declared=position.migi_declared,
         ),
         position.own_melds,
         position.own_kongs,
+        wall_remaining=position.wall_remaining,
+        opening_live_draw=position.opening_live_draw,
     )
 
 

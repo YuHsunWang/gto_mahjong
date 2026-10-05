@@ -345,6 +345,7 @@ def _trainer_position(
     wall_remaining: int,
     seed: int,
     migi_eligible: bool = False,
+    opening_live_draw: bool = False,
 ) -> QuizPosition:
     """Build a trainer quiz view, preserving own kong visibility and type."""
     player = players[player_index]
@@ -360,6 +361,7 @@ def _trainer_position(
         shanten=_cached_shanten(tuple(player.hand), _declared(player)),
         migi_declared=player.declared,
         migi_eligible=migi_eligible,
+        opening_live_draw=opening_live_draw,
     )
 
 
@@ -464,7 +466,7 @@ def _pass_ev(
         position.draws_remaining,
         sims,
         base_seed,
-        _score_template(position),
+        replace(_score_template(position), opening_live_draw=False),
         calibration=calibration,
         scheme=scheme,
     ).net_ev
@@ -499,7 +501,7 @@ def _option_rank(
     ranked = ev_rank(
         post, [opponent.view() for opponent in position.opponents], public,
         len(melds) + len(position.own_kongs), position.draws_remaining, sims, base_seed,
-        _score_template(position, melds), calibration=calibration, top_k=EV_TOP_K,
+        replace(_score_template(position, melds), opening_live_draw=False), calibration=calibration, top_k=EV_TOP_K,
         scheme=scheme,
     )
     playable = [entry for entry in ranked if not entry.is_fold]
@@ -532,7 +534,7 @@ def _refine_option(
     entry = evaluate_discard(
         post, discard, [opponent.view() for opponent in position.opponents],
         public, len(melds) + len(position.own_kongs), position.draws_remaining,
-        sims, base_seed, _score_template(position, melds),
+        sims, base_seed, replace(_score_template(position, melds), opening_live_draw=False),
         calibration=calibration,
         scheme=scheme,
     )
@@ -549,12 +551,16 @@ def _best_discard_ev(
     sims: int,
     scheme: ScoringScheme = DEFAULT_SCHEME,
     calibration: Calibration | None = None,
+    opening_live_draw: bool | None = None,
 ) -> float:
     """Best non-fold discard EV for one post-draw hand under the shared seed."""
+    template = _score_template(position, melds, kongs)
+    if opening_live_draw is not None:
+        template = replace(template, opening_live_draw=opening_live_draw)
     ranked = ev_rank(
         hand, [opponent.view() for opponent in position.opponents], public_counts,
         len(melds) + len(kongs), position.draws_remaining, sims, base_seed,
-        _score_template(position, melds, kongs), calibration=calibration, top_k=EV_TOP_K,
+        template, calibration=calibration, top_k=EV_TOP_K,
         scheme=scheme,
     )
     playable = [entry.net_ev for entry in ranked if not entry.is_fold]
@@ -591,7 +597,7 @@ def _open_kong_call_ev(
         post[replacement] += 1
         expected += copies * _best_discard_ev(
             position, tuple(post), position.own_melds, kongs, public_counts,
-            base_seed, sims, scheme, calibration,
+            base_seed, sims, scheme, calibration, opening_live_draw=False,
         )
     return expected / total
 
@@ -671,7 +677,7 @@ def _kong_option_ev(
         replacement[tile] += 1
         expected += copies * _best_discard_ev(
             position, tuple(replacement), melds, kongs, public, base_seed, sims,
-            scheme, calibration,
+            scheme, calibration, opening_live_draw=False,
         )
     return expected / total
 
@@ -831,6 +837,7 @@ def play_trainer(
         player = players[current]
         drawn_tile = pending_drawn_tile
         pending_drawn_tile = None
+        live_draw = False
 
         if needs_draw:
             if not wall:
@@ -843,12 +850,14 @@ def play_trainer(
                 )
                 return
             drawn_tile = wall.pop()
+            live_draw = True
             player.hand[drawn_tile] += 1
             if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                 winning_hand = tuple(player.hand)
                 deltas, _ = _settlement(
                     "tsumo", current, None, players, winning_hand, drawn_tile,
                     dealer_streak, scheme,
+                    wall_remaining=len(wall), rules=rules,
                 )
                 yield _outcome(
                     "tsumo", current, None, human_seat, deltas, actions,
@@ -857,7 +866,10 @@ def play_trainer(
                 return
 
         if drawn_tile is not None and current == human_seat and not player.declared and dead:
-            position = _trainer_position(current, drawn_tile, players, len(wall), seed)
+            position = _trainer_position(
+                current, drawn_tile, players, len(wall), seed,
+                opening_live_draw=live_draw,
+            )
             options = _human_kong_options(player)
             if options:
                 choice = yield TrainerKongDecision(position, options)
@@ -884,6 +896,7 @@ def play_trainer(
                                 dealer_streak,
                                 scheme,
                                 robbed_kong=True,
+                                rules=rules,
                             )
                             robber = robbers[0]
                             yield _outcome(
@@ -893,11 +906,12 @@ def play_trainer(
                             )
                             return
                     drawn_tile = _declare_kong(player, option.tile, option.kind == "concealed", dead, wall)
+                    live_draw = False
                     if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                         winning_hand = tuple(player.hand)
                         deltas, _ = _settlement(
                             "tsumo", current, None, players, winning_hand, drawn_tile,
-                            dealer_streak, scheme, kong_bloom=True,
+                            dealer_streak, scheme, kong_bloom=True, rules=rules,
                         )
                         yield _outcome(
                             "tsumo", current, None, human_seat, deltas, actions,
@@ -912,6 +926,7 @@ def play_trainer(
             position = _trainer_position(
                 current, drawn_tile, players, len(wall), seed,
                 migi_eligible=migi_eligible,
+                opening_live_draw=live_draw,
             )
             chosen = yield TrainerDecision(position)
             if not (isinstance(chosen, int) and not isinstance(chosen, bool) and 0 <= chosen < 34):
@@ -920,7 +935,7 @@ def play_trainer(
                 raise ValueError("sent discard is not in the hand")
             tile = chosen
         else:
-            tile, _ = _choose_discard(current, drawn_tile, players, scheme)
+            tile, _ = _choose_discard(current, drawn_tile, players, scheme, rules=rules)
 
         origin = "tsumogiri" if drawn_tile == tile else "tedashi"
         player.hand[tile] -= 1
@@ -943,6 +958,7 @@ def play_trainer(
             deltas, _ = _settle_ron_winners(
                 winners, current, players, winning_hands, tile,
                 dealer_streak, scheme,
+                wall_remaining=len(wall) if live_draw else None, rules=rules,
             )
             winner = winners[0]
             yield _outcome(
@@ -1037,6 +1053,7 @@ def play_trainer(
                     deltas, _ = _settlement(
                         "tsumo", human_seat, None, players, winning_hand,
                         replacement, dealer_streak, scheme,
+                        rules=rules,
                     )
                     yield _outcome(
                         "tsumo", human_seat, None, human_seat, deltas, actions,
