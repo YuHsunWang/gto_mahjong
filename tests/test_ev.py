@@ -454,8 +454,10 @@ def test_determinized_rollout_has_physical_risk_without_calibration():
         entry.p_draw == 0.0 and entry.attack_ev == 0.0 and entry.risk_ev > 0.0
         for entry in calibrated
     )
+    # net_ev is the mean payment, not attack minus risk, so the identity holds
+    # only up to float summation order (Python 3.11 sum() differs from 3.12+).
     assert all(
-        entry.net_ev == entry.attack_ev - entry.risk_ev
+        entry.net_ev == pytest.approx(entry.attack_ev - entry.risk_ev)
         for entry in calibrated
     )
 
