@@ -16,6 +16,8 @@ Trainer scope (deliberate, documented):
 
 from __future__ import annotations
 
+from .budget import checkpoint
+
 from dataclasses import dataclass, field, replace
 from random import Random
 from typing import Literal
@@ -970,6 +972,7 @@ def play_trainer(
     actions = 0
 
     while True:
+        checkpoint()
         actions += 1
         assert actions < 1000, "trainer game did not terminate"
         player = players[current]

@@ -65,6 +65,10 @@ export function record(mode, gradeOrVerdict, evLossOrScheme, explicitSchemeId = 
   };
   const data = load();
   const events = bucket(data, mode, schemeId);
+  if (grade.event_id) {
+    if (events.some((previous) => previous.id === grade.event_id)) return;
+    event.id = grade.event_id;
+  }
   events.push(event);
   if (events.length > CAP) data[mode][schemeId] = events.slice(-CAP);
   save(data);

@@ -7,6 +7,8 @@ defense policy's EV. Grading reuses :func:`taimahjong.quiz.grade` unchanged.
 
 from __future__ import annotations
 
+from .budget import checkpoint
+
 from dataclasses import dataclass, replace
 
 from . import quiz
@@ -91,6 +93,7 @@ def generate_endgame_position(
     if not isinstance(seed, int) or isinstance(seed, bool):
         raise ValueError("seed must be an integer")
     for game_seed in range(seed, seed + MAX_ATTEMPTS):
+        checkpoint()
         snapshots: list[DecisionSnapshot] = []
         play_game(game_seed, snapshot_hook=snapshots.append, config=analysis.game)
         for snapshot in snapshots:

@@ -16,8 +16,8 @@ behind (4.4%/20.2% on 1- and 2-shanten for an empty public state, against
 0.1%/3.2% for a uniform sixteen tiles), and the probe reported a -1.031 mean
 payment for a model that had not become any less symmetric.
 
-The engine currently fails this. That is the point of the file — see the
-handbook's measurement discipline: a failing test is a motive, not a threshold
+Keep the probe aligned with production's sampling inputs, including calibrated
+tenpai rates and RON value hands. A failing test is a motive, not a threshold
 to tune away. Do not relax ``BIAS_TOLERANCE`` to make it pass.
 """
 
@@ -30,7 +30,6 @@ import pytest
 from taimahjong.calibration import Calibration
 from taimahjong.danger import OpponentView
 import taimahjong.ev as ev
-from taimahjong.danger import tenpai_score
 from taimahjong.ev import (
     _calibrated_ron,
     _construct_shanten_hand,
@@ -39,6 +38,7 @@ from taimahjong.ev import (
     _production_discard_policy,
     _production_seats,
     _sample_production_world,
+    _sampled_tenpai_rate,
 )
 from taimahjong.rollout import resolve_terminal_distribution
 from taimahjong.scoring import WinContext
@@ -82,6 +82,7 @@ def _exchangeable_hand(
     rng: random.Random,
     *,
     seeded_tenpai: bool,
+    calibration: Calibration | None = None,
 ) -> tuple[int, ...]:
     """Draw the acting seat's hand exactly as the sampler draws an opponent's.
 
@@ -93,7 +94,7 @@ def _exchangeable_hand(
     """
     empty = OpponentView([], [])
     remaining = [4] * 34
-    target_tenpai = seeded_tenpai and rng.random() < tenpai_score(empty, 0).score
+    target_tenpai = seeded_tenpai and rng.random() < _sampled_tenpai_rate(empty, calibration)
     hand = (
         _construct_tenpai_hand(remaining, 16, 0, rng)
         if target_tenpai
@@ -104,7 +105,7 @@ def _exchangeable_hand(
         # _shanten_model switches this side off as well.
         model = ev._default_opponent_shanten()
         if model is not None:
-            target = model.sample(empty, 0, rng.random())
+            target = model.sample(empty, None, rng.random())
             if target is not None:
                 hand = _construct_shanten_hand(remaining, 16, 0, target, rng)
     if hand is None:
@@ -150,10 +151,14 @@ def _exchangeable_trials(
     wins: dict[int, float] = {seat: 0.0 for seat in range(4)}
     with _shanten_model(shanten_model):
         for _ in range(trials):
-            hand = _exchangeable_hand(rng, seeded_tenpai=seeded_tenpai)
+            hand = _exchangeable_hand(
+                rng, seeded_tenpai=seeded_tenpai,
+                calibration=calibration if calibrated else None,
+            )
             world = _sample_production_world(
                 hand, (0,) * 34, opponents, TURNS, context,
                 rng.randrange(2**64), quantiles,
+                calibration=calibration if calibrated else None,
             )
             discard = _production_discard_policy(
                 hand, tuple(4 - hand[tile] for tile in range(34)), 0,
@@ -163,7 +168,7 @@ def _exchangeable_trials(
                 _production_discard_policy, random.Random(rng.randrange(2**64)),
                 dealer_streak=streak,
                 calibrated_ron=(
-                    _calibrated_ron(calibration, acting)
+                    _calibrated_ron(calibration, acting, world.ron_value_hands)
                     if calibrated
                     else None
                 ),

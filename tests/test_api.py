@@ -45,6 +45,7 @@ def fast_budgets(monkeypatch):
 @pytest.fixture()
 def client():
     api._SESSIONS.clear()
+    api._ADMISSION.clients.clear()
     return TestClient(api.app)
 
 
@@ -275,17 +276,24 @@ def test_trainer_unknown_session_is_404(client):
     assert client.get("/api/trainer/nope").status_code == 404
 
 
-def test_trainer_session_eviction_uses_recent_access(monkeypatch):
+def test_trainer_capacity_rejects_new_without_evicting_live_hands(monkeypatch):
+    from taimahjong.analysis import AnalysisContext
+
     monkeypatch.setattr(api, "_MAX_SESSIONS", 2)
     api._SESSIONS.clear()
-    first_session, second_session, third_session = object(), object(), object()
+    first_session, second_session, third_session = (
+        api._TrainerSession(n, 0, 0, None, object(), AnalysisContext())
+        for n in range(3)
+    )
     api._store_session("first", first_session)
     api._store_session("second", second_session)
     assert api._get_session("first") is first_session
 
-    api._store_session("third", third_session)
+    with pytest.raises(api.HTTPException) as caught:
+        api._store_session("third", third_session)
 
-    assert tuple(api._SESSIONS) == ("first", "third")
+    assert caught.value.status_code == 503
+    assert tuple(api._SESSIONS) == ("first", "second")
 
 
 def test_trainer_send_failure_does_not_commit_score_or_feedback(monkeypatch):

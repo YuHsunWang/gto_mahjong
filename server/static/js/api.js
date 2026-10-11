@@ -9,18 +9,30 @@ class ApiError extends Error {
 }
 
 async function request(path, options) {
-  const response = await fetch(path, options);
-  let body = null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 75000);
   try {
-    body = await response.json();
-  } catch {
-    // fall through: non-JSON error body
+    const response = await fetch(path, { ...options, signal: controller.signal });
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {
+      // fall through: non-JSON error body
+    }
+    if (!response.ok) {
+      const detail = body && body.detail ? JSON.stringify(body.detail).replaceAll('"', '') : `HTTP ${response.status}`;
+      throw new ApiError(response.status, detail);
+    }
+    if (body === null) throw new ApiError(502, '伺服器回應不完整，請重新讀取狀態');
+    return body;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(0, error.name === 'AbortError'
+      ? '等待逾時，請重新讀取牌局確認結果'
+      : '連線中斷，請稍後重試');
+  } finally {
+    clearTimeout(timer);
   }
-  if (!response.ok) {
-    const detail = body && body.detail ? JSON.stringify(body.detail).replaceAll('"', '') : `HTTP ${response.status}`;
-    throw new ApiError(response.status, detail);
-  }
-  return body;
 }
 
 export function post(path, payload) {
@@ -33,6 +45,10 @@ export function post(path, payload) {
 
 export function get(path) {
   return request(path);
+}
+
+export function remove(path) {
+  return request(path, { method: 'DELETE' });
 }
 
 export { ApiError };

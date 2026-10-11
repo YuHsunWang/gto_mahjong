@@ -79,6 +79,11 @@ python3 -m pytest -q -m slow        # 窮舉 oracle 與大樣本統計測試，�
 
 ## 架構
 
+公開 beta 的單程序限制、運算配額、牌局到期與驗收指令見
+[`docs/beta-operations.md`](docs/beta-operations.md)；目前發布阻擋與修正紀錄見
+[`docs/p0-implementation.md`](docs/p0-implementation.md)。牌局不會跨程序重啟保存，
+請勿直接增加 worker 或 replica 數量。
+
 資料檔、固定評估語料、模擬結果與視覺證據的分層規則記在
 [`docs/architecture/data-layout.md`](docs/architecture/data-layout.md)，完整機器可讀清單在
 [`catalog/datasets.toml`](catalog/datasets.toml)。新增或移動資料時，必須在同一個 commit 更新清單、
