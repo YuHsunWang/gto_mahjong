@@ -20,6 +20,8 @@ Documented stacking choices (adjust constants if the house disagrees):
 
 from __future__ import annotations
 
+from .budget import checkpoint
+
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
@@ -370,6 +372,7 @@ def score_hand(
     ``concealed``. A concealed kong (暗槓) also counts toward concealed-triplet
     tai; an open kong does not, and it breaks 門清.
     """
+    checkpoint()
     if context is None:
         raise ValueError("a WinContext with the winning tile is required")
     checked = validate_counts(concealed)

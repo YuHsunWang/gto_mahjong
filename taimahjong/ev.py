@@ -8,6 +8,8 @@ agreement certifies terminal/settlement/aggregation machinery, not its realism.
 
 from __future__ import annotations
 
+from .budget import checkpoint
+
 import random
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
@@ -1050,6 +1052,7 @@ def _sample_production_world(
     calibration: Calibration | None = None,
     opponent_shanten: OpponentShanten | None | Literal["default"] = "default",
 ) -> _TrialWorld:
+    checkpoint()
     from .selfplay import Player
 
     acting_seat, seat_views, dealer_streak = _production_seats(

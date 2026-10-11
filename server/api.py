@@ -13,13 +13,16 @@ Run locally with::
 from __future__ import annotations
 
 import sys
+import asyncio
 import threading
 import uuid
 from collections import OrderedDict
+from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from random import SystemRandom
+from time import monotonic
 from typing import Any
 
 # `uvicorn server.api:app` from the repo root works, but running the module
@@ -30,7 +33,11 @@ if _REPO_ROOT not in sys.path:
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from server.lifecycle import single_process
+from server.limits import Admission, LimitMiddleware, Limits, positive_int
+from taimahjong.budget import EngineDeadlineExceeded, checkpoint
 
 from taimahjong.analysis import AnalysisContext, CalibrationProvider
 from taimahjong.calibration import Calibration
@@ -79,10 +86,45 @@ from taimahjong.trainer import (
     play_trainer,
 )
 
-app = FastAPI(title="台灣麻將教室 API")
+@asynccontextmanager
+async def lifespan(app):
+    with single_process():
+        async def reap():
+            while True:
+                await asyncio.sleep(30)
+                with _SESSIONS_LOCK:
+                    _reap_sessions()
+
+        task = asyncio.create_task(reap())
+        try:
+            yield
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+            with _SESSIONS_LOCK:
+                for session in _SESSIONS.values():
+                    _close_generator(session)
+                _SESSIONS.clear()
+
+
+app = FastAPI(title="台灣麻將教室 API", lifespan=lifespan)
+_ADMISSION = Admission(Limits.from_env())
+app.add_middleware(LimitMiddleware, admission=_ADMISSION)
+
+
+@app.exception_handler(EngineDeadlineExceeded)
+async def engine_timeout(_request, _error):
+    return JSONResponse(
+        status_code=504,
+        content={"detail": "運算逾時，請重試；整場模式請先重新讀取牌局狀態"},
+    )
 
 _RANDOM = SystemRandom()
-_MAX_SESSIONS = 64
+_MAX_SESSIONS = positive_int("MJ_MAX_SESSIONS", 64)
+_SESSION_TTL = positive_int("MJ_SESSION_TTL_SECONDS", 1800)
+_COMPLETED_TTL = 300
+_PENDING_SESSION_CREATES = 0
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +361,7 @@ def _grade_payload(result: QuizGrade) -> dict[str, Any]:
 # 底/台 payout scheme. Absent → the house default (底3台1). A caller may send
 # the preset id or the exact pair; no third product scheme is accepted.
 class ApiRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_max_length=2048)
 
 
 class SchemeRequest(ApiRequest):
@@ -385,6 +427,7 @@ def _new_seed(requested: int | None) -> int:
 def _engine(call, *args):
     """Run an engine entry point, mapping its input errors to HTTP 422."""
     try:
+        checkpoint()
         return call(*args)
     except (ValueError, RuntimeError) as error:
         raise HTTPException(status_code=422, detail=str(error))
@@ -450,30 +493,74 @@ class _TrainerSession:
     score: dict[str, float] = field(default_factory=lambda: {"decisions": 0, "best": 0, "loss": 0.0})
     feedback: dict[str, Any] | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
+    last_access: float = field(default_factory=monotonic)
+    completed_at: float | None = None
 
 
 _SESSIONS: OrderedDict[str, _TrainerSession] = OrderedDict()
 _SESSIONS_LOCK = threading.Lock()
 
 
+def _close_generator(session: _TrainerSession) -> None:
+    if session.generator is not None:
+        session.generator.close()
+        session.generator = None
+
+
+def _reap_sessions() -> None:
+    """Caller holds registry lock; never close a generator in use."""
+    now = monotonic()
+    completed = []
+    for session_id, session in list(_SESSIONS.items()):
+        if not session.lock.acquire(blocking=False):
+            continue
+        try:
+            expired = (
+                now - session.last_access >= _SESSION_TTL
+                if session.completed_at is None
+                else now - session.completed_at >= _COMPLETED_TTL
+            )
+            if session.failed or expired:
+                _close_generator(session)
+                del _SESSIONS[session_id]
+            elif session.completed_at is not None:
+                completed.append(session_id)
+        finally:
+            session.lock.release()
+    # Finished hands retain a bounded recovery window without consuming live
+    # capacity. Dropping an old finished summary never interrupts a live hand.
+    for session_id in completed[:-_MAX_SESSIONS]:
+        del _SESSIONS[session_id]
+
+
+def _active_sessions() -> int:
+    return sum(session.completed_at is None for session in _SESSIONS.values())
+
+
+def _capacity_error():
+    return HTTPException(503, "目前牌局已滿，請稍後再試", headers={"Retry-After": "30"})
+
+
 def _store_session(session_id: str, session: _TrainerSession) -> None:
     with _SESSIONS_LOCK:
+        _reap_sessions()
+        if session.completed_at is None and _active_sessions() >= _MAX_SESSIONS:
+            raise _capacity_error()
         _SESSIONS[session_id] = session
-        while len(_SESSIONS) > _MAX_SESSIONS:
-            _SESSIONS.popitem(last=False)
+        _reap_sessions()
 
 
 class TrainerNewRequest(SchemeRequest):
     seed: int | None = None
-    human_seat: int = 0
-    dealer_streak: int = 0
+    human_seat: int = Field(default=0, ge=0, le=3)
+    dealer_streak: int = Field(default=0, ge=0, le=32)
 
 
 class TrainerActRequest(SchemeRequest):
-    step: int
+    step: int = Field(ge=0)
     action: str  # "discard" | "kong" | "call"
-    tile: int | None = None  # discard only
-    option: int | None = None  # kong/call: option index, or None to skip/pass
+    tile: int | None = Field(default=None, ge=0, le=33)  # discard only
+    option: int | None = Field(default=None, ge=0, le=33)
 
 
 def _decision_payload(item: Any) -> dict[str, Any]:
@@ -550,36 +637,83 @@ def _session_payload(session_id: str, session: _TrainerSession) -> dict[str, Any
 
 def _get_session(session_id: str) -> _TrainerSession:
     with _SESSIONS_LOCK:
+        _reap_sessions()
         session = _SESSIONS.get(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="unknown trainer session")
-        _SESSIONS.move_to_end(session_id)
+        session.last_access = monotonic()
         return session
+
+
+@contextmanager
+def _session_access(session_id: str):
+    session = _get_session(session_id)
+    if not session.lock.acquire(blocking=False):
+        raise HTTPException(409, "牌局正在運算，請稍後重新讀取", headers={"Retry-After": "2"})
+    try:
+        with _SESSIONS_LOCK:
+            if _SESSIONS.get(session_id) is not session:
+                raise HTTPException(404, "unknown trainer session")
+        yield session
+    finally:
+        session.last_access = monotonic()
+        if session.failed or isinstance(session.current, TrainerOutcome):
+            _close_generator(session)
+            if session.completed_at is None:
+                session.completed_at = monotonic()
+        session.lock.release()
 
 
 @app.post("/api/trainer/new")
 def trainer_new(request: TrainerNewRequest) -> dict[str, Any]:
-    seed = _new_seed(request.seed)
-    analysis = _analysis_context(request)
-    generator = _engine(
-        play_trainer, seed, request.human_seat,
-        ("attack", "cautious", "attack", "cautious"),
-        request.dealer_streak, analysis,
-    )
-    first = _engine(next, generator)
-    session = _TrainerSession(
-        seed, request.human_seat, request.dealer_streak, generator, first, analysis,
-    )
-    session_id = uuid.uuid4().hex
-    _store_session(session_id, session)
-    return _session_payload(session_id, session)
+    global _PENDING_SESSION_CREATES
+    with _SESSIONS_LOCK:
+        _reap_sessions()
+        if _active_sessions() + _PENDING_SESSION_CREATES >= _MAX_SESSIONS:
+            raise _capacity_error()
+        _PENDING_SESSION_CREATES += 1
+    generator = None
+    try:
+        seed = _new_seed(request.seed)
+        analysis = _analysis_context(request)
+        generator = _engine(
+            play_trainer, seed, request.human_seat,
+            ("attack", "cautious", "attack", "cautious"),
+            request.dealer_streak, analysis,
+        )
+        first = _engine(next, generator)
+        session = _TrainerSession(
+            seed, request.human_seat, request.dealer_streak, generator, first, analysis,
+        )
+        if isinstance(first, TrainerOutcome):
+            session.completed_at = monotonic()
+            _close_generator(session)
+        session_id = uuid.uuid4().hex
+        payload = _session_payload(session_id, session)
+        _store_session(session_id, session)
+        return payload
+    except BaseException:
+        if generator is not None:
+            generator.close()
+        raise
+    finally:
+        with _SESSIONS_LOCK:
+            _PENDING_SESSION_CREATES -= 1
 
 
 @app.get("/api/trainer/{session_id}")
 def trainer_get(session_id: str) -> dict[str, Any]:
-    session = _get_session(session_id)
-    with session.lock:
+    with _session_access(session_id) as session:
         return _session_payload(session_id, session)
+
+
+@app.delete("/api/trainer/{session_id}")
+def trainer_delete(session_id: str) -> dict[str, str]:
+    with _session_access(session_id) as session:
+        _close_generator(session)
+        with _SESSIONS_LOCK:
+            del _SESSIONS[session_id]
+    return {"status": "closed"}
 
 
 def _record(session: _TrainerSession, feedback: dict[str, Any]) -> None:
@@ -622,8 +756,7 @@ def _advance_session(session: _TrainerSession, choice):
 
 @app.post("/api/trainer/{session_id}/act")
 def trainer_act(session_id: str, request: TrainerActRequest) -> dict[str, Any]:
-    session = _get_session(session_id)
-    with session.lock:
+    with _session_access(session_id) as session:
         _check_session(session)
         if request.step != session.step:
             raise HTTPException(status_code=409, detail=f"stale step {request.step}, session is at {session.step}")
@@ -950,7 +1083,7 @@ def ukeire_endpoint(request: UkeireRequest) -> dict[str, Any]:
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
+async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 

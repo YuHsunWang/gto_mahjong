@@ -10,6 +10,21 @@ on:
   workflow_dispatch:
 
 jobs:
+  browser:
+    name: trainer recovery (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements-browser.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest -q tests/test_browser_recovery.py
+        env:
+          MJ_BROWSER_TESTS: "1"
+
   fast:
     name: fast suite (py${{ matrix.python-version }})
     runs-on: ubuntu-latest

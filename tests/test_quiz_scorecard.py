@@ -1,6 +1,7 @@
 """Tied top-pair picks earn best credit without charging sampling noise."""
 
 import subprocess
+from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,7 +34,7 @@ def test_trainer_scorecard_credits_only_the_tied_top_pair(monkeypatch, ranking_s
         "top1_vs_top2": {"top_discard": 0, "runner_up_discard": 1},
     }
     monkeypatch.setattr(api, "TrainerDecision", Decision)
-    monkeypatch.setattr(api, "_get_session", lambda _id: session)
+    monkeypatch.setattr(api, "_SESSIONS", OrderedDict(session=session))
     monkeypatch.setattr(api, "grade", lambda *_args: SimpleNamespace(**feedback))
     monkeypatch.setattr(api, "_grade_payload", lambda _result: feedback)
     monkeypatch.setattr(api, "_session_payload", lambda _id, value: value.score)
@@ -84,9 +85,14 @@ record(mode, 'best', 0, '3-1'); // Call/kong and legacy scalar grading.
 assert.equal(summary(mode, '3-1').decisions, 7);
 assert.equal(summary(mode, '3-1').best, 5);
 assert.equal(summary(mode, '3-1').loss, 3);
+const recovered = {verdict: 'good', ev_loss: 0.25, ranking_state: 'clear', event_id: 'session:1'};
+record(mode, recovered, '3-1');
+record(mode, recovered, '3-1'); // Lost response/reload must not double count.
+assert.equal(summary(mode, '3-1').decisions, 8);
+assert.equal(summary(mode, '3-1').loss, 3.25);
 """
     result = subprocess.run(
-        ["node", "--experimental-default-type=module", "--input-type=module",
+        ["node", "--input-type=module",
          "-e", script, stats_url, mode],
         capture_output=True, text=True, timeout=10,
     )

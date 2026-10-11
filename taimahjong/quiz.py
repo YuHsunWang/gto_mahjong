@@ -6,6 +6,8 @@ hands remain inside self-play and never become part of a :class:`QuizPosition`.
 
 from __future__ import annotations
 
+from .budget import checkpoint
+
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Callable, TypeVar
@@ -532,6 +534,7 @@ def generate_position(
         raise ValueError("seed must be an integer")
     context = _analysis_context(analysis=analysis)
     for game_seed in range(seed, seed + MAX_ATTEMPTS):
+        checkpoint()
         snapshots: list[DecisionSnapshot] = []
         play_game(game_seed, snapshot_hook=snapshots.append, config=analysis.game)
         for snapshot in snapshots:

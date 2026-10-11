@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .budget import checkpoint
+
 from functools import lru_cache
 
 from .tiles import validate_counts
@@ -175,6 +177,7 @@ def _shanten_unchecked_reference(counts: tuple[int, ...], melds_declared: int) -
 
 def _shanten_unchecked(counts: tuple[int, ...], melds_declared: int) -> int:
     """Exact shanten for an internally validated concealed hand."""
+    checkpoint()
     profile = _numeric_profile(counts[0:9])
     profile = _combine_profiles(profile, _numeric_profile(counts[9:18]))
     profile = _combine_profiles(profile, _numeric_profile(counts[18:27]))

@@ -2,7 +2,7 @@
 // persistent scorecard. Sessions live server-side; the session id is kept in
 // sessionStorage so a page reload resumes the same hand.
 
-import { post, get, showError, randomSeed } from './api.js';
+import { post, get, remove, showError, randomSeed } from './api.js';
 import { tileEl } from './tiles.js';
 import { feltEl, handEl, computingEl, faceText } from './table.js';
 import { reviewRailEl } from './feedback.js';
@@ -26,6 +26,23 @@ export function trainerScreen(root) {
   let frozen = null; // decision being shown during acting/feedback
   let feedback = null;
 
+  function recordState() {
+    if (state.feedback) {
+      record('trainer', {
+        ...state.feedback, event_id: `${state.session_id}:${state.step}`,
+      }, state.scheme.id);
+    }
+    if (state.decision.type === 'outcome') {
+      recordOutcome('trainer', state.session_id, state.scheme.id);
+    }
+  }
+
+  function forgetSession() {
+    sessionStorage.removeItem(SESSION_KEY);
+    state = frozen = feedback = null;
+    phase = 'setup';
+  }
+
   function header() {
     const bar = document.createElement('div');
     bar.className = 'topbar';
@@ -46,6 +63,12 @@ export function trainerScreen(root) {
     phase = 'boot';
     render();
     try {
+      const oldId = sessionStorage.getItem(SESSION_KEY);
+      if (oldId) {
+        try { await remove(`/api/trainer/${oldId}`); }
+        catch (error) { if (error.status !== 404) throw error; }
+        forgetSession();
+      }
       state = await post('/api/trainer/new', {
         seed, human_seat: humanSeat, dealer_streak: dealerStreak, ...schemeParams(),
       });
@@ -60,22 +83,33 @@ export function trainerScreen(root) {
     render();
   }
 
-  async function resume() {
+  async function resume(previousStep = null) {
     const sessionId = sessionStorage.getItem(SESSION_KEY);
     if (!sessionId) {
       phase = 'setup';
       render();
       return;
     }
+    phase = 'boot';
+    render();
     try {
       state = await get(`/api/trainer/${sessionId}`);
-      if (state.decision.type === 'outcome') {
-        recordOutcome('trainer', state.session_id, state.scheme.id);
+      recordState();
+      if (frozen && previousStep !== null && state.step === previousStep + 1 && state.feedback) {
+        feedback = state.feedback;
+        phase = 'feedback';
+      } else {
+        frozen = feedback = null;
+        phase = 'awaiting';
       }
-      phase = 'awaiting';
-    } catch {
-      sessionStorage.removeItem(SESSION_KEY);
-      phase = 'setup';
+    } catch (error) {
+      if (error.status === 404) {
+        forgetSession();
+        showError(new Error('牌局已到期或伺服器已重啟，請開始新局'));
+      } else {
+        phase = 'recover';
+        showError(error);
+      }
     }
     render();
   }
@@ -89,20 +123,22 @@ export function trainerScreen(root) {
         step: state.step, ...move, ...schemeParams(state.scheme.id),
       });
       feedback = state.feedback;
-      record('trainer', feedback, state.scheme.id);
-      if (state.decision.type === 'outcome') {
-        recordOutcome('trainer', state.session_id, state.scheme.id);
-      }
+      recordState();
       phase = 'feedback';
     } catch (error) {
       showError(error);
-      if (error.status === 409) {
-        // stale step (e.g. double-tap or another tab advanced): resync
-        await resume();
+      if (error.status === 404) {
+        forgetSession();
+        showError(new Error('牌局已到期或伺服器已重啟，請開始新局'));
+      } else if (error.status === 409 || error.status === 0 || error.status >= 500) {
+        // A lost response may already have advanced the generator. Read first;
+        // never automatically resend a potentially committed action.
+        await resume(state.step);
         return;
+      } else {
+        phase = 'awaiting';
+        frozen = null;
       }
-      phase = 'awaiting';
-      frozen = null;
     }
     render();
   }
@@ -309,9 +345,17 @@ export function trainerScreen(root) {
     const quit = document.createElement('button');
     quit.className = 'btn';
     quit.textContent = '結束';
-    quit.addEventListener('click', () => {
-      sessionStorage.removeItem(SESSION_KEY);
-      window.location.hash = '#/';
+    quit.addEventListener('click', async () => {
+      try {
+        await remove(`/api/trainer/${state.session_id}`);
+        forgetSession();
+        window.location.hash = '#/';
+      } catch (error) {
+        if (error.status === 404) {
+          forgetSession();
+          window.location.hash = '#/';
+        } else showError(error);
+      }
     });
     controls.append(again, quit);
     wrap.append(controls);
@@ -397,6 +441,16 @@ export function trainerScreen(root) {
     }
     if (phase === 'setup') {
       root.append(setupScreen());
+      return;
+    }
+    if (phase === 'recover') {
+      const note = document.createElement('p');
+      note.textContent = '暫時無法讀取牌局。已保留牌局編號，重新連線後可再試。';
+      const retry = document.createElement('button');
+      retry.className = 'btn primary';
+      retry.textContent = '重新讀取牌局';
+      retry.addEventListener('click', () => resume(state?.step ?? null));
+      root.append(note, retry);
       return;
     }
     if (state.migi_declared) {

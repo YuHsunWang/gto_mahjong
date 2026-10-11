@@ -89,6 +89,11 @@ to amortise is now paid twice.
 
 ## Architecture
 
+For public-beta process limits, request budgets, session expiry and verification
+commands, see [beta operations](docs/beta-operations.md). Current release blockers
+and measured fixes are recorded in [the P0 implementation notes](docs/p0-implementation.md).
+Trainer sessions do not survive process restarts; use one worker and one replica.
+
 ```mermaid
 flowchart TB
     subgraph entry["Entry points"]

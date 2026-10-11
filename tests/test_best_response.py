@@ -27,6 +27,7 @@ from taimahjong.best_response import (
 from taimahjong.config import DEFAULT_RULES
 from taimahjong.quiz import REFINE_SIMS
 from taimahjong.reference_ev import representative_reference_cases
+from taimahjong.reference_ev import evaluate_candidate
 
 
 CASES = representative_reference_cases()
@@ -44,6 +45,18 @@ SPANNING_CASES = tuple(
     next(case for case in CASES if len(case.state.wall) == depth)
     for depth in (1, 2, 3, 4)
 )
+
+
+@pytest.mark.parametrize("case", [case for case in CASES if len(case.state.wall) <= 3], ids=lambda case: case.name)
+def test_best_response_payments_match_exact_reference_before_actor_draw(case):
+    # With at most three draws there is no later actor choice. The two
+    # independent traversals must therefore give exactly the same payment,
+    # including 海底/河底 and the supplied settlement rules.
+    observation = observation_for(case)
+    for discard in case.state.legal_discards:
+        base, contributions = _analyse_opening(case.state, observation, discard, DEFAULT_RULES)
+        assert not contributions
+        assert base == evaluate_candidate(case.state, discard).actor_ev
 
 
 def test_sample_worlds_uses_productions_calibrated_belief(monkeypatch):
@@ -240,6 +253,10 @@ def test_production_rank_policy_keeps_the_winning_branch_continuation(
         observation.hand, observation.views, observation.visible,
     )
     assert captured["rank_kwargs"]["turns"] == 1
+    # The visible wall length is part of the observation: a one-tile endgame
+    # must not silently become a four-draw mid-game rollout without last-tile
+    # scoring. This does not reveal any tile in the hidden reference wall.
+    assert captured["rank_kwargs"]["context_template"].wall_remaining == observation.wall_size
     assert "rollout_players" not in captured["rank_kwargs"]
     assert "rollout_wall" not in captured["rank_kwargs"]
     ranked_calibration = captured["rank_kwargs"]["calibration"]

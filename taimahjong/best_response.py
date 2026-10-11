@@ -59,6 +59,7 @@ from .calibration import Calibration
 from .config import DEFAULT_RULES, RulesConfig
 from .danger import OpponentView
 from .ev import (
+    WinValueContext,
     _fold_choice,
     _production_discard_policy,
     _sample_production_world,
@@ -207,7 +208,9 @@ def production_rank_policy(
         turns=max(1, ceil(observation.wall_size / 4)),
         sims=sims,
         seed=seed,
-        context_template=observation.context,
+        context_template=WinValueContext(
+            observation.context, wall_remaining=observation.wall_size,
+        ),
         calibration=calibration,
         scheme=observation.scheme,
     )
@@ -276,7 +279,9 @@ def sample_worlds(
             observation.visible,
             observation.views,
             1,
-            observation.context,
+            WinValueContext(
+                observation.context, wall_remaining=observation.wall_size,
+            ),
             rng.randrange(2**64),
             calibration=calibration,
         )
@@ -336,7 +341,7 @@ def _analyse_opening(
 
     immediate = _ron_claims(frozen, state.acting_seat, discard, rules)
     if immediate:
-        outcome = _ron_terminal(state, immediate, state.acting_seat, discard)
+        outcome = _ron_terminal(state, immediate, state.acting_seat, discard, rules=rules)
         return Fraction(outcome.payment.deltas[state.acting_seat]), contributions
 
     wall_counts = [0] * 34
@@ -392,6 +397,8 @@ def _analyse_opening(
                     None,
                     tile,
                     drawn_hand,
+                    wall_remaining=total - 1,
+                    rules=rules,
                 )))
                 continue
 
@@ -469,7 +476,10 @@ def _analyse_opening(
         claims = _ron_claims(advanced, seat, chosen, rules)
         if claims:
             credit(probability * payment(
-                _ron_terminal(state, claims, seat, chosen)
+                _ron_terminal(
+                    state, claims, seat, chosen,
+                    wall_remaining=sum(remaining), rules=rules,
+                )
             ))
             return
         next_observed = (

@@ -6,6 +6,8 @@ kang, no temporary ``guo shui`` rule, and no flower replacement.
 
 from __future__ import annotations
 
+from .budget import checkpoint
+
 from dataclasses import dataclass, field
 from functools import lru_cache
 from random import Random
@@ -854,6 +856,7 @@ def play_game(
     _assert_conservation(players, wall, dead)
 
     while True:
+        checkpoint()
         actions += 1
         assert actions < 1000, "game did not terminate"
         player = players[current]

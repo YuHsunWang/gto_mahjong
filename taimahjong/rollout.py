@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .budget import checkpoint
+
 from dataclasses import dataclass
 from functools import lru_cache
 from random import Random
@@ -493,6 +495,7 @@ def resolve_terminal_distribution(
     without an opening discard.  Every later turn is unchanged, which is what
     puts a pass on the same signed-payment scale as a call.
     """
+    checkpoint()
     # Count the real live wall separately from a truncated rollout horizon.
     live_remaining = len(wall) if wall_remaining is None else wall_remaining
     if (
@@ -590,6 +593,7 @@ def resolve_terminal_distribution(
 
     current = next_seat
     while sum(remaining):
+        checkpoint()
         draw_index = rng.randrange(sum(remaining))
         cumulative = 0
         for tile, copies in enumerate(remaining):
