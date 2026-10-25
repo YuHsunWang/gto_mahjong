@@ -113,10 +113,15 @@ def main() -> int:
     parser.add_argument("--resamples", type=int, default=2000)
     parser.add_argument(
         "--quick", action="store_true",
-        help="screening budget: 52-case corpus (13 templates) x 20 worlds",
+        help="screening budget: full 416-case corpus x 10 worlds (~35 s)",
     )
     args = parser.parse_args()
-    templates, sims = (13, 20) if args.quick else (None, args.sims)
+    # Screen on every case, not a prefix of templates.  Measured 2026-10-26 on
+    # one candidate: full 416 x 100 gave +0.002 [-0.002, +0.008]; the first
+    # 52 x 20 cases said +0.028 and the first 104 x 40 said +0.016 with the
+    # interval above zero -- a fixed case subset is what a search overfits.
+    # 416 x 10 gave -0.005 and -0.0005 under world seeds 1 and 2.
+    templates, sims = (None, 10) if args.quick else (None, args.sims)
     try:
         policy = load_policy(args.candidate)
         result = score(
