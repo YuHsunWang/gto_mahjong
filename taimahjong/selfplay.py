@@ -840,7 +840,7 @@ def _seat_kong_policy(kong_policy: str | tuple[str, str, str, str], seat: int) -
 
 def play_game(
     seed: int | None = None,
-    policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious"),
+    policies: tuple[str, str, str, str] | None = None,
     snapshot_hook: Callable[[DecisionSnapshot], None] | None = None,
     dealer_streak: int = 0,
     kong_policy: str | tuple[str, str, str, str] = "none",
@@ -865,7 +865,9 @@ def play_game(
     only a seat's observation and also runs on post-call discards. Declared
     players retain the engine's forced drawn-tile discard.
     """
-    if len(policies) != 4 or any(policy not in POLICIES for policy in policies):
+    # Omitted policies keep a resumed state's own seats; a fresh game gets the default mix.
+    seat_policies = ("attack", "cautious", "attack", "cautious") if policies is None else policies
+    if len(seat_policies) != 4 or any(policy not in POLICIES for policy in seat_policies):
         raise ValueError("policies must name four entries from POLICIES")
     if not isinstance(consume_calibration, bool):
         raise ValueError("consume_calibration must be a boolean")
@@ -877,7 +879,7 @@ def play_game(
     rng = Random(seed)
     tiles = [tile for tile in range(34) for _ in range(4)]
     rng.shuffle(tiles)
-    players = [Player(policy) for policy in policies]
+    players = [Player(policy) for policy in seat_policies]
     players[DEALER_SEAT].dealer_streak = dealer_streak
     for _ in range(16):
         for player in players:
@@ -894,8 +896,9 @@ def play_game(
     if initial_state is not None:
         state = deepcopy(initial_state)
         players, wall, dead = state.players, state.wall, state.dead
-        for player, policy in zip(players, policies):
-            player.policy = policy
+        if policies is not None:
+            for player, policy in zip(players, policies):
+                player.policy = policy
         current, needs_draw, any_call = state.current, state.needs_draw, state.any_call
         actions, events, kong_log = state.actions, state.events, state.kong_log
         dealer_streak, seat_kong = state.dealer_streak, state.seat_kong

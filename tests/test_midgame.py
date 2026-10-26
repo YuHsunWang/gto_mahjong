@@ -79,6 +79,15 @@ def test_every_pre_discard_resume_matches_full_original_trace(seed, kong):
             assert finish_case(restored, ATTACK).summary() == original.summary()
 
 
+def test_resume_without_policies_keeps_the_stored_seats():
+    # Omitting policies must not swap in play_game's default attack/cautious mix.
+    policies = ("cautious", "attack", "ev_aware", "attack")
+    states = []
+    original = play_game(0, policies, state_hook=lambda state: states.append(deepcopy(state)))
+    for state in states[::7]:
+        assert play_game(initial_state=state).summary() == original.summary()
+
+
 def test_corpus_is_reproducible_and_never_contains_declarations(corpus):
     repeated = build_corpus(len(corpus), 1)
     assert [case_document(case) for case in corpus] == [case_document(case) for case in repeated]
