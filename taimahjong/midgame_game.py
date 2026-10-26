@@ -48,13 +48,17 @@ def choose_discard(observation: DecisionSnapshot, strategy: str) -> tuple[int, b
     return min(ranked)[2], True
 
 
-def profiles() -> tuple[tuple[str, ...], ...]:
-    result = [BASE_PROFILE]
+def profiles(base: str = BASE_PROFILE[0]) -> tuple[tuple[str, ...], ...]:
+    """The symmetric base profile, then each role alone switched to every other strategy."""
+    if base not in STRATEGIES:
+        raise ValueError(f"unknown strategy: {base}")
+    result = [(base,) * 4]
     for role in range(4):
-        for alternative in STRATEGIES[1:]:
-            profile = list(BASE_PROFILE)
-            profile[role] = alternative
-            result.append(tuple(profile))
+        for alternative in STRATEGIES:
+            if alternative != base:
+                profile = [base] * 4
+                profile[role] = alternative
+                result.append(tuple(profile))
     return tuple(result)
 
 

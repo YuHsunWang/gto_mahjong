@@ -191,6 +191,9 @@ def test_profiles_and_self_gains_are_exactly_zero(corpus):
     assert len(profiles()) == len(set(profiles())) == 13
     assert profiles()[0] == BASE_PROFILE
     assert all(sum(a != b for a, b in zip(profile, BASE_PROFILE)) == 1 for profile in profiles()[1:])
+    attack = profiles("attack")
+    assert attack[0] == ("attack",) * 4 and len(set(attack)) == 13
+    assert {profile[2] for profile in attack[1:] if profile[2] != "attack"} == set(STRATEGIES) - {"attack"}
     table = []
     for case in corpus[:2]:
         actor = case.state.current

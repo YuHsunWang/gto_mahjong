@@ -23,8 +23,8 @@ sys.path.insert(0, str(ROOT))
 
 from taimahjong.midgame_corpus import build_corpus, case_document, case_from_document
 from taimahjong.midgame_game import (
-    actor_shanten, bootstrap_interval, finish_case, paired_case_gains, profiles,
-    reshuffled_wall,
+    BASE_PROFILE, STRATEGIES, actor_shanten, bootstrap_interval, finish_case,
+    paired_case_gains, profiles, reshuffled_wall,
 )
 
 
@@ -48,7 +48,7 @@ def save_checkpoint(path: Path | None, document: dict) -> None:
 
 def report(document: dict, cases: tuple) -> dict:
     rows = document["worlds"]
-    profile_list = profiles()
+    profile_list = profiles(document["parameters"].get("base", BASE_PROFILE[0]))
     tables = [[[world[index] for world in case] for case in rows] for index in range(len(profile_list))]
     base = tables[0]
     seed = document["parameters"]["seed"]
@@ -89,11 +89,14 @@ def report(document: dict, cases: tuple) -> dict:
     }
 
 
-def run(*, cases: int, sims: int, seed: int, checkpoint: Path | None = None, resume: bool = False) -> dict:
+def run(*, cases: int, sims: int, seed: int, base: str = BASE_PROFILE[0], checkpoint: Path | None = None, resume: bool = False) -> dict:
     run_started = perf_counter()
     if cases < 1 or sims < 1:
         raise ValueError("cases and sims must be positive")
     parameters = {"cases": cases, "sims": sims, "seed": seed}
+    if base != BASE_PROFILE[0]:  # keeps tenpai_attack checkpoints and reports unchanged
+        parameters["base"] = base
+    profile_list = profiles(base)
     fingerprint = source_digest()
     if resume:
         if checkpoint is None:
@@ -128,7 +131,7 @@ def run(*, cases: int, sims: int, seed: int, checkpoint: Path | None = None, res
             world_seed = Random(f"midgame:{seed}:{case_index}:{world_index}").getrandbits(64)
             wall = reshuffled_wall(case, world_seed)
             world = []
-            for profile in profiles():
+            for profile in profile_list:
                 result = finish_case(case, profile, wall=wall)
                 actor = case.state.current
                 world.append([result.point_deltas[(actor + role) % 4] for role in range(4)])
@@ -148,12 +151,13 @@ def main() -> int:
     parser.add_argument("--cases", type=int, default=40)
     parser.add_argument("--sims", type=int, default=10)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--base", choices=STRATEGIES, default=BASE_PROFILE[0], help="strategy all four seats play in the base profile")
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
-        result = run(cases=args.cases, sims=args.sims, seed=args.seed, checkpoint=args.checkpoint, resume=args.resume)
+        result = run(cases=args.cases, sims=args.sims, seed=args.seed, base=args.base, checkpoint=args.checkpoint, resume=args.resume)
     except (ValueError, FileNotFoundError) as error:
         parser.error(str(error))
     text = json.dumps(result, indent=2) + "\n"
