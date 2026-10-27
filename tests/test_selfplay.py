@@ -754,3 +754,12 @@ def test_play_game_passes_active_rules_to_own_win_value(monkeypatch):
     monkeypatch.setattr(selfplay, "_own_win_value", capture)
     play_game(7, policies=("ev_aware",) * 4, rules=rules)
     assert seen and all(configured == rules for configured in seen)
+
+
+def test_declared_player_may_concealed_kong():
+    # Seed where seat 0 declares on discard 1, then concealed-kongs 6p; this
+    # used to crash the danger model as "declaration after a called meld".
+    play_game(4057081917825351542, ("attack",) * 4, kong_policy="concealed_added")
+    with pytest.raises(ValueError, match="called meld"):
+        OpponentView([0], [(14, 14, 14), (5, 5, 5)], 0, concealed_kongs=1).validate()
+    OpponentView([0], [(14, 14, 14)], 0, concealed_kongs=1).validate()

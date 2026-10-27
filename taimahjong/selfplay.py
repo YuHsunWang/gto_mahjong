@@ -243,6 +243,7 @@ def _view(player: Player, seat: int) -> OpponentView:
         dealer_streak=player.dealer_streak if seat == DEALER_SEAT else 0,
         hand_count=sum(player.hand),
         discard_count=player.discards,
+        concealed_kongs=sum(kong_tiles(kong)[1] for kong in player.kongs),
     )
 
 

@@ -229,6 +229,9 @@ class OpponentView:
     # Total discards made, including tiles subsequently called out of the river.
     # Older callers that only know the river retain a usable public estimate.
     discard_count: int | None = None
+    # How many of ``melds`` are concealed kongs shown as triplets. A concealed
+    # kong is not a call, so it may coexist with a migi declaration.
+    concealed_kongs: int = 0
 
     def __post_init__(self) -> None:
         if self.discard_count is None:
@@ -249,6 +252,12 @@ class OpponentView:
             raise ValueError("dealer_streak requires is_dealer=True")
         if not isinstance(self.hand_count, int) or isinstance(self.hand_count, bool) or self.hand_count < 0:
             raise ValueError("hand_count must be a non-negative integer")
+        if (
+            not isinstance(self.concealed_kongs, int)
+            or isinstance(self.concealed_kongs, bool)
+            or not 0 <= self.concealed_kongs <= len(self.melds)
+        ):
+            raise ValueError("concealed_kongs must be an integer between 0 and the meld count")
         if isinstance(self.river, list):
             self.river = [RiverEntry(entry) if _is_tile(entry) else entry for entry in self.river]
 
@@ -266,7 +275,7 @@ class OpponentView:
         if self.declared_at is not None:
             if self.declared_at >= len(self.river):
                 raise ValueError("declared_at must index a discard in the opponent river")
-            if self.melds:
+            if len(self.melds) > self.concealed_kongs:
                 raise ValueError("a migi declaration cannot follow a called meld")
         public = [0] * 34
         for entry in self.river:
