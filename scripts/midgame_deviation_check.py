@@ -90,14 +90,28 @@ def report(document: dict, cases: tuple) -> dict:
 
 
 def run(*, cases: int, sims: int, seed: int, base: str = BASE_PROFILE[0], checkpoint: Path | None = None, resume: bool = False) -> dict:
-    run_started = perf_counter()
     if cases < 1 or sims < 1:
         raise ValueError("cases and sims must be positive")
     parameters = {"cases": cases, "sims": sims, "seed": seed}
     if base != BASE_PROFILE[0]:  # keeps tenpai_attack checkpoints and reports unchanged
         parameters["base"] = base
-    profile_list = profiles(base)
-    fingerprint = source_digest()
+    return run_experiment(
+        parameters=parameters, cases=cases, corpus_builder=lambda: build_corpus(cases, seed),
+        profile_list=profiles(base), fingerprint=source_digest(), finish=finish_case,
+        make_report=report, checkpoint=checkpoint, resume=resume,
+    )
+
+
+def run_experiment(*, parameters: dict, cases: int, corpus_builder, profile_list,
+                   fingerprint: str, finish, make_report, checkpoint: Path | None = None,
+                   resume: bool = False) -> dict:
+    """Shared corpus storage, atomic world checkpoints, CRN and resume loop.
+
+    Each finish callback receives the identical wall for a case-world pair and
+    returns absolute-seat payoffs. Report callbacks receive actor-relative rows.
+    """
+    run_started = perf_counter()
+    sims, seed = parameters["sims"], parameters["seed"]
     if resume:
         if checkpoint is None:
             raise ValueError("--resume requires --checkpoint")
@@ -111,7 +125,7 @@ def run(*, cases: int, sims: int, seed: int, base: str = BASE_PROFILE[0], checkp
         if checkpoint is not None and checkpoint.exists():
             raise ValueError("checkpoint exists; use --resume or a new path")
         started = perf_counter()
-        corpus = build_corpus(cases, seed)
+        corpus = corpus_builder()
         corpus_seconds = perf_counter() - started
         document = {
             "version": 1, "parameters": parameters, "source_digest": fingerprint,
@@ -132,7 +146,7 @@ def run(*, cases: int, sims: int, seed: int, base: str = BASE_PROFILE[0], checkp
             wall = reshuffled_wall(case, world_seed)
             world = []
             for profile in profile_list:
-                result = finish_case(case, profile, wall=wall)
+                result = finish(case, profile, wall=wall)
                 actor = case.state.current
                 world.append([result.point_deltas[(actor + role) % 4] for role in range(4)])
             rows.append(world)
@@ -141,7 +155,7 @@ def run(*, cases: int, sims: int, seed: int, base: str = BASE_PROFILE[0], checkp
         print(f"case {case_index + 1}/{cases}: {len(rows)}/{sims} worlds", file=sys.stderr, flush=True)
     document["timing"]["rollout_seconds"] = previous_seconds + perf_counter() - started
     save_checkpoint(checkpoint, document)
-    result = report(document, corpus)
+    result = make_report(document, corpus)
     result["timing"]["total_seconds"] = previous_elapsed + perf_counter() - run_started
     return result
 

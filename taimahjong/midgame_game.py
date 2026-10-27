@@ -35,6 +35,15 @@ def choose_discard(observation: DecisionSnapshot, strategy: str) -> tuple[int, b
     threshold = {"tenpai_attack": 0, "one_shanten_attack": 1, "fold": -2, "attack": 99}[strategy]
     if analyses[0].shanten_after <= threshold:
         return analyses[0].discard, False
+    return min(discard_risks(observation))[2], True
+
+
+def discard_risks(observation: DecisionSnapshot) -> tuple[tuple[float, int, int], ...]:
+    """(Worst expected danger, efficiency order, tile) for every legal discard.
+
+    Shared with feature extraction so its scores are exactly fold's scores.
+    """
+    analyses = _cached_analysis(observation.hand, len(observation.melds) + len(observation.kongs), observation.public_counts)
     opponents = [(opponent, tenpai_score(opponent).score) for _, opponent in observation.opponents]
     ranked = []
     for order, analysis in enumerate(analyses):
@@ -45,7 +54,7 @@ def choose_discard(observation: DecisionSnapshot, strategy: str) -> tuple[int, b
              for opponent, tenpai in opponents), default=0.0,
         )
         ranked.append((risk, order, analysis.discard))
-    return min(ranked)[2], True
+    return tuple(ranked)
 
 
 def profiles(base: str = BASE_PROFILE[0]) -> tuple[tuple[str, ...], ...]:
@@ -68,22 +77,33 @@ def reshuffled_wall(case: MidgameCase, seed: int) -> tuple[int, ...]:
     return tuple(wall)
 
 
-def finish_case(case: MidgameCase, profile: tuple[str, ...], *, wall: tuple[int, ...] | None = None) -> GameResult:
+def finish_case(case: MidgameCase, profile: tuple[str, ...], *, wall: tuple[int, ...] | None = None, first_discard_strategy: str | None = None) -> GameResult:
     """Profile uses roles: actor first, then absolute seats in draw order.
 
     Omit wall to replay its real order; callers pass one shared permutation
     to every profile for common random numbers. Return absolute-seat payoffs.
+    first_discard_strategy overrides only the stored pending discard; later
+    discards use the profile, including any later actor discards after calls.
     """
     if len(profile) != 4 or any(name not in STRATEGIES for name in profile):
         raise ValueError("profile must contain four known strategies")
+    if first_discard_strategy is not None and first_discard_strategy not in STRATEGIES:
+        raise ValueError("unknown first discard strategy")
     state = case.state
     if wall is not None:
         if sorted(wall) != sorted(state.wall):
             raise ValueError("replacement wall must preserve the live tile multiset")
         state = replace(state, wall=list(wall))
     actor = state.current
+    first = first_discard_strategy is not None
 
     def discard(observation: DecisionSnapshot) -> tuple[int, bool]:
+        nonlocal first
+        if first:
+            first = False
+            assert observation.seat == actor
+            if first_discard_strategy is not None:
+                return choose_discard(observation, first_discard_strategy)
         return choose_discard(observation, profile[(observation.seat - actor) % 4])
 
     return play_game(policies=("attack",) * 4, initial_state=state, discard_policy=discard)

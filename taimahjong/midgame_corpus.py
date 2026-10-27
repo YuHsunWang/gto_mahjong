@@ -39,7 +39,7 @@ class MidgameCase:
         return stage_for(self.wall_remaining)
 
 
-def sample_case(game_seed: int, selection_seed: int, *, kong_policy: str = "concealed_added") -> MidgameCase:
+def sample_case(game_seed: int, selection_seed: int, *, kong_policy: str = "concealed_added", eligible_stages: frozenset[str] | None = None) -> MidgameCase:
     """Reservoir-sample exactly one eligible decision, including after calls.
 
     Selection RNG is separate from the engine's deal RNG. The default keeps
@@ -53,6 +53,8 @@ def sample_case(game_seed: int, selection_seed: int, *, kong_policy: str = "conc
     def capture(state: GameState) -> None:
         nonlocal selected, chosen, count
         if any(player.declared for player in state.players):
+            return
+        if eligible_stages is not None and stage_for(len(state.wall)) not in eligible_stages:
             return
         count += 1
         if rng.randrange(count) == 0:
@@ -77,6 +79,34 @@ def build_corpus(cases: int, seed: int) -> tuple[MidgameCase, ...]:
         except ValueError as error:
             if str(error) != "game ended before any eligible decision":
                 raise
+    return tuple(result)
+
+
+def build_stratified_corpus(per_stage: int, seed: int) -> tuple[MidgameCase, ...]:
+    """Uniform over all eligible points in still-needed stages, one per game.
+
+    The needed stages are fixed before each independent all-attack game.
+    Reservoir sampling gives every undeclared decision in their union equal
+    probability, including post-call decisions. Reject games with no such
+    point; stop once each stage has exactly per_stage cases. This intentionally
+    does not weight stages equally while multiple stages still need cases.
+    """
+    if per_stage < 1:
+        raise ValueError("per_stage must be positive")
+    rng = Random(seed)
+    counts = dict.fromkeys(("early", "mid", "late"), 0)
+    result = []
+    while any(count < per_stage for count in counts.values()):
+        needed = frozenset(stage for stage, count in counts.items() if count < per_stage)
+        game_seed, selection_seed = rng.getrandbits(64), rng.getrandbits(64)
+        try:
+            case = sample_case(game_seed, selection_seed, eligible_stages=needed)
+        except ValueError as error:
+            if str(error) != "game ended before any eligible decision":
+                raise
+            continue
+        result.append(case)
+        counts[case.stage] += 1
     return tuple(result)
 
 
