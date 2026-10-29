@@ -101,13 +101,13 @@ def report(document: dict, cases: tuple) -> dict:
         "extrapolation": "corpus seconds scale with cases; rollout seconds with case-world pairs, including checkpoint writes; reporting overhead excluded; no long experiment executed",
         "deviations": deviations, "per_case": per_case,
     } | ({
-        "sampling": f"one uniform undeclared, no-win decision with live wall <= {document['parameters']['max_wall']} per all-attack game; reject games with none",
+        "sampling": f"one uniform undeclared, no-win decision with live wall in [{document['parameters'].get('min_wall', 0)}, {document['parameters']['max_wall']}] per all-attack game; reject games with none",
         "overall_weighting": "natural frequency of decisions within the wall window",
     } if "max_wall" in document["parameters"] else {})
 
 
 def run(*, per_stage: int, sims: int, seed: int, checkpoint: Path | None = None, resume: bool = False,
-        max_wall: int | None = None) -> dict:
+        max_wall: int | None = None, min_wall: int = 0) -> dict:
     if per_stage < 1 or sims < 1:
         raise ValueError("per_stage and sims must be positive")
     parameters = {"per_stage": per_stage, "sims": sims, "seed": seed}
@@ -115,10 +115,12 @@ def run(*, per_stage: int, sims: int, seed: int, checkpoint: Path | None = None,
         cases, builder = 3 * per_stage, lambda: build_stratified_corpus(per_stage, seed)
     else:
         # Endgame window: per_stage is the total case count, all from wall <= max_wall.
-        if not 0 <= max_wall <= 58:
-            raise ValueError("max_wall must be between 0 and 58")
+        if not 0 <= min_wall <= max_wall <= 58:
+            raise ValueError("need 0 <= min_wall <= max_wall <= 58")
         parameters["max_wall"] = max_wall
-        cases, builder = per_stage, lambda: build_corpus(per_stage, seed, max_wall=max_wall)
+        if min_wall:
+            parameters["min_wall"] = min_wall
+        cases, builder = per_stage, lambda: build_corpus(per_stage, seed, max_wall=max_wall, min_wall=min_wall)
     return run_experiment(
         parameters=parameters, cases=cases,
         corpus_builder=builder,
@@ -151,10 +153,11 @@ def main() -> int:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--csv", type=Path)
+    parser.add_argument("--min-wall", type=int, default=0, help="with --max-wall: lower bound of the live-wall window")
     parser.add_argument("--max-wall", type=int, help="only sample decisions with at most this many live-wall tiles; --per-stage is then the total case count")
     args = parser.parse_args()
     try:
-        result = run(per_stage=args.per_stage, sims=args.sims, seed=args.seed, checkpoint=args.checkpoint, resume=args.resume, max_wall=args.max_wall)
+        result = run(per_stage=args.per_stage, sims=args.sims, seed=args.seed, checkpoint=args.checkpoint, resume=args.resume, max_wall=args.max_wall, min_wall=args.min_wall)
         write_outputs(result, args.output, args.csv)
     except (ValueError, FileNotFoundError) as error:
         parser.error(str(error))

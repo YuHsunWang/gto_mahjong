@@ -39,7 +39,7 @@ class MidgameCase:
         return stage_for(self.wall_remaining)
 
 
-def sample_case(game_seed: int, selection_seed: int, *, kong_policy: str = "concealed_added", eligible_stages: frozenset[str] | None = None, max_wall: int | None = None) -> MidgameCase:
+def sample_case(game_seed: int, selection_seed: int, *, kong_policy: str = "concealed_added", eligible_stages: frozenset[str] | None = None, max_wall: int | None = None, min_wall: int = 0) -> MidgameCase:
     """Reservoir-sample exactly one eligible decision, including after calls.
 
     Selection RNG is separate from the engine's deal RNG. The default keeps
@@ -56,7 +56,7 @@ def sample_case(game_seed: int, selection_seed: int, *, kong_policy: str = "conc
             return
         if eligible_stages is not None and stage_for(len(state.wall)) not in eligible_stages:
             return
-        if max_wall is not None and len(state.wall) > max_wall:
+        if max_wall is not None and len(state.wall) > max_wall or len(state.wall) < min_wall:
             return
         count += 1
         if rng.randrange(count) == 0:
@@ -68,10 +68,10 @@ def sample_case(game_seed: int, selection_seed: int, *, kong_policy: str = "conc
     return MidgameCase(game_seed, chosen, count, selected, result.point_deltas)
 
 
-def build_corpus(cases: int, seed: int, *, max_wall: int | None = None) -> tuple[MidgameCase, ...]:
+def build_corpus(cases: int, seed: int, *, max_wall: int | None = None, min_wall: int = 0) -> tuple[MidgameCase, ...]:
     """One case per independently seeded game; reject games with no decision.
 
-    ``max_wall`` keeps only decisions with at most that many live-wall tiles.
+    ``min_wall``/``max_wall`` keep only decisions with that many live-wall tiles.
     """
     if cases < 1:
         raise ValueError("cases must be positive")
@@ -80,7 +80,7 @@ def build_corpus(cases: int, seed: int, *, max_wall: int | None = None) -> tuple
     while len(result) < cases:
         game_seed, selection_seed = rng.getrandbits(64), rng.getrandbits(64)
         try:
-            result.append(sample_case(game_seed, selection_seed, max_wall=max_wall))
+            result.append(sample_case(game_seed, selection_seed, max_wall=max_wall, min_wall=min_wall))
         except ValueError as error:
             if str(error) != "game ended before any eligible decision":
                 raise

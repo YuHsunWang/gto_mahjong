@@ -50,6 +50,7 @@ def test_max_wall_corpus_only_samples_the_endgame_window():
     for case in endgame:
         assert not any(player.declared for player in case.state.players)
         assert finish_case(case, ATTACK).point_deltas == case.original_payoffs
+    assert all(10 <= case.wall_remaining <= 19 for case in build_corpus(4, 1, max_wall=19, min_wall=10))
 
 
 def test_stratified_counts_reproducible_undeclared_one_per_game(cases):
