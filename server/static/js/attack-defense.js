@@ -22,9 +22,12 @@ export function attackDefenseScreen(root) {
   let result = null;
   let phase = 'idle';
   let requestId = 0;
+  // Any hash change replaces this screen instance, so its pending responses must be dropped
+  // even if the user comes back to #/attack-defense before they resolve.
+  window.addEventListener('hashchange', () => { requestId += 1; }, { once: true });
 
   function active(id) {
-    return id === requestId && window.location.hash === '#/attack-defense';
+    return id === requestId;
   }
 
   async function generate(requested = { game_seed: randomSeed(), selection_seed: randomSeed() }) {

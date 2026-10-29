@@ -115,8 +115,9 @@ def run(*, per_stage: int, sims: int, seed: int, checkpoint: Path | None = None,
         cases, builder = 3 * per_stage, lambda: build_stratified_corpus(per_stage, seed)
     else:
         # Endgame window: per_stage is the total case count, all from wall <= max_wall.
-        if not 0 <= min_wall <= max_wall <= 58:
-            raise ValueError("need 0 <= min_wall <= max_wall <= 58")
+        # The first draw happens before any decision, so 57 is the largest reachable wall.
+        if not 0 <= min_wall <= max_wall <= 57:
+            raise ValueError("need 0 <= min_wall <= max_wall <= 57")
         parameters["max_wall"] = max_wall
         if min_wall:
             parameters["min_wall"] = min_wall

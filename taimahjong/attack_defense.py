@@ -1,7 +1,8 @@
 """Independent attack/defense grading using only an actor's public snapshot."""
 
 from .midgame_game import choose_discard, discard_risks
-from .selfplay import DecisionSnapshot, _cached_analysis
+from .selfplay import DecisionSnapshot
+from .ukeire import discard_analysis
 
 
 def risk_levels(risks: dict[int, float]) -> dict[int, str]:
@@ -38,7 +39,8 @@ def recommendation(observation: DecisionSnapshot, shanten_after: int) -> dict:
 
 
 def grade(observation: DecisionSnapshot, attack_tile: int, defense_tile: int) -> dict:
-    analyses = _cached_analysis(
+    # Public analysis: unlike the self-play cache, it no longer counts the discarded copy as drawable.
+    analyses = discard_analysis(
         observation.hand, len(observation.melds) + len(observation.kongs), observation.public_counts,
     )
     by_tile = {item.discard: item for item in analyses}

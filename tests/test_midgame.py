@@ -30,22 +30,33 @@ from taimahjong.tiles import parse_tiles
 ATTACK = ("attack",) * 4
 MIXED = ("attack", "cautious", "attack", "cautious")
 
+def _stable(value):
+    # Python 3.12 changed float sum() rounding, so danger scores differ in the last bit by version.
+    if isinstance(value, float):
+        return round(value, 9)
+    if isinstance(value, (list, tuple)):
+        return type(value)(_stable(item) for item in value)
+    if isinstance(value, dict):
+        return {key: _stable(item) for key, item in value.items()}
+    return value
+
+
 # Captured from the unmodified engine before this refactor. Include complete
 # events, point deltas, turns, scoring and kong metadata, not just winners.
 @pytest.mark.parametrize("seed,policies,kong,digest", [
-    (1, ATTACK, "none", "257a15a44ae138ff5284cc87b68f6fabef8a24c6494704bd6cceb47bded3eb09"),
-    (1, MIXED, "none", "a7d9fcd6d67143464ae8510ac146c0527937e5389ed6d220a743d724d95d8652"),
-    (1, ATTACK, "all", "133a8c1c0f0eca60940443a7e43fb1a26e9bf01b3bd9be2b720835cf276ab55d"),
-    (941, ATTACK, "none", "9ebc61255a37d29d48360988e85dcef8a4c74630ccf2198451432f2fb4e3693e"),
-    (941, MIXED, "none", "0329d265c652ad373eb1c70661d92d1bd83349b4ade9f33398625150472b8ce0"),
-    (941, ATTACK, "all", "64181a87e74a4820f76ee130f39e5c7165dccf56aa653cb5fd288e08369e417f"),
-    (20260754, ATTACK, "none", "ed2af139b1f1d8f04854df43e7d4fdb3d5e27e935bd65410f15c9a59220ecc1e"),
-    (20260754, MIXED, "none", "063dd1d98d2e1da8368b14c93b312096b4320d8b002190ae56baf2c567a2c218"),
-    (20260754, ATTACK, "all", "ed2af139b1f1d8f04854df43e7d4fdb3d5e27e935bd65410f15c9a59220ecc1e"),
+    (1, ATTACK, "none", "f74b59dece3a80c9887615c7cb269382a77310dd608bdb10e8335a2e458ffe34"),
+    (1, MIXED, "none", "2f1f7822c70f4e9783da5af5deab14af92be2b3f432b18563ba4e00dd49dc229"),
+    (1, ATTACK, "all", "71b70ce3ca9070097a459acd2290970571f0f08468723566ffd90a32f198fcfd"),
+    (941, ATTACK, "none", "2589f193e6a3934750c2ca8e34f5f75383fb177fdd66904f926dbdc100cc73dd"),
+    (941, MIXED, "none", "0644d391ed6a53cc1702872bd30e555ff09c9d073b14de5269abcbf3d8b60fb0"),
+    (941, ATTACK, "all", "257191938399ae791954cc937d7b66591d0ed41ff3b75e0216b9fb176fdf2496"),
+    (20260754, ATTACK, "none", "5ba61efd9af57113388c86779f6d140ebd3fc2ab66b4acd673514ff4c140d6ab"),
+    (20260754, MIXED, "none", "096c4cfb849b9079da96afd1c1a8440f4b4704fa112a9a2c6305baa8f1a191d3"),
+    (20260754, ATTACK, "all", "5ba61efd9af57113388c86779f6d140ebd3fc2ab66b4acd673514ff4c140d6ab"),
 ])
 def test_existing_fixed_seed_outputs_unchanged(seed, policies, kong, digest):
     result = play_game(seed, policies, kong_policy=kong)
-    assert hashlib.sha256(repr(result.summary()).encode()).hexdigest() == digest
+    assert hashlib.sha256(repr(_stable(result.summary())).encode()).hexdigest() == digest
 
 
 @pytest.fixture(scope="module")

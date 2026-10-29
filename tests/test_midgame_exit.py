@@ -310,3 +310,9 @@ def test_report_case_means_groups_csv_and_cost_scaling(cases, tmp_path):
 def test_positive_parameters(per_stage, sims):
     with pytest.raises(ValueError, match="positive"):
         cli.run(per_stage=per_stage, sims=sims, seed=1)
+
+
+def test_unreachable_wall_window_is_rejected_instead_of_sampling_forever():
+    # Every decision follows a draw, so a 58-tile wall never occurs.
+    with pytest.raises(ValueError, match="57"):
+        cli.run(per_stage=1, sims=1, seed=1, min_wall=58, max_wall=58)

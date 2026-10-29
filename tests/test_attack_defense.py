@@ -13,7 +13,7 @@ from taimahjong.danger import kong_tiles, meld_tiles
 from taimahjong.midgame_corpus import sample_case
 from taimahjong.midgame_exit import case_observation
 from taimahjong.midgame_game import choose_discard, discard_risks
-from taimahjong.selfplay import _cached_analysis
+from taimahjong.ukeire import discard_analysis
 
 
 @lru_cache(maxsize=None)
@@ -24,7 +24,7 @@ def case(game_seed=1, selection_seed=2):
 @pytest.mark.parametrize("seeds", [(1, 2), (2, 3), (3, 4), (5, 6)])
 def test_correct_sets_match_engine_and_grade_every_legal_choice(seeds):
     observation = case_observation(case(*seeds))
-    analyses = _cached_analysis(
+    analyses = discard_analysis(
         observation.hand, len(observation.melds) + len(observation.kongs), observation.public_counts,
     )
     best_shanten = min(item.shanten_after for item in analyses)
