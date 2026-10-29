@@ -33,6 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from taimahjong.analysis import AnalysisContext, CalibrationProvider
+from taimahjong.attack_defense import grade as grade_attack_defense
 from taimahjong.calibration import Calibration
 from taimahjong.config import DEFAULT_GAME_CONFIG, GameConfig, RulesConfig
 from taimahjong.danger import (
@@ -56,6 +57,8 @@ from taimahjong.ev import (
     remaining_draws,
 )
 from taimahjong.mistake_label import label_mistake
+from taimahjong.midgame_corpus import MidgameCase, sample_case
+from taimahjong.midgame_exit import case_observation
 from taimahjong.quiz import (
     EV_EFFECT_SIZE_MIN,
     QuizGrade,
@@ -431,6 +434,77 @@ def endgame_grade(request: GradeRequest) -> dict[str, Any]:
         "tag": drill.tag,
         **_analysis_payload(analysis),
     }
+
+
+class AttackDefenseNewRequest(ApiRequest):
+    game_seed: int | None = Field(default=None, ge=0, le=2**32 - 1, strict=True)
+    selection_seed: int | None = Field(default=None, ge=0, le=2**32 - 1, strict=True)
+
+
+class AttackDefenseGradeRequest(ApiRequest):
+    game_seed: int = Field(ge=0, le=2**32 - 1, strict=True)
+    selection_seed: int = Field(ge=0, le=2**32 - 1, strict=True)
+    attack_tile: int = Field(ge=0, le=33, strict=True)
+    defense_tile: int = Field(ge=0, le=33, strict=True)
+
+
+@lru_cache(maxsize=128)
+def _attack_defense_case(game_seed: int, selection_seed: int) -> MidgameCase:
+    return sample_case(game_seed, selection_seed)
+
+
+def _attack_defense_payload(case: MidgameCase) -> dict[str, Any]:
+    """Explicit public-field allowlist; never serialize the full game state.
+
+    OpponentView represents kongs as triplets for danger calculations. For
+    display, use the original public sets so all four kong tiles are shown.
+    """
+    observation = case_observation(case)
+    opponents = []
+    for offset in (1, 2, 3):
+        seat = (observation.seat + offset) % 4
+        player = case.state.players[seat]
+        kongs = [_kong_detail_payload(kong) for kong in player.kongs]
+        melds = [list(meld_tiles(meld)) for meld in player.melds]
+        details = [_meld_detail_payload(meld) for meld in player.melds]
+        for kong in kongs:
+            tiles = [kong["tile"]] * 4
+            melds.append(tiles)
+            details.append({**kong, "tiles": tiles, "kind": "kong"})
+        opponents.append({
+            "seat": seat, "river": _river_payload(player.river),
+            "melds": melds, "meld_details": details, "kong_details": kongs,
+            "hand_count": sum(player.hand), "is_dealer": seat == 0,
+            "dealer_streak": observation.dealer_streak if seat == 0 else 0,
+        })
+    return {
+        "seat": observation.seat, "dealer_seat": 0,
+        "is_dealer": observation.seat == 0, "dealer_streak": observation.dealer_streak,
+        "turn": observation.turn, "drawn_tile": observation.drawn_tile,
+        "hand": list(observation.hand), "own_river": _river_payload(observation.river),
+        "own_melds": [list(meld_tiles(meld)) for meld in observation.melds],
+        "own_meld_details": [_meld_detail_payload(meld) for meld in observation.melds],
+        "own_kong_details": [_kong_detail_payload(kong) for kong in observation.kongs],
+        "opponents": opponents, "wall_remaining": observation.wall_remaining,
+    }
+
+
+@app.post("/api/attack-defense/new")
+def attack_defense_new(request: AttackDefenseNewRequest) -> dict[str, Any]:
+    game_seed = _new_seed(request.game_seed)
+    selection_seed = _new_seed(request.selection_seed)
+    case = _engine(_attack_defense_case, game_seed, selection_seed)
+    return {
+        "game_seed": game_seed, "selection_seed": selection_seed,
+        "position": _attack_defense_payload(case),
+    }
+
+
+@app.post("/api/attack-defense/grade")
+def attack_defense_grade(request: AttackDefenseGradeRequest) -> dict[str, Any]:
+    case = _engine(_attack_defense_case, request.game_seed, request.selection_seed)
+    result = _engine(grade_attack_defense, case_observation(case), request.attack_tile, request.defense_tile)
+    return {"grade": result}
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,567 @@
+{
+  "parameters": {
+    "cases": 40,
+    "sims": 10,
+    "seed": 1
+  },
+  "source_digest": "308466f6e97ec4395c8e945f455af3811153df1b2f6a70536ceaae0804a88a61",
+  "profiles": [
+    [
+      "tenpai_attack",
+      "tenpai_attack",
+      "tenpai_attack",
+      "tenpai_attack"
+    ],
+    [
+      "one_shanten_attack",
+      "tenpai_attack",
+      "tenpai_attack",
+      "tenpai_attack"
+    ],
+    [
+      "fold",
+      "tenpai_attack",
+      "tenpai_attack",
+      "tenpai_attack"
+    ],
+    [
+      "attack",
+      "tenpai_attack",
+      "tenpai_attack",
+      "tenpai_attack"
+    ],
+    [
+      "tenpai_attack",
+      "one_shanten_attack",
+      "tenpai_attack",
+      "tenpai_attack"
+    ],
+    [
+      "tenpai_attack",
+      "fold",
+      "tenpai_attack",
+      "tenpai_attack"
+    ],
+    [
+      "tenpai_attack",
+      "attack",
+      "tenpai_attack",
+      "tenpai_attack"
+    ],
+    [
+      "tenpai_attack",
+      "tenpai_attack",
+      "one_shanten_attack",
+      "tenpai_attack"
+    ],
+    [
+      "tenpai_attack",
+      "tenpai_attack",
+      "fold",
+      "tenpai_attack"
+    ],
+    [
+      "tenpai_attack",
+      "tenpai_attack",
+      "attack",
+      "tenpai_attack"
+    ],
+    [
+      "tenpai_attack",
+      "tenpai_attack",
+      "tenpai_attack",
+      "one_shanten_attack"
+    ],
+    [
+      "tenpai_attack",
+      "tenpai_attack",
+      "tenpai_attack",
+      "fold"
+    ],
+    [
+      "tenpai_attack",
+      "tenpai_attack",
+      "tenpai_attack",
+      "attack"
+    ]
+  ],
+  "timing": {
+    "corpus_seconds": 3.940519958967343,
+    "rollout_seconds": 224.8780852810014,
+    "total_seconds": 229.18670667300466,
+    "extrapolated_416x100_seconds": 23428.302276797407
+  },
+  "units": "tai-equivalent payoff including base (3-base/1-tai)",
+  "roles": "actor, then absolute seats +1, +2, +3 modulo 4",
+  "stage_cut_points": {
+    "late": [
+      0,
+      19
+    ],
+    "mid": [
+      20,
+      38
+    ],
+    "early": [
+      39,
+      58
+    ]
+  },
+  "calls": "selfplay strict shanten-improving pon/chi; shanten-safe concealed/added kongs for all seats",
+  "sampling": "one uniform eligible pre-discard decision per all-attack game; fixed concealed hands and dead wall; live-wall permutations only",
+  "interval": "95% percentile bootstrap of case means; 2000 resamples; pointwise, not simultaneous",
+  "extrapolation": "corpus seconds scale with games; rollout seconds scale with case-world pairs; reporting overhead excluded",
+  "corpus_stage_counts": {
+    "early": 27,
+    "mid": 12,
+    "late": 1
+  },
+  "base_self_gain_by_role": [
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  ],
+  "deviations": [
+    {
+      "role": 0,
+      "alternative": "one_shanten_attack",
+      "cases": 40,
+      "mean_gain": 1.155,
+      "ci95": [
+        0.6375,
+        1.7175
+      ],
+      "by_stage": {
+        "early": {
+          "cases": 27,
+          "mean_gain": 1.3074074074074074,
+          "ci95": [
+            0.637037037037037,
+            2.0407407407407407
+          ]
+        },
+        "mid": {
+          "cases": 12,
+          "mean_gain": 0.9083333333333333,
+          "ci95": [
+            0.20833333333333334,
+            1.6500000000000001
+          ]
+        },
+        "late": {
+          "cases": 1,
+          "mean_gain": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "by_actor_shanten": {
+        "tenpai": {
+          "cases": 7,
+          "mean_gain": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        },
+        "1-shanten": {
+          "cases": 10,
+          "mean_gain": 1.69,
+          "ci95": [
+            0.79,
+            2.69
+          ]
+        },
+        "2+-shanten": {
+          "cases": 23,
+          "mean_gain": 1.2739130434782608,
+          "ci95": [
+            0.5478260869565217,
+            2.0478260869565217
+          ]
+        }
+      }
+    },
+    {
+      "role": 0,
+      "alternative": "fold",
+      "cases": 40,
+      "mean_gain": -1.28,
+      "ci95": [
+        -1.875,
+        -0.6875
+      ],
+      "by_stage": {
+        "early": {
+          "cases": 27,
+          "mean_gain": -1.3703703703703705,
+          "ci95": [
+            -2.159259259259259,
+            -0.6481481481481481
+          ]
+        },
+        "mid": {
+          "cases": 12,
+          "mean_gain": -1.125,
+          "ci95": [
+            -2.308333333333333,
+            -0.18333333333333335
+          ]
+        },
+        "late": {
+          "cases": 1,
+          "mean_gain": -0.7,
+          "ci95": [
+            -0.7,
+            -0.7
+          ]
+        }
+      },
+      "by_actor_shanten": {
+        "tenpai": {
+          "cases": 7,
+          "mean_gain": -3.357142857142857,
+          "ci95": [
+            -5.185714285714285,
+            -1.5714285714285714
+          ]
+        },
+        "1-shanten": {
+          "cases": 10,
+          "mean_gain": -0.5700000000000001,
+          "ci95": [
+            -1.29,
+            0.010000000000000004
+          ]
+        },
+        "2+-shanten": {
+          "cases": 23,
+          "mean_gain": -0.9565217391304348,
+          "ci95": [
+            -1.7217391304347827,
+            -0.3304347826086957
+          ]
+        }
+      }
+    },
+    {
+      "role": 0,
+      "alternative": "attack",
+      "cases": 40,
+      "mean_gain": 1.8725,
+      "ci95": [
+        1.135,
+        2.66
+      ],
+      "by_stage": {
+        "early": {
+          "cases": 27,
+          "mean_gain": 2.374074074074074,
+          "ci95": [
+            1.2888888888888888,
+            3.440740740740741
+          ]
+        },
+        "mid": {
+          "cases": 12,
+          "mean_gain": 0.9,
+          "ci95": [
+            0.19166666666666665,
+            1.6416666666666666
+          ]
+        },
+        "late": {
+          "cases": 1,
+          "mean_gain": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "by_actor_shanten": {
+        "tenpai": {
+          "cases": 7,
+          "mean_gain": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        },
+        "1-shanten": {
+          "cases": 10,
+          "mean_gain": 1.69,
+          "ci95": [
+            0.79,
+            2.69
+          ]
+        },
+        "2+-shanten": {
+          "cases": 23,
+          "mean_gain": 2.5217391304347827,
+          "ci95": [
+            1.3304347826086955,
+            3.756521739130435
+          ]
+        }
+      }
+    },
+    {
+      "role": 1,
+      "alternative": "one_shanten_attack",
+      "cases": 40,
+      "mean_gain": 0.875,
+      "ci95": [
+        0.3325,
+        1.4849999999999999
+      ]
+    },
+    {
+      "role": 1,
+      "alternative": "fold",
+      "cases": 40,
+      "mean_gain": -1.565,
+      "ci95": [
+        -2.3725,
+        -0.845
+      ]
+    },
+    {
+      "role": 1,
+      "alternative": "attack",
+      "cases": 40,
+      "mean_gain": 1.2675,
+      "ci95": [
+        0.615,
+        2.0300000000000002
+      ]
+    },
+    {
+      "role": 2,
+      "alternative": "one_shanten_attack",
+      "cases": 40,
+      "mean_gain": 0.6,
+      "ci95": [
+        0.042500000000000045,
+        1.1525
+      ]
+    },
+    {
+      "role": 2,
+      "alternative": "fold",
+      "cases": 40,
+      "mean_gain": -1.1675,
+      "ci95": [
+        -1.7975,
+        -0.6675
+      ]
+    },
+    {
+      "role": 2,
+      "alternative": "attack",
+      "cases": 40,
+      "mean_gain": 0.65,
+      "ci95": [
+        0.01750000000000001,
+        1.2674999999999998
+      ]
+    },
+    {
+      "role": 3,
+      "alternative": "one_shanten_attack",
+      "cases": 40,
+      "mean_gain": 1.1300000000000001,
+      "ci95": [
+        0.6925,
+        1.6375
+      ]
+    },
+    {
+      "role": 3,
+      "alternative": "fold",
+      "cases": 40,
+      "mean_gain": -0.95,
+      "ci95": [
+        -1.48,
+        -0.48
+      ]
+    },
+    {
+      "role": 3,
+      "alternative": "attack",
+      "cases": 40,
+      "mean_gain": 0.9875,
+      "ci95": [
+        0.4325,
+        1.575
+      ]
+    }
+  ]
+}

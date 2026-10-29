@@ -15,6 +15,7 @@ Decisions (2026-07-20, user-confirmed):
 
 | Mode | Engine source | Status |
 |---|---|---|
+| 攻守練習 (Attack / defense drill) | `midgame_corpus.sample_case` + public attack/fold grading | `#/attack-defense`, separate seeded new/grade APIs and stats; fourth-round recommendation table |
 | 整場 (Play a full hand) | `trainer.play_trainer` generator: discard + call + kong decisions, per-decision EV feedback, running scorecard | engine done; needs API + UI |
 | 單手 (Spot drill) | `quiz.generate_position` / `grade` | engine done; needs API + UI |
 | 殘局 (Endgame drill) | **new**: filter self-play `DecisionSnapshot`s by late-game pressure | to build (small: a filtered generator on top of quiz) |

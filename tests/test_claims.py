@@ -12,6 +12,8 @@ CLAIM_FILES = [
     ROOT / "docs" / "ui-plan.md",
     ROOT / "server" / "static" / "js" / "main.js",
     ROOT / "server" / "static" / "js" / "quiz.js",
+    ROOT / "server" / "static" / "js" / "attack-defense.js",
+    ROOT / "taimahjong" / "attack_defense.py",
     ROOT / "server" / "static" / "js" / "feedback.js",
     ROOT / "taimahjong" / "selfplay.py",
     ROOT / "taimahjong" / "trainer.py",

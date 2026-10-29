@@ -6,6 +6,7 @@ kang, no temporary ``guo shui`` rule, and no flower replacement.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import lru_cache
 from random import Random
@@ -170,7 +171,7 @@ class HeadToHeadResult:
 
 @dataclass(frozen=True)
 class DecisionSnapshot:
-    """A player's observable table state immediately after a non-winning draw.
+    """A player's observable table state before a discard, after drawing/calling.
 
     The snapshot deliberately carries no opponent concealed hands.  It is an
     additive hook for teaching or diagnostics; ordinary self-play behavior is
@@ -184,9 +185,37 @@ class DecisionSnapshot:
     opponents: tuple[tuple[int, OpponentView], ...]
     public_counts: tuple[int, ...]
     turn: int
-    drawn_tile: int
+    drawn_tile: int | None
     wall_remaining: int = 0  # live-wall tiles left to draw (observable in play)
     dealer_streak: int = 0  # the table's 連莊 count (dealer is always seat 0)
+    kongs: tuple[KongLike, ...] = ()
+
+
+@dataclass
+class GameState:
+    """True engine state at a non-winning, pre-discard decision.
+
+    ``state_hook`` receives borrowed containers; copy before retaining them.
+    This is an engine/checkpoint interface, never a policy observation.
+    Dealer seat is fixed at DEALER_SEAT by this engine.
+    """
+
+    players: list[Player]
+    wall: list[int]
+    dead: list[int]
+    current: int
+    drawn_tile: int | None
+    live_draw: bool
+    needs_draw: bool
+    any_call: bool
+    actions: int
+    events: list[dict]
+    kong_log: list[tuple[int, int, bool]]
+    dealer_streak: int
+    seat_kong: tuple[str, str, str, str]
+    config: GameConfig
+    rules: RulesConfig
+    consume_calibration: bool
 
 
 def _public_counts(players: list[Player]) -> tuple[int, ...]:
@@ -214,11 +243,12 @@ def _view(player: Player, seat: int) -> OpponentView:
         dealer_streak=player.dealer_streak if seat == DEALER_SEAT else 0,
         hand_count=sum(player.hand),
         discard_count=player.discards,
+        concealed_kongs=sum(kong_tiles(kong)[1] for kong in player.kongs),
     )
 
 
-def _decision_snapshot(player_index: int, drawn_tile: int, players: list[Player], wall_remaining: int = 0) -> DecisionSnapshot:
-    """Copy the public table view available to ``player_index`` after drawing."""
+def _decision_snapshot(player_index: int, drawn_tile: int | None, players: list[Player], wall_remaining: int = 0) -> DecisionSnapshot:
+    """Copy the public table view available before ``player_index`` discards."""
     player = players[player_index]
     return DecisionSnapshot(
         seat=player_index,
@@ -231,6 +261,7 @@ def _decision_snapshot(player_index: int, drawn_tile: int, players: list[Player]
         drawn_tile=drawn_tile,
         wall_remaining=wall_remaining,
         dealer_streak=players[DEALER_SEAT].dealer_streak,
+        kongs=tuple(player.kongs),
     )
 
 
@@ -810,13 +841,17 @@ def _seat_kong_policy(kong_policy: str | tuple[str, str, str, str], seat: int) -
 
 def play_game(
     seed: int | None = None,
-    policies: tuple[str, str, str, str] = ("attack", "cautious", "attack", "cautious"),
+    policies: tuple[str, str, str, str] | None = None,
     snapshot_hook: Callable[[DecisionSnapshot], None] | None = None,
     dealer_streak: int = 0,
     kong_policy: str | tuple[str, str, str, str] = "none",
     config: GameConfig = DEFAULT_GAME_CONFIG,
     rules: RulesConfig = DEFAULT_RULES,
     consume_calibration: bool = True,
+    *,
+    initial_state: GameState | None = None,
+    state_hook: Callable[[GameState], None] | None = None,
+    discard_policy: Callable[[DecisionSnapshot], tuple[int, bool]] | None = None,
 ) -> GameResult:
     """Play one deterministic-seeded game and retain every discard event in memory.
 
@@ -825,8 +860,15 @@ def play_game(
     "concealed_added" takes shanten-safe 暗槓/加槓; "all" additionally takes 大明槓
     on a discard (which the house rule scores at 0 tai and denies 槓上開花 — the
     experiment uses it to show it is strictly bad).
+
+    ``initial_state`` resumes exactly before its pending discard, copying the
+    state and restoring its rule/config/kong settings. ``discard_policy`` sees
+    only a seat's observation and also runs on post-call discards. Declared
+    players retain the engine's forced drawn-tile discard.
     """
-    if len(policies) != 4 or any(policy not in POLICIES for policy in policies):
+    # Omitted policies keep a resumed state's own seats; a fresh game gets the default mix.
+    seat_policies = ("attack", "cautious", "attack", "cautious") if policies is None else policies
+    if len(seat_policies) != 4 or any(policy not in POLICIES for policy in seat_policies):
         raise ValueError("policies must name four entries from POLICIES")
     if not isinstance(consume_calibration, bool):
         raise ValueError("consume_calibration must be a boolean")
@@ -838,7 +880,7 @@ def play_game(
     rng = Random(seed)
     tiles = [tile for tile in range(34) for _ in range(4)]
     rng.shuffle(tiles)
-    players = [Player(policy) for policy in policies]
+    players = [Player(policy) for policy in seat_policies]
     players[DEALER_SEAT].dealer_streak = dealer_streak
     for _ in range(16):
         for player in players:
@@ -851,15 +893,32 @@ def play_game(
     current = 0
     needs_draw = True
     actions = 0
+    pending = initial_state is not None
+    if initial_state is not None:
+        state = deepcopy(initial_state)
+        players, wall, dead = state.players, state.wall, state.dead
+        if policies is not None:
+            for player, policy in zip(players, policies):
+                player.policy = policy
+        current, needs_draw, any_call = state.current, state.needs_draw, state.any_call
+        actions, events, kong_log = state.actions, state.events, state.kong_log
+        dealer_streak, seat_kong = state.dealer_streak, state.seat_kong
+        config, rules = state.config, state.rules
+        consume_calibration = state.consume_calibration
     _assert_conservation(players, wall, dead)
 
     while True:
-        actions += 1
+        resumed_decision = pending
+        pending = False
+        if not resumed_decision:
+            actions += 1
         assert actions < 1000, "game did not terminate"
         player = players[current]
         drawn_tile: int | None = None
         live_draw = False
-        if needs_draw:
+        if resumed_decision:
+            drawn_tile, live_draw = state.drawn_tile, state.live_draw
+        if needs_draw and not resumed_decision:
             if not wall:
                 points, value = _settlement("draw", None, None, players, None, None, dealer_streak, config.scheme)
                 return GameResult(events, "draw", None, None, actions, point_deltas=points, value_units=value, dealer_streak=dealer_streak, kong_log=tuple(kong_log))
@@ -926,14 +985,23 @@ def play_game(
             if snapshot_hook is not None and not player.declared:
                 snapshot_hook(_decision_snapshot(current, drawn_tile, players, len(wall)))
 
-        tile, fold_active = _choose_discard(
-            current,
-            drawn_tile,
-            players,
-            config.scheme,
-            consume_calibration=consume_calibration,
-            rules=rules,
-        )
+        if state_hook is not None:
+            state_hook(GameState(
+                players, wall, dead, current, drawn_tile, live_draw, needs_draw,
+                any_call, actions, events, kong_log, dealer_streak, seat_kong,
+                config, rules, consume_calibration,
+            ))
+        if discard_policy is not None and not player.declared:
+            tile, fold_active = discard_policy(_decision_snapshot(current, drawn_tile, players, len(wall)))
+        else:
+            tile, fold_active = _choose_discard(
+                current,
+                drawn_tile,
+                players,
+                config.scheme,
+                consume_calibration=consume_calibration,
+                rules=rules,
+            )
         assert player.hand[tile] > 0
         origin = "tsumogiri" if drawn_tile == tile else "tedashi"
         player.hand[tile] -= 1
