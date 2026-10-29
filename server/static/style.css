@@ -619,6 +619,11 @@ details.evwrap summary {
 
 /* ---------- review rail ---------- */
 
+.attack-defense-feedback { padding: 14px; overflow-wrap: anywhere; }
+.attack-defense-feedback h2 { margin-top: 0; font-size: 18px; }
+.attack-defense-feedback h3 { font-size: 16px; color: var(--gold); }
+.attack-defense-feedback p { font-size: 14px; line-height: 1.6; }
+
 .review-rail {
   position: sticky;
   top: 10px;

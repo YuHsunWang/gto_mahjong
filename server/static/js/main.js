@@ -1,6 +1,7 @@
 // Hash router + mode home (W3). Screens own the #app root and re-render it.
 
 import { drillScreen } from './quiz.js';
+import { attackDefenseScreen } from './attack-defense.js';
 import { trainerScreen } from './trainer.js';
 import { analyzeScreen, scoreScreen } from './tools.js';
 import { lessonsScreen } from './lessons.js';
@@ -11,6 +12,13 @@ import { schemeToggle } from './scheme.js';
 const app = document.getElementById('app');
 
 const MODES = [
+  {
+    hash: '#/attack-defense',
+    name: '攻守練習',
+    en: 'Attack / defense drill',
+    desc: '同一手先選攻擊牌、再選防守牌，分別比較牌效與牌河風險，並看這一手的出牌建議。',
+    statsKey: 'attack-defense',
+  },
   {
     hash: '#/trainer',
     name: '整場',
@@ -52,10 +60,12 @@ function modeCard(mode) {
   desc.textContent = mode.desc;
   card.append(head, desc);
 
-  const stats = summary(mode.statsKey);
+  const stats = summary(mode.statsKey, mode.statsKey === 'attack-defense' ? 'drill' : undefined);
   const row = document.createElement('div');
   row.className = 'card-stats';
-  if (stats.decisions) {
+  if (stats.decisions && mode.statsKey === 'attack-defense') {
+    row.textContent = `已答 ${stats.decisions} 次選牌 · 正確率 ${stats.qualityScore}%`;
+  } else if (stats.decisions) {
     const quality = stats.qualityScore === null ? '—' : `${stats.qualityScore}%`;
     row.innerHTML = `<span>已答 <b>${stats.decisions}</b></span>`
       + `<span>品質分數 <b>${quality}</b></span>`
@@ -136,6 +146,7 @@ const ROUTES = {
   '#/quiz': (root) => drillScreen(root, { apiBase: '/api/quiz', mode: 'quiz', title: '單手練習' }),
   '#/endgame': (root) => drillScreen(root, { apiBase: '/api/endgame', mode: 'endgame', title: '殘局練習' }),
   '#/trainer': trainerScreen,
+  '#/attack-defense': attackDefenseScreen,
   '#/lessons': lessonsScreen,
   '#/analyze': analyzeScreen,
   '#/score': scoreScreen,
@@ -143,7 +154,7 @@ const ROUTES = {
 
 function route() {
   const screen = ROUTES[window.location.hash] || homeScreen;
-  app.classList.toggle('app--table', ['#/quiz', '#/endgame', '#/trainer'].includes(window.location.hash));
+  app.classList.toggle('app--table', ['#/quiz', '#/endgame', '#/trainer', '#/attack-defense'].includes(window.location.hash));
   app.replaceChildren();
   screen(app);
   window.scrollTo(0, 0);
