@@ -56,7 +56,7 @@ def report(document: dict, cases: tuple) -> dict:
     for row, bucket in zip(features, buckets):
         row["danger_tercile"] = bucket
         row["shanten_bucket"] = "tenpai" if row["actor_shanten"] == 0 else "1-shanten" if row["actor_shanten"] == 1 else "2+-shanten"
-    tables = [[[world[index] for world in row] for row in document["worlds"]] for index in range(3)]
+    tables = [[[world[index] for world in row] for row in document["worlds"]] for index in range(len(ACTOR_PROFILES))]
     seed = document["parameters"]["seed"]
     deviations = []
     for index, alternative in enumerate(ACTOR_PROFILES[1:], 1):

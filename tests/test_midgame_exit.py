@@ -185,6 +185,24 @@ def test_features_ignore_hidden_contents_and_wall_order(cases):
         decision_features(cases[0].state)
 
 
+def test_keep_safe_is_the_safest_discard_that_keeps_the_best_shanten():
+    # "Stay tenpai but pick the safe tile": never gives up shanten, and among
+    # the shanten-keeping discards nothing is strictly safer.
+    from taimahjong.midgame_game import discard_risks
+    from taimahjong.selfplay import _cached_analysis
+    differs = 0
+    for case in build_corpus(20, 3):
+        observation = case_observation(case)
+        analyses = _cached_analysis(observation.hand, len(observation.melds) + len(observation.kongs), observation.public_counts)
+        shanten = {analysis.discard: analysis.shanten_after for analysis in analyses}
+        risks = {tile: risk for risk, _, tile in discard_risks(observation)}
+        tile, _ = choose_discard(observation, "keep_safe")
+        assert shanten[tile] == analyses[0].shanten_after
+        assert risks[tile] == min(risks[t] for t in risks if shanten[t] == analyses[0].shanten_after)
+        differs += tile != analyses[0].discard
+    assert differs, "fixture must exercise a case where keep_safe leaves the attack tile"
+
+
 def test_features_match_public_fold_scores_and_efficiency(cases):
     for case in cases:
         obs = case_observation(case)
@@ -214,7 +232,7 @@ def test_crn_resume_atomic_case_and_actor_payoff_rotation(tmp_path, monkeypatch)
 
     def interrupted(case, profile, *, wall):
         seen.append((case.game_seed, profile, wall))
-        if len(seen) == 8:  # second case, first world
+        if len(seen) == 2 * len(ACTOR_PROFILES) + 2:  # second case, first world
             raise RuntimeError("interrupted world")
         return original_finish(case, profile, wall=wall)
 
@@ -223,8 +241,8 @@ def test_crn_resume_atomic_case_and_actor_payoff_rotation(tmp_path, monkeypatch)
         cli.run(per_stage=1, sims=2, seed=1, checkpoint=path)
     saved = json.loads(path.read_text())
     assert [len(row) for row in saved["worlds"]] == [2, 0, 0]
-    assert [profile for _, profile, _ in seen[:3]] == list(ACTOR_PROFILES)
-    assert len({wall for _, _, wall in seen[:3]}) == 1
+    assert [profile for _, profile, _ in seen[:len(ACTOR_PROFILES)]] == list(ACTOR_PROFILES)
+    assert len({wall for _, _, wall in seen[:len(ACTOR_PROFILES)]}) == 1
     case = case_from_document(saved["corpus"][0])
     assert case.state.current != 0
     expected = original_finish(case, "attack", wall=seen[0][2]).point_deltas
@@ -237,9 +255,9 @@ def test_crn_resume_atomic_case_and_actor_payoff_rotation(tmp_path, monkeypatch)
 
     monkeypatch.setattr(cli, "finish_actor_case", observed)
     resumed = cli.run(per_stage=1, sims=2, seed=1, checkpoint=path, resume=True)
-    assert len(completed) == 12
-    for offset in range(0, len(completed), 3):
-        group = completed[offset:offset + 3]
+    assert len(completed) == 2 * 2 * len(ACTOR_PROFILES)
+    for offset in range(0, len(completed), len(ACTOR_PROFILES)):
+        group = completed[offset:offset + len(ACTOR_PROFILES)]
         assert len({(seed, wall) for seed, _, wall in group}) == 1
         assert [profile for _, profile, _ in group] == list(ACTOR_PROFILES)
     full_path = tmp_path / "full.json"
@@ -256,14 +274,16 @@ def test_crn_resume_atomic_case_and_actor_payoff_rotation(tmp_path, monkeypatch)
 
 
 def test_report_case_means_groups_csv_and_cost_scaling(cases, tmp_path):
-    # Two worlds per case. Their paired gains are +2/-2 for dodge, +4/0
-    # for fold, so case means are exactly 0 and 2 regardless of stratification.
+    # Two worlds per case. Paired gains: dodge +2/-2, fold +4/0, keep_safe_once
+    # +1/+1, keep_safe_rest +3/+3, so case means are exactly 0, 2, 1 and 3.
     document = {"parameters": {"per_stage": 3, "sims": 2, "seed": 1}, "source_digest": "test",
                 "timing": {"corpus_seconds": 9., "rollout_seconds": 18.},
-                "worlds": [[[[0]*4, [2,0,0,0], [4,0,0,0]], [[0]*4, [-2,0,0,0], [0]*4]] for _ in cases]}
+                "worlds": [[[[0]*4, [2,0,0,0], [4,0,0,0], [1,0,0,0], [3,0,0,0]],
+                            [[0]*4, [-2,0,0,0], [0]*4, [1,0,0,0], [3,0,0,0]]] for _ in cases]}
     result = cli.report(document, cases)
     assert result["corpus_stage_counts"] == {"early": 3, "mid": 3, "late": 3}
-    for entry, gain in zip(result["deviations"], (0., 2.)):
+    assert len(result["deviations"]) == 4
+    for entry, gain in zip(result["deviations"], (0., 2., 1., 3.)):
         assert entry["mean_gain"] == gain
         assert entry["ci95"] == [gain, gain]
         for key in ("by_stage", "by_actor_shanten", "by_attack_danger_tercile"):
@@ -278,7 +298,8 @@ def test_report_case_means_groups_csv_and_cost_scaling(cases, tmp_path):
     with csv_path.open() as stream:
         rows = list(csv.DictReader(stream))
     assert len(rows) == len(cases)
-    assert all(float(row["dodge_once_mean_gain"]) == 0 and float(row["fold_rest_mean_gain"]) == 2 for row in rows)
+    assert all(float(row["dodge_once_mean_gain"]) == 0 and float(row["fold_rest_mean_gain"]) == 2
+               and float(row["keep_safe_once_mean_gain"]) == 1 and float(row["keep_safe_rest_mean_gain"]) == 3 for row in rows)
     assert set(rows[0]) == set(result["per_case"][0])
     assert cli.danger_terciles([0., 1., 2., 3.]) == ((1., 2.), ["low", "low", "middle", "high"])
     assert cli.danger_terciles([0., 0., 0.]) == ((0., 0.), ["low"] * 3)

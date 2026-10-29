@@ -20,6 +20,9 @@ from .selfplay import DecisionSnapshot, GameResult, _cached_analysis, _public_co
 
 STRATEGIES = ("tenpai_attack", "one_shanten_attack", "fold", "attack")
 BASE_PROFILE = ("tenpai_attack",) * 4
+# Not in STRATEGIES so the 13-profile deviation check stays unchanged.
+# keep_safe: among discards that keep the best shanten, the safest one.
+EXTRA_STRATEGIES = ("keep_safe",)
 
 
 def choose_discard(observation: DecisionSnapshot, strategy: str) -> tuple[int, bool]:
@@ -29,9 +32,13 @@ def choose_discard(observation: DecisionSnapshot, strategy: str) -> tuple[int, b
     its validated hot path and selfplay's cached efficiency ordering. Ties
     use minimum shanten, maximum ukeire, then tile index, exactly as attack.
     """
-    if strategy not in STRATEGIES:
+    if strategy not in STRATEGIES + EXTRA_STRATEGIES:
         raise ValueError(f"unknown strategy: {strategy}")
     analyses = _cached_analysis(observation.hand, len(observation.melds) + len(observation.kongs), observation.public_counts)
+    if strategy == "keep_safe":
+        keep = {analysis.discard for analysis in analyses if analysis.shanten_after == analyses[0].shanten_after}
+        tile = min(risk for risk in discard_risks(observation) if risk[2] in keep)[2]
+        return tile, tile != analyses[0].discard
     threshold = {"tenpai_attack": 0, "one_shanten_attack": 1, "fold": -2, "attack": 99}[strategy]
     if analyses[0].shanten_after <= threshold:
         return analyses[0].discard, False
@@ -85,9 +92,9 @@ def finish_case(case: MidgameCase, profile: tuple[str, ...], *, wall: tuple[int,
     first_discard_strategy overrides only the stored pending discard; later
     discards use the profile, including any later actor discards after calls.
     """
-    if len(profile) != 4 or any(name not in STRATEGIES for name in profile):
+    if len(profile) != 4 or any(name not in STRATEGIES + EXTRA_STRATEGIES for name in profile):
         raise ValueError("profile must contain four known strategies")
-    if first_discard_strategy is not None and first_discard_strategy not in STRATEGIES:
+    if first_discard_strategy is not None and first_discard_strategy not in STRATEGIES + EXTRA_STRATEGIES:
         raise ValueError("unknown first discard strategy")
     state = case.state
     if wall is not None:
