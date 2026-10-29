@@ -207,14 +207,14 @@ def test_features_match_public_fold_scores_and_efficiency(cases):
         assert features["attack_equals_safest"] == (attack == safe)
 
 
-def test_crn_resume_atomic_world_and_actor_payoff_rotation(tmp_path, monkeypatch):
+def test_crn_resume_atomic_case_and_actor_payoff_rotation(tmp_path, monkeypatch):
     path = tmp_path / "checkpoint.json"
     original_finish = cli.finish_actor_case
     seen = []
 
     def interrupted(case, profile, *, wall):
         seen.append((case.game_seed, profile, wall))
-        if len(seen) == 5:
+        if len(seen) == 8:  # second case, first world
             raise RuntimeError("interrupted world")
         return original_finish(case, profile, wall=wall)
 
@@ -222,7 +222,7 @@ def test_crn_resume_atomic_world_and_actor_payoff_rotation(tmp_path, monkeypatch
     with pytest.raises(RuntimeError, match="interrupted"):
         cli.run(per_stage=1, sims=2, seed=1, checkpoint=path)
     saved = json.loads(path.read_text())
-    assert [len(row) for row in saved["worlds"]] == [1, 0, 0]
+    assert [len(row) for row in saved["worlds"]] == [2, 0, 0]
     assert [profile for _, profile, _ in seen[:3]] == list(ACTOR_PROFILES)
     assert len({wall for _, _, wall in seen[:3]}) == 1
     case = case_from_document(saved["corpus"][0])
@@ -237,7 +237,7 @@ def test_crn_resume_atomic_world_and_actor_payoff_rotation(tmp_path, monkeypatch
 
     monkeypatch.setattr(cli, "finish_actor_case", observed)
     resumed = cli.run(per_stage=1, sims=2, seed=1, checkpoint=path, resume=True)
-    assert len(completed) == 15
+    assert len(completed) == 12
     for offset in range(0, len(completed), 3):
         group = completed[offset:offset + 3]
         assert len({(seed, wall) for seed, _, wall in group}) == 1

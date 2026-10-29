@@ -105,7 +105,7 @@ def run(*, cases: int, sims: int, seed: int, base: str = BASE_PROFILE[0], checkp
 def run_experiment(*, parameters: dict, cases: int, corpus_builder, profile_list,
                    fingerprint: str, finish, make_report, checkpoint: Path | None = None,
                    resume: bool = False) -> dict:
-    """Shared corpus storage, atomic world checkpoints, CRN and resume loop.
+    """Shared corpus storage, atomic per-case checkpoints, CRN and resume loop.
 
     Each finish callback receives the identical wall for a case-world pair and
     returns absolute-seat payoffs. Report callbacks receive actor-relative rows.
@@ -150,8 +150,10 @@ def run_experiment(*, parameters: dict, cases: int, corpus_builder, profile_list
                 actor = case.state.current
                 world.append([result.point_deltas[(actor + role) % 4] for role in range(4)])
             rows.append(world)
-            document["timing"]["rollout_seconds"] = previous_seconds + perf_counter() - started
-            save_checkpoint(checkpoint, document)
+        # One checkpoint per case: rewriting the whole corpus after every world
+        # dominated short endgame rollouts (~0.4 s per write at 1000 cases).
+        document["timing"]["rollout_seconds"] = previous_seconds + perf_counter() - started
+        save_checkpoint(checkpoint, document)
         print(f"case {case_index + 1}/{cases}: {len(rows)}/{sims} worlds", file=sys.stderr, flush=True)
     document["timing"]["rollout_seconds"] = previous_seconds + perf_counter() - started
     save_checkpoint(checkpoint, document)

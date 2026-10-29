@@ -5,7 +5,7 @@
         --csv /tmp/exit-cases.csv
 
 Add --resume with identical parameters after interruption. All three actor
-profiles complete before each atomic world checkpoint. No long run is started
+profiles and all worlds of a case complete before each atomic checkpoint. No long run is started
 automatically; the report only extrapolates to 300 cases/stage x 100 worlds.
 """
 

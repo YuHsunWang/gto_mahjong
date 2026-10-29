@@ -228,22 +228,22 @@ def test_bootstrap_clusters_worlds_inside_cases():
     assert bootstrap_interval((), seed=1) == {"cases": 0, "mean_gain": None, "ci95": None}
 
 
-def test_checkpoint_resume_replays_only_interrupted_world_and_pairs_profiles(tmp_path, monkeypatch):
+def test_checkpoint_resume_replays_only_interrupted_case_and_pairs_profiles(tmp_path, monkeypatch):
     checkpoint = tmp_path / "checkpoint.json"
     original_finish = cli.finish_case
     seen = []
 
     def interrupted(case, profile, *, wall):
         seen.append((profile, wall))
-        if len(seen) == 18:
+        if len(seen) == 2 * 13 + 5:  # inside the second case
             raise RuntimeError("simulated interruption")
         return original_finish(case, profile, wall=wall)
 
     monkeypatch.setattr(cli, "finish_case", interrupted)
     with pytest.raises(RuntimeError, match="interruption"):
-        cli.run(cases=1, sims=2, seed=1, checkpoint=checkpoint)
+        cli.run(cases=2, sims=2, seed=1, checkpoint=checkpoint)
     saved = json.loads(checkpoint.read_text())
-    assert len(saved["worlds"][0]) == 1
+    assert [len(rows) for rows in saved["worlds"]] == [2, 0]
     assert len({wall for _, wall in seen[:13]}) == 1
     assert tuple(profile for profile, _ in seen[:13]) == profiles()
     case = case_from_document(saved["corpus"][0])
@@ -251,16 +251,16 @@ def test_checkpoint_resume_replays_only_interrupted_world_and_pairs_profiles(tmp
     expected = original_finish(case, BASE_PROFILE, wall=seen[0][1]).point_deltas
     assert saved["worlds"][0][0][0] == [expected[(case.state.current + role) % 4] for role in range(4)]
     monkeypatch.setattr(cli, "finish_case", original_finish)
-    resumed = cli.run(cases=1, sims=2, seed=1, checkpoint=checkpoint, resume=True)
+    resumed = cli.run(cases=2, sims=2, seed=1, checkpoint=checkpoint, resume=True)
     uninterrupted_path = tmp_path / "uninterrupted.json"
-    uninterrupted = cli.run(cases=1, sims=2, seed=1, checkpoint=uninterrupted_path)
+    uninterrupted = cli.run(cases=2, sims=2, seed=1, checkpoint=uninterrupted_path)
     assert resumed["deviations"] == uninterrupted["deviations"]
     assert json.loads(checkpoint.read_text())["worlds"] == json.loads(uninterrupted_path.read_text())["worlds"]
-    assert resumed["base_self_gain_by_role"] == [[0.0]] * 4
+    assert resumed["base_self_gain_by_role"] == [[0.0, 0.0]] * 4
     assert len(resumed["deviations"]) == 12
     assert set(resumed["deviations"][0]["by_stage"]) == {"early", "mid", "late"}
     assert set(resumed["deviations"][0]["by_actor_shanten"]) == {"tenpai", "1-shanten", "2+-shanten"}
     with pytest.raises(ValueError, match="differ"):
-        cli.run(cases=1, sims=3, seed=1, checkpoint=checkpoint, resume=True)
+        cli.run(cases=2, sims=3, seed=1, checkpoint=checkpoint, resume=True)
     with pytest.raises(ValueError, match="exists"):
-        cli.run(cases=1, sims=2, seed=1, checkpoint=checkpoint)
+        cli.run(cases=2, sims=2, seed=1, checkpoint=checkpoint)
