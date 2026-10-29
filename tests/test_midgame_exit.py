@@ -42,6 +42,16 @@ def test_legacy_corpus_golden_output():
     assert hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest() == "f2feb1658cbbad5c6a20a0f41a110ff81494ccc1cb7b2bc961d15df6a0d6234f"
 
 
+def test_max_wall_corpus_only_samples_the_endgame_window():
+    # The "near exhaustion" question needs cases only where the wall is short.
+    endgame = build_corpus(4, 1, max_wall=9)
+    assert all(case.wall_remaining <= 9 for case in endgame)
+    assert [case_document(case) for case in endgame] == [case_document(case) for case in build_corpus(4, 1, max_wall=9)]
+    for case in endgame:
+        assert not any(player.declared for player in case.state.players)
+        assert finish_case(case, ATTACK).point_deltas == case.original_payoffs
+
+
 def test_stratified_counts_reproducible_undeclared_one_per_game(cases):
     repeated = build_stratified_corpus(3, 1)
     assert [case_document(case) for case in cases] == [case_document(case) for case in repeated]

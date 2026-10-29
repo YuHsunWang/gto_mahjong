@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.midgame_deviation_check import run_experiment, source_digest as engine_digest
-from taimahjong.midgame_corpus import build_stratified_corpus
+from taimahjong.midgame_corpus import build_corpus, build_stratified_corpus
 from taimahjong.midgame_exit import ACTOR_PROFILES, case_observation, decision_features, finish_actor_case
 from taimahjong.midgame_game import bootstrap_interval, paired_case_gains
 
@@ -100,15 +100,28 @@ def report(document: dict, cases: tuple) -> dict:
         "timing": timing,
         "extrapolation": "corpus seconds scale with cases; rollout seconds with case-world pairs, including checkpoint writes; reporting overhead excluded; no long experiment executed",
         "deviations": deviations, "per_case": per_case,
-    }
+    } | ({
+        "sampling": f"one uniform undeclared, no-win decision with live wall <= {document['parameters']['max_wall']} per all-attack game; reject games with none",
+        "overall_weighting": "natural frequency of decisions within the wall window",
+    } if "max_wall" in document["parameters"] else {})
 
 
-def run(*, per_stage: int, sims: int, seed: int, checkpoint: Path | None = None, resume: bool = False) -> dict:
+def run(*, per_stage: int, sims: int, seed: int, checkpoint: Path | None = None, resume: bool = False,
+        max_wall: int | None = None) -> dict:
     if per_stage < 1 or sims < 1:
         raise ValueError("per_stage and sims must be positive")
+    parameters = {"per_stage": per_stage, "sims": sims, "seed": seed}
+    if max_wall is None:
+        cases, builder = 3 * per_stage, lambda: build_stratified_corpus(per_stage, seed)
+    else:
+        # Endgame window: per_stage is the total case count, all from wall <= max_wall.
+        if not 0 <= max_wall <= 58:
+            raise ValueError("max_wall must be between 0 and 58")
+        parameters["max_wall"] = max_wall
+        cases, builder = per_stage, lambda: build_corpus(per_stage, seed, max_wall=max_wall)
     return run_experiment(
-        parameters={"per_stage": per_stage, "sims": sims, "seed": seed}, cases=3 * per_stage,
-        corpus_builder=lambda: build_stratified_corpus(per_stage, seed),
+        parameters=parameters, cases=cases,
+        corpus_builder=builder,
         profile_list=ACTOR_PROFILES, fingerprint=source_digest(), finish=finish_actor_case,
         make_report=report, checkpoint=checkpoint, resume=resume,
     )
@@ -138,9 +151,10 @@ def main() -> int:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--csv", type=Path)
+    parser.add_argument("--max-wall", type=int, help="only sample decisions with at most this many live-wall tiles; --per-stage is then the total case count")
     args = parser.parse_args()
     try:
-        result = run(per_stage=args.per_stage, sims=args.sims, seed=args.seed, checkpoint=args.checkpoint, resume=args.resume)
+        result = run(per_stage=args.per_stage, sims=args.sims, seed=args.seed, checkpoint=args.checkpoint, resume=args.resume, max_wall=args.max_wall)
         write_outputs(result, args.output, args.csv)
     except (ValueError, FileNotFoundError) as error:
         parser.error(str(error))
