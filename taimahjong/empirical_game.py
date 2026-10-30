@@ -449,6 +449,7 @@ def build_game(
     seed: int = 1,
     strategies: tuple[str, ...] = DEFAULT_STRATEGIES,
     rules: RulesConfig = DEFAULT_RULES,
+    profiles: tuple[tuple[str, str, str, str], ...] | None = None,
 ) -> EmpiricalGame:
     """Tabulate every profile's per-role payoff over the corpus.
 
@@ -456,6 +457,9 @@ def build_game(
     same thing in a case whose actor sits at seat 0 and one whose actor sits at
     seat 1.  Worlds are sampled once per case and reused across every profile,
     so profile differences are paired under common random numbers.
+
+    ``profiles`` tabulates only those profiles instead of the full product;
+    the worlds are the same either way, so the pairing still holds.
     """
     for name in strategies:
         if name not in STRATEGIES:
@@ -470,7 +474,7 @@ def build_game(
 
     payoffs: dict[tuple[str, ...], tuple[float, float, float, float]] = {}
     units: dict[tuple[str, ...], tuple[tuple[float, float, float, float], ...]] = {}
-    for profile in product(strategies, repeat=4):
+    for profile in profiles or product(strategies, repeat=4):
         rows = []
         for observation, worlds in sampled:
             for world in worlds:
