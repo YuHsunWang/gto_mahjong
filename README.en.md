@@ -9,6 +9,9 @@
 **Play a hand of Taiwanese 16-tile mahjong; every discard is scored by Monte Carlo terminal
 rollouts — and the engine says so out loud when it cannot tell two discards apart.**
 
+For the estimator, terminal payments, common random numbers, and confidence intervals, see
+the [standalone simulation-math HTML](docs/simulation-math.html), which opens offline.
+
 ![Full-hand trainer: live net-EV feedback after a discard](docs/screenshots/trainer-feedback.png)
 
 That is the screen after one played discard. The engine does not merely say "wrong move." It says:
@@ -80,14 +83,21 @@ python3 -m pytest -q -m slow        # exhaustive-oracle and large-sample tests, 
 
 The slow batch is marked `slow` and excluded from the default run — brute-force oracle sweeps and
 statistical tests that need large trial counts to have any power; the single-suit shape sweep alone
-is 7.5 minutes. CI runs the fast batch on every push (Python 3.11 and 3.13) and the slow batch on a
-nightly schedule.
+is 7.5 minutes. CI runs the fast batch (Python 3.11 and 3.13) on pushes to `main` and `feat/**`,
+pull requests, the nightly schedule, and manual dispatches. The slow batch runs only on the
+nightly schedule and manual dispatches.
 
 The split shortens push-time feedback, not total machine time: run separately the two batches add
 up to more than the combined run, because the `_cached_shanten` warm-up that the whole suite used
 to amortise is now paid twice.
 
 ## Architecture
+
+The layering rules for data, fixed evaluation corpora, simulation results, and visual evidence
+live in [`docs/architecture/data-layout.md`](docs/architecture/data-layout.md); the full
+machine-readable inventory is [`catalog/datasets.toml`](catalog/datasets.toml). Additions or
+moves must update the catalog, generation commands, all reader paths, and tests in the same
+commit. Mark unknown provenance as `unknown` rather than guessing.
 
 ```mermaid
 flowchart TB
@@ -98,7 +108,8 @@ flowchart TB
 
     subgraph product["Drill layer"]
         TRAINER["trainer.py<br/>full hand"]
-        QUIZ["quiz.py<br/>spot / endgame"]
+        QUIZ["quiz.py<br/>spot drill"]
+        ENDGAME["endgame.py<br/>endgame push / fold drills"]
         ANALYSIS["analysis.py<br/>calibration source + fallback reporting"]
     end
 
@@ -123,9 +134,9 @@ flowchart TB
 
     DATA[("data/calibration.json<br/>bot self-play calibration table")]
 
-    WEB --> TRAINER & QUIZ & ANALYSIS
-    CLI --> TRAINER & QUIZ & ANALYSIS
-    TRAINER & QUIZ --> EV
+    WEB --> TRAINER & QUIZ & ENDGAME & ANALYSIS
+    CLI --> QUIZ & ANALYSIS
+    TRAINER & QUIZ & ENDGAME --> EV
     ANALYSIS --> CALIB
     EV --> ROLLOUT --> SELFPLAY
     EV --> SHANTEN & UKEIRE & DANGER
@@ -134,16 +145,18 @@ flowchart TB
     CALIB --> DANGER
     CALIB -."reads / writes".-> DATA
     CLI -."--selfplay game counts".-> CALIB
-    DATA -."loaded at import".-> SELFPLAY
+    DATA -."loaded on first use".-> SELFPLAY
     BRUTE -.compared in tests.-> SHANTEN
     REF -.compared in tests.-> EV
 ```
 
-The calibration table feeds itself: `--selfplay` runs bot self-play and the CLI hands the counts to
-`calibration.write_merged_table`, which writes `data/calibration.json` (`__main__.py:283`); and
-`selfplay.py` in turn loads that committed table as its default danger source
-(`_default_calibration`, `selfplay.py:361`). It is a genuine closed loop — and precisely because of
-that, the calibration domain covers only the built-in bots. There is no human anywhere in it.
+The shipped table is rebuilt by `scripts/generate_calibration.py`, which defaults to disabling
+the risk term that reads the previous table, keeping its preferences out of the new build. The
+separate CLI `--selfplay` path uses the existing table for risk when an `ev_aware` policy is
+selected, then `taimahjong/__main__.py` calls
+`calibration.write_merged_table` to append counts to the file named by `--out`. In
+`taimahjong/selfplay.py`, `_default_calibration` loads and caches the existing table on first use.
+Both paths cover only the built-in bots, with no human game records.
 
 ---
 
@@ -276,8 +289,9 @@ The same output in the web UI:
 Every candidate carries a 95% CI and its sample count. The top two are marked `≈` because the
 interval on their paired difference spans zero — the engine's position is "these two cannot be
 separated at this budget," not a confident pick. The `sha256:` string is the content hash of the
-calibration table used for this run; swapping the table changes the id, so a result can always be
-traced back to the version that produced it.
+two tables used for this run (`data/calibration.json` and `data/opponent-shanten.json`);
+changing either table changes the id, so a result can always be traced back to the versions that
+produced it.
 
 There's also a "should I declare migi?" feature (`--declare`): it computes the exact
 probability of the locked wait after declaring versus a simulation of the normal style
@@ -287,11 +301,12 @@ probability of the locked wait after declaring versus a simulation of the normal
 
 Turns games into one discard problem at a time.
 
-It picks discriminating positions from self-play (not too easy; best and second-best must
-differ by enough tai) and shows you only what your seat can see. You pick a tile and it
-grades you immediately — best / good / inaccuracy / mistake — and uses an EV table to
+It picks discriminating positions from self-play (not too easy; the best and worst candidates
+must differ by enough net-EV value units) and shows you only what your seat can see. You pick
+a tile and it grades you immediately — best / good / inaccuracy / mistake — and uses an EV table to
 explain why, whether it was the win-EV gap or the deal-in-loss gap. The same seed always
-gives the same problem, handy for re-drilling or checking answers.
+gives the same problem, handy for re-drilling or checking answers. Grading thresholds scale with
+the payout scheme, and the UI reports uncertainty when the ranking cannot be separated.
 
 ```bash
 python3 -m taimahjong --quiz --seed 1 --answer 9s
@@ -309,6 +324,12 @@ opponents call normally but do not declare kongs. You can
 pick a seat and streak at the start to feel different positions relative to the dealer —
 a streak raises both the value of the dealer's win and the cost of dealing into them.
 
+Call and kong choices compare passing with each legal action by EV and flag choices the model
+cannot separate. When eligible and recommended by the model, migi is declared automatically;
+the UI explains that subsequent draws are discarded automatically. Win settlement reveals the
+winner's hand, melds, kongs, and winning tile, with itemized tai and hand value. Playing again
+carries the streak forward and adjusts your relative seat when dealership changes.
+
 ### Web teaching UI
 
 If you'd rather not use the command line, use the web page.
@@ -324,7 +345,11 @@ mode's model-best-rate trend.
 
 The page can also switch the **底/台 scheme** (底3台1 ⇄ 底5台2). The 底:台 ratio changes
 the trade-off between "win first" and "go for a big hand," so it can change the best
-discard — switching re-scores instantly.
+discard — switching re-scores instantly. The CLI also accepts `--scheme 3-1` or `--scheme 5-2`.
+
+Optional mistake-concept labels come from `taimahjong/mistake_label.py`: with `typesafe_sdk`
+installed separately and `TYPESAFE_API_KEY` set, web grading can add a concept label. Missing
+configuration or a failed call simply omits it; EV and verdicts are unaffected.
 
 ### Under the hood: how the engine is calibrated
 
@@ -345,9 +370,15 @@ python3 -m taimahjong --selfplay-report data/calibration.json
 ```
 
 `python3 -m taimahjong --selfplay --out <path>` is a separate exploratory path that
-*appends* counts to the file you name. Do not point it at `data/calibration.json`: it
-still uses the older seven-bin danger edges while the shipped table now has eight (the
-tail splits at 16), and the append is refused.
+*appends* counts to the file you name. It now uses the same eight bins (the tail splits at 16),
+but an `ev_aware` policy uses the existing table for risk, and this path does not rebuild the
+generation script's fit/holdout split.
+Save exploratory results to a separate file; rebuild the shipped table with the script above.
+
+The non-tenpai opponent shanten distribution lives separately in `data/opponent-shanten.json`,
+rebuilt from another self-play batch by `scripts/generate_opponent_shanten.py`; see
+[the opponent-shanten notes](docs/opponent-shanten.md). Analysis loads both tables together;
+if either is missing or unusable, it reports a heuristic fallback.
 
 The table maps each discard's per-opponent `danger_score` to a ron probability, and the
 production rollout uses it on the opening and later discards; its P(tenpai | melds, turn,
@@ -365,7 +396,7 @@ currently fixed at zero. The table below splits the model by *how* each piece is
 | --- | --- | --- |
 | **Modeled and calculated exactly** | Given one sampled four-seat world, it validates ordinary-tile wins, scores the selected house rules, and performs zero-sum four-seat settlement. Each trial produces exactly one of `self_tsumo`, `self_ron`, `opponent_ron`, `opponent_tsumo`, or `draw`; `net_ev` is exactly the acting seat's mean sampled terminal payment. | “Exact” covers rules, settlement, and aggregation inside that sampled world—not exact terminal probabilities or human play. Draw payment is currently fixed at zero. |
 | **Heuristic approximation** | Public information drives hidden-hand sampling; efficiency-discard and fixed defense policies advance future play. Wall and terminal frequencies are fixed-seed Monte Carlo estimates. Where a calibration cell has too few observations, the opponent-tenpai rate falls back to a heuristic estimate. | Opponents do not fully adapt; the hidden-world distribution and policies are model assumptions, and finite sampling leaves error. |
-| **Calibrated by a calibration table** | The per-opponent `danger_score` lookup supplies ron/deal-in probabilities on the opening and later discards: every opponent wins on a discard at the table's rate, and its sampled hand only sets how much the win is worth; your own ron follows your real hand and nearest-claim priority. The opponent-tenpai rate comes from the same table's P(tenpai \| melds, turn, tsumogiri run). A non-tenpai opponent's shanten is drawn from `data/opponent-shanten.json`, the distribution the same self-play observed (see `docs/opponent-shanten.md`), rather than uniformly from the unseen pool. Both data sets live in the built-in-bot self-play ecology. | It is not calibrated on human games. If a calibrated event conflicts with the sampled concealed hand, a physically winning hand is redeterminized for valuation. If no usable calibration table is available, a reported heuristic fallback is used. |
+| **Calibrated by a calibration table** | The per-opponent `danger_score` lookup supplies ron/deal-in probabilities on the opening and later discards: every opponent wins on a discard at the table's rate, and its sampled hand only sets how much the win is worth; your own ron follows your real hand and nearest-claim priority. The opponent-tenpai rate comes from the same table's P(tenpai \| melds, turn, tsumogiri run). A non-tenpai opponent's shanten is drawn from `data/opponent-shanten.json`, the distribution observed in another self-play batch (see `docs/opponent-shanten.md`), rather than uniformly from the unseen pool. Both data sets live in the built-in-bot self-play ecology. | It is not calibrated on human games. If a calibrated event conflicts with the sampled concealed hand, a physically winning hand is redeterminized for valuation. If no usable calibration table is available, a reported heuristic fallback is used. |
 | **Not modeled** | Future chi, pon, kong/replacement draws and flowers, special hands, complete pass-on-ron decisions, and a full best response by every seat; round-wind progression is also absent (fixed East). | These events are absent from the terminal rollout transitions; draws also have no tenpai/noten settlement. |
 
 **Calibration domain**: only the ron/deal-in probability and opponent-tenpai lookups are calibrated, and their domain is
@@ -386,6 +417,12 @@ seat-by-seat defense against a streaking dealer (`scripts/streak_defense.py`) an
 each kong type is worth declaring (`scripts/kong_ev.py`). Method and data are in
 [docs/experiments.md](docs/experiments.md).
 
+There is also `taimahjong/best_response.py`, measuring the acting seat's best response and
+exploitability against fixed opponent policies in the at-most-four-tile-wall, no-call endgame.
+`taimahjong/empirical_game.py` compares four-seat payoffs and regret intervals over a restricted
+strategy set. These research modules use production's hidden-world model and do not drive the
+web discard policy; methods and limits are in [the research progress notes](docs/equilibrium-plan.md).
+
 ---
 
 ## Honest scope and limits
@@ -396,9 +433,9 @@ each kong type is worth declaring (`scripts/kong_ev.py`). Method and data are in
   defense policies include heuristic assumptions.
 - **Danger is not a safety guarantee**: Taiwan has no permanent furiten, so river
   evidence only discounts.
-- **House rules are adjustable**: how 全求人 counts, kong tai, whether a draw is
-  penalized (`DRAW_VALUE`), and the 底/台 scheme are all constants or options you can
-  change for your table.
+- **House rules are adjustable**: how 全求人 counts, kong tai, multiple-ron priority,
+  and the 底/台 scheme are all constants or options you can change for your table.
+  Production EV currently fixes draw payments at zero.
 
 Technical details (parameters, full calibration data, tai-stacking rules) live in each
 module's docstrings and in [docs/experiments.md](docs/experiments.md).

@@ -71,8 +71,9 @@ python3 -m pytest -q -m slow        # 窮舉 oracle 與大樣本統計測試，�
 ```
 
 慢的那批標成 `slow` 並從預設執行中排除——它們是暴力 oracle 全掃描與需要大量 trial 才有檢定力的
-統計測試，光是單一花色 shape 的窮舉比對就佔 7 分半。CI 每次 push 跑快的那批（Python 3.11 與
-3.13），慢的那批走每日排程。
+統計測試，光是單一花色 shape 的窮舉比對就佔 7 分半。CI 在 `main` 與 `feat/**` 的 push、
+pull request、每日排程及手動觸發時跑快的那批（Python 3.11 與 3.13）；慢的那批只在每日
+排程及手動觸發時跑。
 
 拆分的目的是縮短 push 當下的回饋時間，不是縮短總時數：兩批分開跑的總和其實比合併跑更久，因為
 `_cached_shanten` 的暖機成本原本由整套共同攤提，拆開後兩邊各付一次。
@@ -93,7 +94,8 @@ flowchart TB
 
     subgraph product["題型層"]
         TRAINER["trainer.py<br/>整場實戰"]
-        QUIZ["quiz.py<br/>單手 / 殘局"]
+        QUIZ["quiz.py<br/>單手"]
+        ENDGAME["endgame.py<br/>殘局進攻 / 防守題"]
         ANALYSIS["analysis.py<br/>校準來源與 fallback 回報"]
     end
 
@@ -118,9 +120,9 @@ flowchart TB
 
     DATA[("data/calibration.json<br/>bot self-play 校準表")]
 
-    WEB --> TRAINER & QUIZ & ANALYSIS
-    CLI --> TRAINER & QUIZ & ANALYSIS
-    TRAINER & QUIZ --> EV
+    WEB --> TRAINER & QUIZ & ENDGAME & ANALYSIS
+    CLI --> QUIZ & ANALYSIS
+    TRAINER & QUIZ & ENDGAME --> EV
     ANALYSIS --> CALIB
     EV --> ROLLOUT --> SELFPLAY
     EV --> SHANTEN & UKEIRE & DANGER
@@ -129,16 +131,16 @@ flowchart TB
     CALIB --> DANGER
     CALIB -.讀寫.-> DATA
     CLI -."--selfplay 對局結果".-> CALIB
-    DATA -.啟動時載入.-> SELFPLAY
+    DATA -.首次需要時載入.-> SELFPLAY
     BRUTE -.測試中比對.-> SHANTEN
     REF -.測試中比對.-> EV
 ```
 
-校準表是**自己餵自己**的：`--selfplay` 跑機器人自我對局，CLI 把結果交給
-`calibration.write_merged_table` 寫成 `data/calibration.json`（`__main__.py:283`）；而
-`selfplay.py` 自己又會在啟動時把這張 committed 的表載回來當預設危險度來源
-（`selfplay.py:361` 的 `_default_calibration`）。所以這是一個真正的閉環——也正因如此，校準資料域
-只涵蓋內建 bot，這條迴圈裡從頭到尾沒有真人。
+正式校準表由 `scripts/generate_calibration.py` 重建，預設停用讀取舊表的風險項，避免
+把舊表偏好帶進新表。另一條 CLI `--selfplay` 路徑在選用 `ev_aware` policy 時，
+會以既有表計算風險，再由 `taimahjong/__main__.py` 呼叫 `calibration.write_merged_table` 把計數附加到 `--out` 指定檔案；
+`taimahjong/selfplay.py` 的 `_default_calibration` 會在首次需要時載入並快取既有表。
+兩條路徑都只涵蓋內建 bot，沒有真人牌譜。
 
 ---
 
@@ -255,7 +257,8 @@ python3 -m taimahjong "123m123p123s11122233z" --ev --opp-river "1m2m" --opp-decl
 
 每個候選都附 95% CI 與樣本數，最上面兩個掛著 `≈` 是因為它們的 paired 差區間跨過 0——引擎的
 立場是「這兩張在目前預算下分不出來」，而不是挑一個假裝有把握。畫面上那串 `sha256:` 是這次用到
-的校準表 content hash，換表會換 id，方便回頭對照結果是哪一版算出來的。
+的兩張表（`data/calibration.json` 與 `data/opponent-shanten.json`）的合併 content hash，
+任一張表改變都會換 id，方便回頭對照結果是哪一版算出來的。
 
 另外有個「要不要宣告 migi」的功能（`--declare`）：一邊算「宣告後鎖聽、直接等」的
 機率，一邊模擬「不宣告、還有機會換大牌」的打法，幫你比哪個 EV 高。
@@ -264,10 +267,10 @@ python3 -m taimahjong "123m123p123s11122233z" --ev --opp-river "1m2m" --opp-decl
 
 把牌局變成一題一題的打牌練習。
 
-它從自對局裡挑出「有鑑別度」的局面（不會太簡單、最佳和次佳要差夠多台），只保留你
-這家看得到的資訊出題。你選一張，它馬上判定：最佳／不錯／小失誤／失誤，並用 EV 表
+它從自對局裡挑出「有鑑別度」的局面（不會太簡單、最佳和最差候選的 net EV 要差夠多分），
+只保留你這家看得到的資訊出題。你選一張，它馬上判定：最佳／不錯／小失誤／失誤，並用 EV 表
 告訴你為什麼——是胡牌 EV 的差、還是放槍損失的差。同一個種子每次出同一題，方便重
-練或對答案。
+練或對答案。判定門檻會隨底／台方案縮放；排名無法區分時，介面也會顯示不確定性。
 
 ```bash
 python3 -m taimahjong --quiz --seed 1 --answer 9s
@@ -283,6 +286,10 @@ python3 -m taimahjong --quiz-batch 5 --seed 1
 對手會正常鳴牌，但不宣告槓。開局可以選座位和連莊數，體會坐在莊的不同相對位置——連莊會同時拉高「胡莊
 的價值」和「放槍給莊的代價」。
 
+吃碰槓選項會比較「過」與各種合法行動的 EV，也會標示分不出高下的選項。符合條件且模型
+建議時，會自動宣告 migi，介面會提示之後自動摸切。胡牌結算會攤開胡家的手牌、副露與槓，
+列出胡牌張、逐項台數和牌值；再來一局會接續連莊狀態，莊家易主時調整你的相對座位。
+
 ### Web 教學介面
 
 不想記命令列，就用網頁。
@@ -294,7 +301,11 @@ python3 -m taimahjong --quiz-batch 5 --seed 1
 可展開的排名表）。作答紀錄存在瀏覽器裡，首頁畫每個模式的模型最佳率走勢。
 
 網頁上還能切換**底/台方案**（底3台1 ⇄ 底5台2）。底和台的比例會改變「先求胡」還是
-「拚大牌」的取捨，所以有時本模型估計的打牌也跟著變——切換就即時重新打分。
+「拚大牌」的取捨，所以有時本模型估計的打牌也跟著變——切換就即時重新打分。CLI 也可用
+`--scheme 3-1` 或 `--scheme 5-2` 選擇。
+
+錯誤概念標籤由 `taimahjong/mistake_label.py` 選配提供：另行安裝 `typesafe_sdk` 並設定
+`TYPESAFE_API_KEY` 後，網頁評分可附上概念分類；缺少設定或呼叫失敗時省略，EV 與判定不受影響。
 
 ### 底層：引擎怎麼校準
 
@@ -312,8 +323,13 @@ python3 -m taimahjong --selfplay-report data/calibration.json
 ```
 
 `python3 -m taimahjong --selfplay --out <path>` 是另一條探索用的路徑，它把計數**附加**
-到指定檔案上。不要拿它去接 `data/calibration.json`：那條路徑用的是舊的七格分箱，
-而正式表已經是八格（尾端在 16 分開），接上去會被擋下來。
+到指定檔案上，目前同樣使用八格分箱（尾端在 16 分開）。選用 `ev_aware` policy 時會以
+既有表計算風險，也不重做正式產生腳本的 fit／holdout 切分；探索結果請另存新檔，正式表請用上面的腳本重建。
+
+非聽牌對手的向聽分布另存於 `data/opponent-shanten.json`，由
+`scripts/generate_opponent_shanten.py` 從另一批自對局重建；方法見
+[對手向聽分布說明](docs/opponent-shanten.md)。分析會一起載入兩張表；任一張缺少或無法使用時，
+會回報 heuristic fallback。
 
 這張表把每次打牌對每位對手的 `danger_score` 映射成胡牌機率，production rollout 會在
 當下及後續每次打牌使用它；表裡的 P(聽牌 | 副露數、巡目、連續摸切) 則決定抽樣時對手聽牌的
@@ -330,7 +346,7 @@ python3 -m taimahjong --selfplay-report data/calibration.json
 | --- | --- | --- |
 | **已建模且精確計算** | 給定一個已抽樣的四家世界後，檢查普通牌胡型，依選定家規計台並做四家零和結算；每次 trial 只會產生 `self_tsumo`、`self_ron`、`opponent_ron`、`opponent_tsumo`、`draw` 之一，`net_ev` 精確等於 acting seat 的 terminal payments 樣本平均。 | 「精確」只指該抽樣世界內的規則、結算與 aggregation，不代表終局機率或真人打法精確。流局 payment 目前固定為 0。 |
 | **以 heuristic 近似** | 依公開資訊抽樣隱藏手牌，並用牌效出牌與固定防守 policy 推進後續牌局；牌牆與終局頻率用 fixed-seed Monte Carlo 估計。校準表某一格樣本不足時，對手聽牌比例退回 heuristic 估計。 | 對手不會做完整策略調整；隱藏世界分布與 policy 都是模型假設，有限樣本仍有誤差。 |
-| **由 calibration table 校準** | RON／放槍機率由 `danger_score` 的 per-opponent lookup 提供，套用於當下與後續各次打牌：每位對手每次都按表上機率決定胡不胡，抽到的暗手只決定胡多少；你自己能不能胡則看實際手牌，並遵守最近者優先。對手聽牌的比例取自同一張表的 P(聽牌 \| 副露數、巡目、連續摸切)。非聽牌對手的向聽數則抽自 `data/opponent-shanten.json`（同一份 self-play 觀測到的分布，見 `docs/opponent-shanten.md`），不再是從未見牌池均勻亂抽。兩份資料都來自內建 bot self-play 的 bot ecology。 | 不是人類牌譜校準；校準事件若與抽到的暗手衝突，會重建一個可胡的實體手牌來估值。缺少可用的 calibration table 時改用 heuristic fallback 並回報。 |
+| **由 calibration table 校準** | RON／放槍機率由 `danger_score` 的 per-opponent lookup 提供，套用於當下與後續各次打牌：每位對手每次都按表上機率決定胡不胡，抽到的暗手只決定胡多少；你自己能不能胡則看實際手牌，並遵守最近者優先。對手聽牌的比例取自同一張表的 P(聽牌 \| 副露數、巡目、連續摸切)。非聽牌對手的向聽數則抽自 `data/opponent-shanten.json`（另一批 self-play 觀測到的分布，見 `docs/opponent-shanten.md`），不再是從未見牌池均勻亂抽。兩份資料都來自內建 bot self-play 的 bot ecology。 | 不是人類牌譜校準；校準事件若與抽到的暗手衝突，會重建一個可胡的實體手牌來估值。缺少可用的 calibration table 時改用 heuristic fallback 並回報。 |
 | **未建模** | EV rollout 中未來的吃、碰、槓／補牌與花牌、特殊牌型、完整過水決策，以及各家完整 best response；圈風推進也未建模（固定東風）。 | 這些事件不在 terminal rollout 的狀態轉移中；流局也沒有聽牌／未聽罰付。 |
 
 **Calibration domain**：只有 RON／放槍機率與對手聽牌比例兩個 lookup 經過校準，且校準來源是內建 bot self-play 的
@@ -349,6 +365,11 @@ owner 複核。
 （`scripts/streak_defense.py`）、還有各種槓值不值得開（`scripts/kong_ev.py`）。方法
 和數據在 [docs/experiments.md](docs/experiments.md)。
 
+另有 `taimahjong/best_response.py` 在 ≤4 張牌牆、無鳴牌的殘局，量測 acting seat 對固定
+對手策略的 best response 與 exploitability；`taimahjong/empirical_game.py` 則比較受限策略集
+的四家收益與 regret 區間。這些研究模組沿用 production 的隱藏世界模型，並未接到網頁的
+出牌策略；方法與限制見 [研究進度](docs/equilibrium-plan.md)。
+
 ---
 
 ## 老實話（範圍與限制）
@@ -357,8 +378,8 @@ owner 複核。
 - **只有 RON／放槍機率與對手聽牌比例是 bot-domain calibration**，不是真人牌局；自摸與牌牆結果
   是 Monte Carlo，隱藏手牌、對手出牌與防守 policy 含 heuristic 假設。
 - **危險度不保證安全**：台灣沒有永久振聽，牌河證據只是打折。
-- **家規可改**：全求人怎麼算、槓的台數、流局要不要罰（`DRAW_VALUE`）、底台方案，
-  都寫成常數或選項，牌桌規則不同時可以改。
+- **家規可改**：全求人怎麼算、槓的台數、多人胡牌優先與底台方案，
+  都寫成常數或選項，牌桌規則不同時可以改。production EV 的流局付款目前固定為 0。
 
 技術細節（各參數、校準過程的完整數據、疊台規則）散在各模組的 docstring 和
 [docs/experiments.md](docs/experiments.md) 裡。
