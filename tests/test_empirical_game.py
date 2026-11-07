@@ -20,9 +20,12 @@ without anyone noticing.
 from __future__ import annotations
 
 from dataclasses import replace
+from fractions import Fraction
+from itertools import product
 
 import pytest
 
+from taimahjong import empirical_game as eg
 from taimahjong.danger import deal_in_weight
 from taimahjong.empirical_game import (
     STRATEGIES,
@@ -113,6 +116,67 @@ def test_one_world_is_exact_and_zero_sum():
     world = sample_worlds(observation, 1, 5)[0]
     payoffs = profile_payoffs(world, observation, ("efficiency",) * 4)
     assert sum(payoffs) == 0
+
+
+@pytest.mark.parametrize("case_index", (0, 7, 23, 39))
+def test_decision_reuse_preserves_exact_world_tables(case_index, monkeypatch):
+    """All 81 profiles retain exact payoffs across worlds, roles and threats."""
+    case = empirical_game_cases(13)[case_index]
+    observation = observation_for(case)
+    profiles = tuple(product(("efficiency", "deal_in_risk", "threat"), repeat=4))
+    evaluated = []
+
+    def record(*args, **kwargs):
+        evaluated.append(args[2])
+        return profile_payoffs(*args, **kwargs)
+
+    monkeypatch.setattr(eg, "profile_payoffs", record)
+    for world in sample_worlds(observation, 2, 1 + case.seed):
+        expected = {p: profile_payoffs(world, observation, p) for p in profiles}
+        actual = eg._world_payoffs(world, observation, profiles, eg.DEFAULT_RULES)
+        assert all(isinstance(v, Fraction) for row in actual.values() for v in row)
+        assert actual == expected
+    assert 0 < len(evaluated) < 2 * len(profiles)
+
+
+def test_decision_reuse_rejects_later_actor_divergence(monkeypatch):
+    """Matching the opening discard cannot certify the actor's next turn."""
+    case = empirical_game_cases(13)[23]
+    observation = observation_for(case)
+    world = sample_worlds(observation, 1, 1 + case.seed)[0]
+    assert world.acting_seat == 1 and len(world.wall) == 4
+    hand = world.players[world.acting_seat].hand
+    declared = any(
+        p.declared_at is not None
+        for seat, p in enumerate(world.players) if seat != world.acting_seat
+    )
+    info = (hand, _belief(hand, observation.visible), declared)
+    assert efficiency(*info) == deal_in_risk(*info)
+    profiles = (("efficiency",) * 4, ("deal_in_risk",) + ("efficiency",) * 3)
+    evaluated = []
+
+    def record(*args, **kwargs):
+        evaluated.append(args[2])
+        return profile_payoffs(*args, **kwargs)
+
+    monkeypatch.setattr(eg, "profile_payoffs", record)
+    actual = eg._world_payoffs(world, observation, profiles, eg.DEFAULT_RULES)
+    assert evaluated == list(profiles), "later divergence must prevent reuse"
+    assert actual[profiles[0]] != actual[profiles[1]]
+
+
+def test_decision_reuse_preserves_game_units_and_means(monkeypatch):
+    """Changing loop order must preserve pairing and float summation order."""
+    corpus = empirical_game_cases(13)
+    cases = (corpus[7], corpus[23])
+    strategies = ("efficiency", "deal_in_risk", "threat")
+    reused = build_game(cases, sims=2, seed=1, strategies=strategies)
+
+    def without_reuse(world, observation, profiles, rules):
+        return {p: profile_payoffs(world, observation, p, rules) for p in profiles}
+
+    monkeypatch.setattr(eg, "_world_payoffs", without_reuse)
+    assert reused == build_game(cases, sims=2, seed=1, strategies=strategies)
 
 
 def test_best_reply_is_the_row_maximum():
