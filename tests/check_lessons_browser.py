@@ -66,9 +66,8 @@ def main():
                                 assert link.get_attribute("href") == "#/lessons/respect-threat"
                                 link.click()
                                 page.get_by_role("heading", name="有威脅，先看現物", exact=True).wait_for()
-                                assert page.get_by_text("你的副露", exact=True).count() == 1
-                                assert page.locator(".lesson-tiles").nth(0).locator(".tile").count() == 2
-                                assert page.locator(".lesson-tiles").nth(1).locator(".tile").count() == 15
+                                assert page.get_by_text("你的副露", exact=True).count() == 0
+                                assert page.locator(".lesson-tiles").nth(0).locator(".tile").count() == 17
                                 assert page.locator(".lesson-river").count() == 4
                                 assert page.locator(".lesson-river .note").filter(has_text="已宣告聽牌").count() == 3
                                 assert page.locator(".evtable").count() == 0

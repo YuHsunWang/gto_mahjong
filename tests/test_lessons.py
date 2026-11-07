@@ -8,11 +8,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from taimahjong import lessons, mistake_label
-from taimahjong.danger import OpponentView, fold_score, parse_river, tenpai_score
+from taimahjong.danger import OpponentView, danger_score, fold_score, parse_river, tenpai_score
 from taimahjong.ev import EVRankEntry, remaining_draws
 from taimahjong.quiz import QuizGrade, QuizOpponent, QuizPosition, grade
 from taimahjong.shanten import shanten
 from taimahjong.tiles import parse_tiles
+from taimahjong.ukeire import discard_analysis
 
 
 pytestmark = pytest.mark.timeout(30)
@@ -65,7 +66,7 @@ def _position(lesson):
 @pytest.fixture
 def mistake():
     position = _position(next(l for l in lessons.LESSONS if l["id"] == "keep-attacking"))
-    tiles = [_tile("9s"), _tile("5s"), _tile("2s")]
+    tiles = [_tile("5p"), _tile("3m"), _tile("7s")]
     ranked = tuple(EVRankEntry(tile, 0.0, None, 3.0 - i, (), 0.0, 3.0 - i)
                    for i, tile in enumerate(tiles))
     return QuizGrade(position, ranked[0], ranked[1], ranked, 1.0, 2, "mistake")
@@ -211,6 +212,52 @@ def test_danger_lesson_answer_agrees_with_production_trainer_ranking(lesson):
     assert result.ranked[0].net_ev - result.ranked[1].net_ev > 0.3
     assert result.ranking_state == "clear"
     assert result.ev_delta == 0
+    alternative = "5p" if lesson["id"] == "respect-threat" else "3m"
+    comparison = grade(result.position, _tile(alternative))
+    assert comparison.best.discard == result.best.discard
+    assert comparison.ranking_state == "clear"
+    assert comparison.ev_delta > 0.3
+    if lesson["id"] == "respect-threat":
+        # The safe answer must pay attack value for reduced loss, rather than
+        # merely avoid an exhausted wait as the old position did.
+        other = next(e for e in comparison.ranked if e.discard == _tile(alternative))
+        assert result.best.risk_ev < other.risk_ev
+        assert result.best.attack_ev < other.attack_ev
+
+
+def test_danger_positions_have_distinct_hands_and_real_attack_defense_tradeoffs():
+    hands = [tuple(parse_tiles(lesson["hand"])) for lesson in lessons.LESSONS]
+    assert len(hands) == len(set(hands))
+    for lesson in lessons.LESSONS:
+        if lesson["kind"] != "danger":
+            continue
+        position = _position(lesson)
+        assert not position.own_melds
+        rows = discard_analysis(position.hand, 0, position.public_counts)
+        assert rows[0].discard == _tile("5p")
+        by_tile = {row.discard: row for row in rows}
+        if lesson["id"] == "respect-threat":
+            assert (rows[0].shanten_after, rows[0].total) == (0, 3)
+            assert rows[0].ukeire == {_tile("2s"): 0, _tile("5s"): 1, _tile("8s"): 2}
+            safe = by_tile[_tile("2s")]
+            assert (safe.shanten_after, safe.ukeire) == (0, {_tile("5p"): 2})
+            for opponent in position.opponents:
+                assert opponent.declared
+                post = list(position.hand)
+                post[_tile("2s")] -= 1
+                assert "declared_safe" in danger_score(
+                    _tile("2s"), opponent.view(), position.public_counts, post,
+                ).modifiers
+                post = list(position.hand)
+                post[_tile("5p")] -= 1
+                assert danger_score(_tile("5p"), opponent.view(), position.public_counts, post).score > 0
+        else:
+            assert (rows[0].shanten_after, rows[0].total) == (0, 9)
+            assert rows[0].ukeire == {_tile("1s"): 3, _tile("4s"): 3, _tile("7s"): 3}
+            assert by_tile[_tile("3m")].shanten_after == 1
+            for opponent in position.opponents:
+                assert not opponent.declared and not opponent.melds
+                assert _tile("3m") in {entry.tile for entry in opponent.river}
 
 
 def test_catalog_and_all_efficiency_answers_are_corroborated_by_api():
