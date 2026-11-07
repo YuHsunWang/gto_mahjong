@@ -284,3 +284,16 @@ schema = ["FACE_TOKENS", "NUMERAL_FACES", "HONOR_FACES", "DOT_LAYOUTS", "BAMBOO_
 update_frequency = "manual UI asset change"
 reproducible_from_recorded_seed = false
 known_gap = "scripts/gen_tile_faces.py names this path but emits TILE_FACE_FONT/TILE_GLYPHS instead of the exports current readers require; it is not a valid producer for the committed module."
+
+[[datasets]]
+id = "teaching_lessons"
+layer = "curated_reference"
+path = "data/reference/lessons/lessons.json"
+optional = false
+format = "json"
+owner = "taimahjong.lessons"
+regeneration_command = "not applicable: hand-written lessons; verify with PYTHONPATH=. python3 -m pytest -q tests/test_lessons.py"
+primary_key = "id"
+schema = ["id", "title", "subtitle", "kind", "hand", "question", "answer", "points", "recommend or options", "danger: seed, seat, turn, drawn_tile, wall_remaining, own_river, own_melds, opponents"]
+update_frequency = "manual, engine-agreement test-gated"
+reproducible_from_recorded_seed = true

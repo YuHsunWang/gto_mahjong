@@ -56,7 +56,8 @@ from taimahjong.ev import (
     paired_delta_moments,
     remaining_draws,
 )
-from taimahjong.mistake_label import label_mistake
+from taimahjong.mistake_label import MistakeLabel, label_mistake
+from taimahjong.lessons import LESSONS, match_lesson
 from taimahjong.midgame_corpus import MidgameCase, sample_case
 from taimahjong.midgame_exit import case_observation
 from taimahjong.quiz import (
@@ -275,14 +276,13 @@ def _top_gap_payload(
     return payload
 
 
-def _mistake_label_payload(result: QuizGrade) -> dict[str, Any] | None:
+def _mistake_label_payload(label: MistakeLabel | None) -> dict[str, Any] | None:
     """The optional Jev concept label, or ``None`` when it was not asked for.
 
     ``None`` is the offline default: without ``TYPESAFE_API_KEY`` the client
     renders the same feedback it rendered before labels existed.
     """
-    label = label_mistake(result)
-    if label is None:
+    if label is None or label.label == "no_concept_error":
         return None
     return {
         "label": label.label,
@@ -292,6 +292,8 @@ def _mistake_label_payload(result: QuizGrade) -> dict[str, Any] | None:
 
 
 def _grade_payload(result: QuizGrade) -> dict[str, Any]:
+    label = label_mistake(result, include_no_concept_error=True)
+    lesson = match_lesson(result, label)
     return {
         "verdict": result.verdict,
         "marginal": result.marginal,
@@ -311,7 +313,15 @@ def _grade_payload(result: QuizGrade) -> dict[str, Any]:
         ),
         "top1_vs_top2": _top_gap_payload(result.ranked, result.scheme),
         "explain": explain(result),
-        "mistake_label": _mistake_label_payload(result),
+        "mistake_label": _mistake_label_payload(label),
+        "matched_lesson": (
+            None if lesson is None else {
+                "id": lesson.lesson_id,
+                "source": lesson.source,
+                "title": next(item["title"] for item in LESSONS if item["id"] == lesson.lesson_id),
+                "scores": lesson.scores,
+            }
+        ),
     }
 
 
@@ -1021,6 +1031,11 @@ def ukeire_endpoint(request: UkeireRequest) -> dict[str, Any]:
         )
 
     return _engine(run)
+
+
+@app.get("/api/lessons")
+def lessons() -> list[dict[str, Any]]:
+    return LESSONS
 
 
 @app.get("/api/health")
