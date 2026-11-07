@@ -102,7 +102,7 @@ function homeScreen(root) {
   teach.href = '#/lessons';
   teach.innerHTML = '<div class="card-head"><span class="card-name">教學</span>'
     + '<span class="card-en">Basics</span></div>'
-    + '<div class="card-desc">幾個基本牌效觀念（孤張、聽面、吃碰取捨…），每題有引擎進張佐證。</div>';
+    + '<div class="card-desc">幾個基本牌效與攻守觀念，搭配進張數或對手牌河說明。</div>';
   root.append(teach);
 
   const tools = document.createElement('div');
@@ -153,7 +153,9 @@ const ROUTES = {
 };
 
 function route() {
-  const screen = ROUTES[window.location.hash] || homeScreen;
+  const screen = window.location.hash.startsWith('#/lessons/')
+    ? (root) => lessonsScreen(root, window.location.hash.slice('#/lessons/'.length))
+    : ROUTES[window.location.hash] || homeScreen;
   app.classList.toggle('app--table', ['#/quiz', '#/endgame', '#/trainer', '#/attack-defense'].includes(window.location.hash));
   app.replaceChildren();
   screen(app);

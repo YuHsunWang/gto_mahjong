@@ -195,20 +195,24 @@ def _client() -> Any:
     return TypeSafeClient(timeout=TIMEOUT_SECONDS)
 
 
-def label_mistake(grade: QuizGrade) -> MistakeLabel | None:
+def label_mistake(
+    grade: QuizGrade, *, include_no_concept_error: bool = False,
+) -> MistakeLabel | None:
     """Name the concept behind a graded mistake, or ``None`` when unavailable.
 
     ``None`` is the ordinary answer, not an error path: it means the screen
     shows exactly what it showed before this module existed.
+    Lesson matching may retain a confident ``no_concept_error`` internally so
+    an explicit abstention does not trigger another advisory request.
     """
     if not _is_labelable(grade):
         return None
-    client = _client()
-    if client is None:
-        return None
-    from typesafe_sdk import Choice
-
     try:
+        client = _client()
+        if client is None:
+            return None
+        from typesafe_sdk import Choice
+
         with client:
             response = client.system_one(
                 build_state(grade),
@@ -227,7 +231,11 @@ def label_mistake(grade: QuizGrade) -> MistakeLabel | None:
         # silent None is indistinguishable from a confidently withheld label.
         logging.getLogger(__name__).warning("mistake label unavailable", exc_info=True)
         return None
-    if answer.confidence < MIN_CONFIDENCE or answer.choice == "no_concept_error":
+    if answer.confidence < MIN_CONFIDENCE:
+        return None
+    # Lesson matching needs to distinguish an explicit abstention from an
+    # unavailable label. The existing label-only callers still hide it.
+    if answer.choice == "no_concept_error" and not include_no_concept_error:
         return None
     return MistakeLabel(
         label=answer.choice,

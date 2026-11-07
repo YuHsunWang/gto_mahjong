@@ -1,78 +1,10 @@
-// 教學 — curated classic shapes with hand-written explanations, each backed by
-// the engine's tile-acceptance (進張) via /api/ukeire. Efficiency lessons are
-// deterministic and fast (no Monte Carlo), so the corroboration renders inline.
+// 教學 — hand-written explanations from the shared lesson catalog.
+// Efficiency lessons use /api/ukeire inline; danger lessons show public rivers
+// and are checked against production grading offline.
 
-import { post, showError } from './api.js';
+import { get, post, showError } from './api.js';
 import { tileEl, parseCompact, faceText } from './tiles.js';
 import { computingEl } from './table.js';
-
-// recommend / highlight tiles are compact strings (e.g. '9m'); the screen maps
-// them to tile indices with parseCompact and highlights the matching row.
-const LESSONS = [
-  {
-    id: 'lone-terminal',
-    title: '孤張進聽',
-    subtitle: '單張終端牌 vs 聽牌',
-    hand: '119m456m123p789p456s78s',
-    question: '這手 17 張，先打哪張？',
-    answer: '打 九萬 —— 唯一能直接聽牌的切法。',
-    kind: 'discard',
-    recommend: '9m',
-    points: [
-      '九萬是一張孤立的終端牌：它左右都沒有能連成順子的鄰牌，留著只是等自己再抽一張九萬湊對，機率低。',
-      '把九萬切掉後，一萬對子＋其餘四組搭子剛好成聽；切任何中張都會拆掉現成的面子，退回一向聽。',
-      '基本原則：當某張牌對向聽數毫無貢獻、切了又能進聽時，先走它。下面的引擎表可以看到只有打九萬向聽變 0。',
-    ],
-  },
-  {
-    id: 'widest-wait',
-    title: '同聽選寬待',
-    subtitle: '都能聽，聽面愈寬愈好',
-    hand: '234m678m345p678p234s5s9s',
-    question: '這手已可聽牌，打哪張聽得最寬？',
-    answer: '打 九條 —— 聽面最寬（6 張），比打五條／二條（各 3 張）多一倍。',
-    kind: 'discard',
-    recommend: '9s',
-    points: [
-      '手上五條、九條都是浮牌，切哪張都能聽，差別只在「聽哪些牌、有幾張」。',
-      '留下五條當單騎、切掉九條，聽的張數最多；反過來留九條就窄。同樣是聽牌，寬的聽面胡牌機率明顯較高。',
-      '基本原則：聽牌時不要只看「有沒有聽」，要比「聽面寬窄」。引擎表的進張數就是還沒被看到的可胡張數。',
-    ],
-  },
-  {
-    id: 'rush-vs-wide',
-    title: '別為窄聽拆寬型',
-    subtitle: '急聽 vs 保留寬一向聽',
-    hand: '147m456m789m234p567p99p',
-    question: '一四七萬這種三面浮張，該搶聽還是留寬？',
-    answer: '通常留寬 —— 打四萬（或九筒）保住 30 張的一向聽，勝過打一萬搶只有 4 張的窄聽。',
-    kind: 'discard',
-    recommend: '4m',
-    points: [
-      '打一萬確實能馬上聽牌，但只聽 4 張（四萬／九筒），胡牌機率很低。',
-      '打四萬或九筒仍是一向聽，卻保有 30 張進張——多數情況下這種「寬一向聽」的期望胡牌率高於「窄聽」。',
-      '例外：牌局尾聲、或對手明顯已聽時，搶一個能胡的窄聽有時才對。這題教的是「不要反射性搶聽」，先看聽面寬窄與剩餘巡數。',
-    ],
-  },
-  {
-    id: 'pon-vs-concealed',
-    title: '吃碰的門清取捨',
-    subtitle: '4555678 條，別人打五條要碰嗎？',
-    hand: '4555678s123m789m22p1z',
-    question: '對手打出五條，用手上兩張五條碰成刻子嗎？',
-    answer: '看局勢取捨 —— 碰五條後打東風可立即聽牌（11 張）；不碰保留門清，但仍是一向聽（23 張進張）。',
-    kind: 'compare',
-    options: [
-      { label: '不碰（留門清）', hand: '4555678s123m789m22p1z', melds_declared: 0, visible: '5s' },
-      { label: '碰五條後打東風', hand: '45678s123m789m22p', melds_declared: 1 },
-    ],
-    points: [
-      '碰五條後打東風，是引擎排序第一的切法：剩下四五六七八條，配上五條刻子即可聽三條／六條／九條，共 11 張。不碰則是一向聽、23 張進張；兩者向聽數不同，不能直接相減來比較速度。',
-      '不碰保留門清／門清自摸的台數優勢，也保留一向聽手牌拆搭、改良的彈性。碰牌會把五條固定成刻子，失去門清相關台數，但碰後仍可自摸。',
-      '基本原則：鳴牌前先問「這一鳴換到多少速度／台數？值不值得丟掉門清？」這裡碰牌換到立即聽牌、11 張可胡牌；不碰保留門清與 23 張進張的一向聽。要看剩餘巡數、台數需求與場上風險取捨，沒有一律碰或不碰的答案。',
-    ],
-  },
-];
 
 function lessonCard(lesson, onOpen) {
   const card = document.createElement('button');
@@ -186,6 +118,29 @@ function lessonScreen(root, lesson, backToList) {
   root.append(bar);
 
   root.append(tileRow(lesson.hand));
+  if (lesson.kind === 'danger') {
+    if (lesson.own_melds?.length) {
+      const melds = document.createElement('div');
+      melds.className = 'note';
+      melds.textContent = '你的副露';
+      root.append(melds, tileRow(lesson.own_melds.join('')));
+    }
+    const context = document.createElement('div');
+    context.className = 'note';
+    context.textContent = `牌牆剩 ${lesson.wall_remaining} 張；你是${['東', '南', '西', '北'][lesson.seat]}家。牌河依出牌順序排列。`;
+    root.append(context);
+    const rivers = [{ seat: lesson.seat, river: lesson.own_river }, ...lesson.opponents];
+    rivers.forEach((opponent) => {
+      const river = document.createElement('section');
+      river.className = 'lesson-river';
+      const label = document.createElement('div');
+      label.className = 'note';
+      label.textContent = opponent.seat === lesson.seat ? '你的牌河'
+        : `對手 ${opponent.seat}：${opponent.declared_at == null ? '未宣告' : `已宣告聽牌（第 ${opponent.declared_at + 1} 張棄牌）`}`;
+      river.append(label, tileRow(opponent.river));
+      root.append(river);
+    });
+  }
 
   const question = document.createElement('div');
   question.className = 'lesson-question';
@@ -197,14 +152,16 @@ function lessonScreen(root, lesson, backToList) {
   answer.textContent = lesson.answer;
   root.append(answer);
 
-  const table = document.createElement('div');
-  root.append(table);
-  corroborate(lesson, table);
+  if (lesson.kind !== 'danger') {
+    const table = document.createElement('div');
+    root.append(table);
+    corroborate(lesson, table);
 
-  const caption = document.createElement('div');
-  caption.className = 'note';
-  caption.textContent = '進張 = 目前還沒被看到、能讓向聽數前進的牌張數（純牌效，未計台數與危險）。';
-  root.append(caption);
+    const caption = document.createElement('div');
+    caption.className = 'note';
+    caption.textContent = '進張 = 目前還沒被看到、能讓向聽數前進的牌張數（純牌效，未計台數與危險）。';
+    root.append(caption);
+  }
 
   const points = document.createElement('div');
   points.className = 'lesson-points';
@@ -216,7 +173,20 @@ function lessonScreen(root, lesson, backToList) {
   root.append(points);
 }
 
-export function lessonsScreen(root) {
+export async function lessonsScreen(root, lessonId = null) {
+  const hash = window.location.hash;
+  let lessons;
+  root.replaceChildren(computingEl('讀取教學中…'));
+  try {
+    lessons = await get('/api/lessons');
+  } catch (error) {
+    if (window.location.hash === hash) {
+      root.replaceChildren();
+      showError(error);
+    }
+    return;
+  }
+  if (window.location.hash !== hash) return;
   function showList() {
     root.replaceChildren();
     const bar = document.createElement('div');
@@ -232,17 +202,21 @@ export function lessonsScreen(root) {
 
     const intro = document.createElement('div');
     intro.className = 'note';
-    intro.textContent = '幾個基本牌效觀念，每題都用引擎的進張數佐證。看完可到「單手」練習實戰同類局面。';
+    intro.textContent = '幾個基本牌效與攻守觀念；牌效題用進張數佐證，攻守題搭配對手牌河說明。看完可到「單手」練習實戰同類局面。';
     root.append(intro);
 
     const list = document.createElement('div');
     list.className = 'cards';
-    LESSONS.forEach((lesson) => list.append(lessonCard(lesson, (l) => {
-      root.replaceChildren();
-      lessonScreen(root, l, showList);
-      window.scrollTo(0, 0);
+    lessons.forEach((lesson) => list.append(lessonCard(lesson, (l) => {
+      window.location.hash = `#/lessons/${l.id}`;
     })));
     root.append(list);
   }
-  showList();
+  const lesson = lessons.find((item) => item.id === lessonId);
+  if (lesson) {
+    root.replaceChildren();
+    lessonScreen(root, lesson, () => { window.location.hash = '#/lessons'; });
+  } else {
+    showList();
+  }
 }

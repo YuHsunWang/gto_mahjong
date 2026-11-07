@@ -81,6 +81,18 @@ function mistakeLabelEl(grade) {
   return el;
 }
 
+function lessonLinkEl(grade) {
+  const lesson = grade?.matched_lesson;
+  if (!lesson) return null;
+  const el = document.createElement('div');
+  el.className = 'note lesson-link';
+  const link = document.createElement('a');
+  link.href = `#/lessons/${encodeURIComponent(lesson.id)}`;
+  link.textContent = `去看這一課：${lesson.title}`;
+  el.append(link);
+  return el;
+}
+
 function cell(text, tag = 'td') {
   const el = document.createElement(tag);
   el.textContent = text;
@@ -513,6 +525,8 @@ export function reviewRailEl({
     }
     const mistake = mistakeLabelEl(grade);
     if (mistake) current.append(mistake);
+    const lesson = lessonLinkEl(grade);
+    if (lesson) current.append(lesson);
     rail.append(current);
     const banner = rankingBannerEl(grade);
     if (banner) rail.append(banner);
