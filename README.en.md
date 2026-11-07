@@ -316,7 +316,10 @@ If you'd rather not use the command line, use the web page.
 A single-page app (no build step, just open it) that bundles the features into an easy
 interface: full game (play to the end with live EV grading), single hand (one discard
 problem), endgame (high-pressure spots as the wall runs low, auto-tagged attack/defense),
-a lessons area (hand-written efficiency problems backed by pure acceptance), discard
+attack/defense practice (pick an attacking tile and a defending tile for the same spot;
+attack is graded on shanten and acceptance, defense on deal-in risk, and the result card
+says whether to attack or fold using the table in
+[docs/midgame-attack-defense.md](docs/midgame-attack-defense.md)), a lessons area (hand-written efficiency problems backed by pure acceptance), discard
 analysis, and scoring. The table is drawn as a Mahjong-Soul-style cross-shaped river,
 with analysis-tool-style feedback (verdict badge, EV delta, model-recommendation marker, expandable
 ranking table). Answer history is stored in your browser, and the home page charts each
@@ -385,6 +388,15 @@ Two small research scripts use paired-seed self-play to answer strategy question
 seat-by-seat defense against a streaking dealer (`scripts/streak_defense.py`) and whether
 each kong type is worth declaring (`scripts/kong_ev.py`). Method and data are in
 [docs/experiments.md](docs/experiments.md).
+
+A separate study asks whether to attack or fold when nobody has declared tenpai: it samples
+real spots from self-play, reshuffles only the undrawn wall, plays each to the end, and
+compares four fixed strategies (always attack, attack only at tenpai, attack at one-shanten,
+always fold). The conclusions hold only within those four strategies; they are summarized
+as a table by wall remaining and shanten in
+[docs/midgame-attack-defense.md](docs/midgame-attack-defense.md)
+(`scripts/midgame_deviation_check.py`, `scripts/midgame_exit_check.py`). Progress on
+endgame best responses is tracked in [docs/equilibrium-plan.md](docs/equilibrium-plan.md).
 
 ---
 

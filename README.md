@@ -289,7 +289,9 @@ python3 -m taimahjong --quiz-batch 5 --seed 1
 
 一個單頁應用（不用建置，開了就能用），把上面的功能整合成好操作的介面：整場（一局
 打到底、每步即時 EV 評分）、單手（抽一題練打牌）、殘局（牌快摸完的高壓局面，自動
-分進攻題或防守題）、教學區（手寫的基本牌效題，用純進張當場驗證）、打牌分析、算台。
+分進攻題或防守題）、攻守練習（同一個局面分開練進攻牌和防守牌：進攻看向聽與進張，防守看
+放槍風險；結果卡依 [docs/midgame-attack-defense.md](docs/midgame-attack-defense.md) 的建議表
+說這手該攻還是該守）、教學區（手寫的基本牌效題，用純進張當場驗證）、打牌分析、算台。
 牌桌畫成雀魂那種十字河，回饋採分析工具風格（判定徽章、EV 差、標示模型建議、
 可展開的排名表）。作答紀錄存在瀏覽器裡，首頁畫每個模式的模型最佳率走勢。
 
@@ -348,6 +350,13 @@ owner 複核。
 附了兩個小研究腳本，用配對種子的自對局回答策略問題：分座位怎麼防連莊的莊家
 （`scripts/streak_defense.py`）、還有各種槓值不值得開（`scripts/kong_ev.py`）。方法
 和數據在 [docs/experiments.md](docs/experiments.md)。
+
+沒人宣告聽牌時該攻還是該守，另有一組研究：從自對局抽真實局面，只重洗沒摸的牌牆再打到
+結束，比較四種固定打法（全攻、聽牌才攻、一向聽才攻、全守）。結論只在這四種打法的範圍內
+成立，依剩餘牌牆和向聽數整理成建議表，見
+[docs/midgame-attack-defense.md](docs/midgame-attack-defense.md)（`scripts/midgame_deviation_check.py`、
+`scripts/midgame_exit_check.py`）。殘局最佳反應的進度記在
+[docs/equilibrium-plan.md](docs/equilibrium-plan.md)。
 
 ---
 
