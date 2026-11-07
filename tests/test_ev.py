@@ -324,6 +324,37 @@ def test_calibrated_ron_prices_every_opponent_and_keeps_actor_physical():
     assert _winner_distribution(probabilities, 3, ev.DEFAULT_RULES) == {(0,): 1.0}
 
 
+def test_calibrated_ron_declared_opponents_claim_only_on_physical_waits():
+    class CalibrationMustNotRun:
+        def deal_in_probability(self, _danger_score):
+            raise AssertionError("declared opponents must use their sampled hands")
+
+    waiting = parse_tiles("123456m123p123s333z9m")
+    tile = _tile("9m")
+    players = [Player("attack", list(TENPAI)) for _ in range(4)]
+    players[2].hand = list(waiting)
+    players[2].declared_at = 0
+    players[3].declared_at = 0
+    claims = ev._calibrated_ron(
+        CalibrationMustNotRun(), 0, (None, None, None, None),
+    )
+
+    completed = list(waiting)
+    completed[tile] += 1
+    expected = CalibratedRonClaim(
+        2, 1.0, winning_hand=tuple(completed), scoring_tile=tile,
+    )
+    # Seat 2 waits on this discard; declared seat 3 waits on a different tile.
+    assert claims(players, 1, tile) == (expected,)
+
+    players[3].hand = list(waiting)
+    both = claims(players, 1, tile)
+    assert both == (expected, replace(expected, seat=3))
+    assert _winner_distribution(
+        {claim.seat: claim.probability for claim in both}, 1, ev.DEFAULT_RULES,
+    ) == {(2,): 0.5, (3,): 0.5}
+
+
 def test_calibrated_opening_deal_in_matches_the_table_rate():
     # No draws left: the only RON chance is the opening discard, so the
     # deal-in mass must be the three opponents' table rates for every

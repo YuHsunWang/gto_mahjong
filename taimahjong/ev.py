@@ -500,14 +500,13 @@ def deal_in_ev(
 ) -> float:
     """Approximate expected chip-unit loss for one discard against one opponent.
 
-    The deal-in probability is taken from calibration exactly as
-    ``_calibrated_ron`` takes it, with no opponent-state multiplier on top. The
-    table is fitted against ``danger_score`` alone, which carries no tenpai
-    signal, so its rows are already marginal over the opponent's tenpai state;
-    scaling them again double-counts it. It also matters that this function and
-    the rollout agree: the fold policy picks its discard here but is *scored* by
-    the terminal rollout, so a different risk model in the two places has the
-    defense optimising something it is not graded on.
+    The deal-in probability is taken from calibration with no opponent-state
+    multiplier on top. The table is fitted against ``danger_score`` alone, so
+    its rows are already marginal over the opponent's tenpai state; scaling
+    them again double-counts it. This public-information fold heuristic has no
+    sampled opponent hand, so it retains the marginal approximation even for
+    declared opponents. ``_calibrated_ron`` instead resolves declared claims
+    physically from each sampled hand when scoring the terminal rollout.
 
     The uncalibrated fallback is the exception. ``DEAL_IN_FALLBACK_RATE`` scaled
     by raw danger contains no opponent-state information at all, so there the
@@ -1302,15 +1301,16 @@ def _calibrated_ron(
         tuple[tuple[int, ...], int] | None,
     ],
 ):
-    """Price each opponent's RON on a discard at the table's marginal rate.
+    """Price declared RON physically and undeclared RON at marginal rates.
 
     The deal-in table counts every discard against every opponent, tenpai or
-    not, so its rate already integrates over hidden hands.  It is applied to
-    every opponent regardless of the sampled hand: gating it on "the sampled
-    hand can win" multiplied it by that chance a second time and priced
-    deal-in risk 80-100x too low.  The sampled hand only decides how much the
-    ron is worth -- the hand itself when it waits on the discard, else the
-    world's precomputed value hand.
+    not, so its rate already integrates over hidden hands. For undeclared
+    opponents, gating it on "the sampled hand can win" multiplied it by that
+    chance a second time and priced deal-in risk 80-100x too low. The sampled
+    hand only decides how much their ron is worth -- the hand itself when it
+    waits on the discard, else the world's precomputed value hand. Declared
+    opponents instead claim with certainty exactly when their sampled hand
+    completes on the discard, valued by that completed hand.
     """
     from .rollout import CalibratedRonClaim
     from .selfplay import _public_counts, _view
@@ -1370,7 +1370,12 @@ def _calibrated_ron(
                 and "declared_safe" in assessment.modifiers
             ):
                 continue
-            probability = probability_for_score(assessment.score)
+            # Declared claims are physical. If claims sum above one,
+            # _winner_distribution's proportional normalization is acceptable.
+            probability = (
+                1.0 if opponent.declared_at is not None
+                else probability_for_score(assessment.score)
+            )
             if not probability:
                 continue
             completed = player.hand.copy()
@@ -1379,6 +1384,8 @@ def _calibrated_ron(
                 tuple(completed), len(player.melds) + len(player.kongs),
             ) == -1:
                 value_hand = (tuple(completed), tile)
+            elif opponent.declared_at is not None:
+                continue
             else:
                 value_hand = ron_value_hands[seat]
                 if value_hand is None:
