@@ -1364,7 +1364,12 @@ python scripts/empirical_game_table.py --strategies efficiency,deal_in_risk,thre
 100 個世界取平均，再對六個種子取平均（世界數相同，等於 600 世界的局面平均）；表裡每個量
 都是局面平均的線性函數，所以只差浮點捨入（52 局面 × 81 profile 小規模實測最大差 5.6e-17）。
 之後照樣用 `profile_table`／`role_table`、2000 次 bootstrap、八個 bootstrap 種子。
-同一套流程只放種子 1，重現了上表種子 1 的數字。
+同一套流程只放種子 1，重現了上表種子 1 的數字。腳本是 `scripts/empirical_game_pool.py`：
+
+```sh
+python scripts/empirical_game_pool.py dump 1 2 3 4 5 6
+python scripts/empirical_game_pool.py pool 1 2 3 4 5 6
+```
 
 | 賽局 | profile | regret | 95% CI | 判定 |
 |---|---|---:|---|---|
