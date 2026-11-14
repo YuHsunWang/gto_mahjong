@@ -301,7 +301,9 @@ export function feltEl(position, {
   scroll.tabIndex = 0;
 
   const felt = document.createElement('div');
-  felt.className = 'felt';
+  // Score badges need headroom above the hand; see .felt--scored.
+  const scored = Object.keys(handOptions.marks?.scores || {}).length > 0;
+  felt.className = `felt${scored ? ' felt--scored' : ''}`;
   const [right, top, left] = position.opponents || [];
   felt.append(
     opponentSeatEl('top', top, position.seat, position.seat_scores),
@@ -322,8 +324,9 @@ export function feltEl(position, {
   return scroll;
 }
 
-// The live or standalone hand. marks supports cut, modelLeader and an array of
-// indistinguishable tile indices; only one physical copy gets each marker.
+// The live or standalone hand. marks supports cut, modelLeader, an array of
+// indistinguishable tile indices, and scores ({ tile: { text, band, mine } });
+// only one physical copy gets each marker.
 export function handEl(handCounts, {
   drawnTile = null,
   onDiscard = null,
@@ -348,6 +351,8 @@ export function handEl(handCounts, {
   let leaderMarked = false;
   const indistinguishable = new Set(marks.indistinguishable || []);
   const indistinguishableMarked = new Set();
+  const scores = marks.scores || {};
+  const scored = new Set();
   const oneTap = localStorage.getItem('mj-onetap') === '1';
 
   tiles.forEach((tile, index) => {
@@ -375,6 +380,22 @@ export function handEl(handCounts, {
     }
     const el = tileEl(tile, { size: 'lg', classes, as: onDiscard ? 'button' : 'div' });
     el.dataset.tile = String(tile);
+    const score = scores[tile];
+    if (score && !scored.has(tile)) {
+      scored.add(tile);
+      row.classList.add('has-scores');
+      const badge = document.createElement('span');
+      badge.className = `tile-score ${score.band}`;
+      badge.textContent = score.text;
+      el.append(badge);
+      if (score.mine) {
+        const mine = document.createElement('span');
+        mine.className = 'tile-mine';
+        mine.textContent = '我';
+        el.append(mine);
+      }
+      el.setAttribute('aria-label', `${faceText(tile)} ${score.text}${score.mine ? ' 我' : ''}`);
+    }
     if (onDiscard) {
       el.addEventListener('click', () => {
         if (oneTap || lifted === el) {

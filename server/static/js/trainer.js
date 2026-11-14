@@ -5,7 +5,7 @@
 import { post, get, showError, randomSeed } from './api.js';
 import { tileEl } from './tiles.js';
 import { feltEl, handEl, computingEl, faceText } from './table.js';
-import { reviewRailEl } from './feedback.js';
+import { reviewRailEl, tileScores } from './feedback.js';
 import { record, recordOutcome, summary } from './stats.js';
 import { schemeToggle, schemeParams } from './scheme.js';
 
@@ -360,6 +360,7 @@ export function trainerScreen(root) {
             indistinguishable: state === 'clear' || !topGap
               ? []
               : [topGap.top_discard, topGap.runner_up_discard],
+            scores: tileScores(feedback, feedback.chosen_tile),
           },
         },
       }));
