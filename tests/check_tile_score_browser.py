@@ -3,8 +3,9 @@
 After a graded discard the hand shows a badge above every evaluated tile: its
 net-EV gap to the model's point leader. A player reads the badge instead of the
 EV table, so it must say what the grade says: the played tile carries the
-verdict's own delta and colour, an unresolved top pair shows no order, and no
-badge may be clipped or cover another tile at phone width.
+verdict's own delta and colour, the other tiles are coloured by the same
+scheme-scaled cut-offs the server grades with, an unresolved top pair shows no
+order, and no badge may be clipped or cover another tile at phone width.
 
 Uses the existing phone checker and installed Playwright; no new dependency.
 """
@@ -19,12 +20,15 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 from scripts.check_phone_layout import ROOT, wait_for_server
+from taimahjong.quiz import verdict_for_delta
+from taimahjong.scoring import DEFAULT_SCHEME, ScoringScheme
 
 
 VIEWPORTS = ((1280, 800), (390, 844), (320, 568))
-# (seed, which evaluated discard to play). Seeds only pick the position; every
-# expectation below is recomputed from the server's own grade payload.
-CASES = ((1, "leader"), (1, "last"), (3, "leader"), (3, "last"))
+SCHEMES = {"3-1": DEFAULT_SCHEME, "5-2": ScoringScheme(5, 2)}
+# (seed, which evaluated discard to play, scheme). Seeds only pick the position;
+# every expectation below is recomputed from the server's own grade payload.
+CASES = ((1, "leader", "3-1"), (1, "last", "3-1"), (3, "leader", "3-1"), (3, "last", "3-1"), (3, "leader", "5-2"))
 VERDICT_BANDS = {"best": "q-best", "good": "q-correct", "inaccuracy": "q-inaccuracy", "mistake": "q-wrong"}
 
 
@@ -35,15 +39,7 @@ def _gap_text(gap):
     return f"−{Decimal(gap).quantize(step, rounding=ROUND_HALF_UP)}"
 
 
-def _gap_band(gap):
-    if gap <= 0:
-        return "q-best"
-    if gap <= 0.3:
-        return "q-correct"
-    return "q-inaccuracy" if gap <= 1 else "q-wrong"
-
-
-def expected_badges(grade, chosen):
+def expected_badges(grade, chosen, scheme):
     entries = [entry for entry in grade["ranked"] if not entry["is_fold"]]
     leader = entries[0]["net_ev"]
     pair = grade["top1_vs_top2"]
@@ -57,7 +53,7 @@ def expected_badges(grade, chosen):
             badges[tile] = (_gap_text(grade["ev_delta"]), VERDICT_BANDS[grade["verdict"]])
         else:
             gap = leader - entry["net_ev"]
-            badges[tile] = (_gap_text(gap), _gap_band(gap))
+            badges[tile] = (_gap_text(gap), VERDICT_BANDS[verdict_for_delta(gap, scheme)])
     return badges
 
 
@@ -115,8 +111,8 @@ LAYOUT_PROBLEMS = """() => {
 }"""
 
 
-def assert_badges(page, grade, chosen, shots, name):
-    expected = expected_badges(grade, chosen)
+def assert_badges(page, grade, chosen, scheme, shots, name):
+    expected = expected_badges(grade, chosen, scheme)
     shown = page.evaluate(READ_BADGES)
     assert {item["tile"]: (item["text"], item["band"]) for item in shown} == expected, (shown, expected)
     assert len(shown) == len(expected), f"one badge per evaluated tile, got {shown}"
@@ -138,13 +134,13 @@ def _post(page, url, body):
     return response.json()
 
 
-def run_quiz_case(browser, url, seed, pick, shots):
+def run_quiz_case(browser, url, seed, pick, scheme, shots):
     context = browser.new_context(viewport={"width": 1280, "height": 800})
     try:
         page = context.new_page()
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
-        body = {"seed": seed, "scheme": "3-1"}
+        body = {"seed": seed, "scheme": scheme}
         position = _post(page, f"{url}/api/quiz/new", body)["position"]
         probe_tile = next(tile for tile, count in enumerate(position["hand"]) if count)
         probe = _post(page, f"{url}/api/quiz/grade", {**body, "tile": probe_tile})["grade"]
@@ -152,7 +148,7 @@ def run_quiz_case(browser, url, seed, pick, shots):
         chosen = (ranked[0] if pick == "leader" else ranked[-1])["discard"]
         grade = _post(page, f"{url}/api/quiz/grade", {**body, "tile": chosen})["grade"]
 
-        page.add_init_script("localStorage.setItem('mj-onetap', '1'); localStorage.setItem('mj-scheme', '3-1');")
+        page.add_init_script(f"localStorage.setItem('mj-onetap', '1'); localStorage.setItem('mj-scheme', '{scheme}');")
         page.route("**/api/quiz/new", lambda route: route.continue_(post_data=json.dumps(body)))
         page.goto(f"{url}/#/quiz")
         tile = page.locator(f'.seat--bottom .handrow button.tile[data-tile="{chosen}"]').first
@@ -160,7 +156,7 @@ def run_quiz_case(browser, url, seed, pick, shots):
         assert page.locator(".tile-score").count() == 0, "badges must not show before the discard"
         tile.click()
         page.locator(".seat--bottom .tile-score").first.wait_for(timeout=180000)
-        assert_badges(page, grade, chosen, shots, f"quiz-seed{seed}-{pick}")
+        assert_badges(page, grade, chosen, SCHEMES[scheme], shots, f"quiz-seed{seed}-{pick}-{scheme}")
         assert not errors, errors
         return grade
     finally:
@@ -186,7 +182,7 @@ def run_trainer_case(browser, url, shots):
         feedback = act.value.json()["feedback"]
         assert feedback["kind"] == "discard" and feedback["chosen_tile"] == chosen, feedback
         page.locator(".seat--bottom .tile-score").first.wait_for(timeout=180000)
-        assert_badges(page, feedback, chosen, shots, "trainer-seed1")
+        assert_badges(page, feedback, chosen, DEFAULT_SCHEME, shots, "trainer-seed1")
         assert not errors, errors
     finally:
         context.close()
@@ -208,7 +204,7 @@ def main():
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             try:
-                grades = [run_quiz_case(browser, url, seed, pick, args.shots) for seed, pick in CASES]
+                grades = [run_quiz_case(browser, url, *case, args.shots) for case in CASES]
                 run_trainer_case(browser, url, args.shots)
             finally:
                 browser.close()
@@ -217,6 +213,13 @@ def main():
         states = {grade["ranking_state"] == "clear" for grade in grades}
         assert states == {True, False}, "cases must cover a clear ranking and an unresolved top pair"
         assert any(grade["verdict"] != "best" for grade in grades), "cases must cover a losing discard"
+        # 底5台2 widens every cut-off by 1.75; a case must hold a tile that the
+        # default-scheme cut-offs would colour differently.
+        assert any(
+            expected_badges(grade, grade["chosen"]["discard"], SCHEMES[scheme])
+            != expected_badges(grade, grade["chosen"]["discard"], DEFAULT_SCHEME)
+            for grade, (_, _, scheme) in zip(grades, CASES)
+        ), "cases must cover a gap that only the scheme-scaled cut-offs colour correctly"
         return 0
     finally:
         process.terminate()

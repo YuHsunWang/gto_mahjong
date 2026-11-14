@@ -386,10 +386,11 @@ function currentEvidenceEl(grade) {
   return evidence;
 }
 
-function optionBand(gap) {
+// Same cut-offs as the server's verdict_for_delta, already scaled to the scheme.
+function optionBand(gap, thresholds) {
   if (gap <= 0) return ['q-best', '模型領先'];
-  if (gap <= .3) return ['q-correct', '正確'];
-  if (gap <= 1) return ['q-inaccuracy', '小失誤'];
+  if (gap < thresholds.good) return ['q-correct', '正確'];
+  if (gap < thresholds.inaccuracy) return ['q-inaccuracy', '小失誤'];
   return ['q-wrong', '失誤'];
 }
 
@@ -418,7 +419,7 @@ export function tileScores(grade, chosenTile) {
     const gap = mine ? grade.ev_delta : pointLeader - entry.net_ev;
     scores[entry.discard] = {
       text: gap <= 0 ? '領先' : `−${gap.toFixed(gap < 10 ? 2 : 1)}`,
-      band: mine ? VERDICT_BANDS[grade.verdict] : optionBand(gap)[0],
+      band: mine ? VERDICT_BANDS[grade.verdict] : optionBand(gap, grade.verdict_thresholds)[0],
       mine,
     };
   });
@@ -465,7 +466,7 @@ function optionGridEl(grade, chosenTile) {
       && (entry.discard === topGap.top_discard || entry.discard === topGap.runner_up_discard);
     const [bandClass, bandLabel] = unresolved
       ? ['q-unresolved', state === 'uncertain' ? '無法區分' : '差異很小']
-      : optionBand(gap);
+      : optionBand(gap, grade.verdict_thresholds);
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `option-cell ${bandClass}${unresolved ? ' indistinguishable' : ''}`;

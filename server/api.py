@@ -61,6 +61,7 @@ from taimahjong.midgame_corpus import MidgameCase, sample_case
 from taimahjong.midgame_exit import case_observation
 from taimahjong.quiz import (
     EV_EFFECT_SIZE_MIN,
+    GOOD_DELTA,
     QuizGrade,
     QuizPosition,
     explain,
@@ -294,6 +295,12 @@ def _mistake_label_payload(result: QuizGrade) -> dict[str, Any] | None:
 def _grade_payload(result: QuizGrade) -> dict[str, Any]:
     return {
         "verdict": result.verdict,
+        # The scheme-scaled cut-offs behind `verdict`, so the UI bands the other
+        # discards exactly as verdict_for_delta would.
+        "verdict_thresholds": {
+            "good": scaled_threshold(GOOD_DELTA, result.scheme),
+            "inaccuracy": scaled_threshold(1.0, result.scheme),
+        },
         "marginal": result.marginal,
         "ranking_uncertain": result.ranking_uncertain,
         "ranking_state": result.ranking_state,
