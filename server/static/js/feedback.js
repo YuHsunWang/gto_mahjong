@@ -393,6 +393,38 @@ function optionBand(gap) {
   return ['q-wrong', '失誤'];
 }
 
+const VERDICT_BANDS = {
+  best: 'q-best',
+  good: 'q-correct',
+  inaccuracy: 'q-inaccuracy',
+  mistake: 'q-wrong',
+};
+
+// Score badges for the graded hand, keyed by tile: each evaluated discard's
+// net-EV gap to the point leader. The chosen tile follows the verdict so its
+// badge agrees with the headline; an unresolved top pair is never ranked.
+export function tileScores(grade, chosenTile) {
+  const entries = (grade?.ranked || []).filter((entry) => !entry.is_fold);
+  if (!entries.length) return {};
+  const pointLeader = entries[0].net_ev;
+  const unresolved = (grade.ranking_state || 'clear') !== 'clear';
+  const scores = {};
+  entries.forEach((entry) => {
+    const mine = entry.discard === chosenTile;
+    if (unresolved && topPairContains(grade, entry.discard)) {
+      scores[entry.discard] = { text: '≈', band: 'q-unresolved', mine };
+      return;
+    }
+    const gap = mine ? grade.ev_delta : pointLeader - entry.net_ev;
+    scores[entry.discard] = {
+      text: gap <= 0 ? '領先' : `−${gap.toFixed(gap < 10 ? 2 : 1)}`,
+      band: mine ? VERDICT_BANDS[grade.verdict] : optionBand(gap)[0],
+      mine,
+    };
+  });
+  return scores;
+}
+
 function optionGridEl(grade, chosenTile) {
   const section = document.createElement('div');
   section.className = 'option-surface';
