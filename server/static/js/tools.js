@@ -53,7 +53,7 @@ function screenHeader(root, title) {
   const back = document.createElement('a');
   back.className = 'back';
   back.href = '#/';
-  back.textContent = '‹ 首頁';
+  back.textContent = '‹ 大廳';
   const heading = document.createElement('h1');
   heading.textContent = title;
   bar.append(back, heading);

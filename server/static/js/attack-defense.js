@@ -132,7 +132,7 @@ export function attackDefenseScreen(root) {
 
   function render() {
     const header = textEl('div', '', 'topbar');
-    const back = textEl('a', '‹ 首頁', 'back');
+    const back = textEl('a', '‹ 大廳', 'back');
     back.href = '#/';
     header.append(back, textEl('h1', '攻守練習'));
     root.replaceChildren(header);

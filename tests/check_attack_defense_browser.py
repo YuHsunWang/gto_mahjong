@@ -67,8 +67,8 @@ def main():
                         assert not errors, errors
                         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                         page.evaluate("localStorage.setItem('mj-scheme', '5-2')")
-                        page.get_by_role("link", name="‹ 首頁").click()
-                        card = page.locator('a.card[href="#/attack-defense"]')
+                        page.get_by_role("link", name="‹ 大廳").click()
+                        card = page.locator('a.mode[href="#/attack-defense"]')
                         assert "已答 2 次選牌" in card.inner_text()
                         print(f"seeds={game}/{selection}: PASS two taps, grading, overlap, recommendation, isolated stats", flush=True)
                     finally:

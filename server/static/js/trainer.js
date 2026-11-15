@@ -3,7 +3,7 @@
 // sessionStorage so a page reload resumes the same hand.
 
 import { post, get, showError, randomSeed } from './api.js';
-import { tileEl } from './tiles.js';
+import { tileEl, tileBackEl } from './tiles.js';
 import { feltEl, handEl, computingEl, faceText } from './table.js';
 import { reviewRailEl, tileScores, gradeVerdictEl, qualitySummaryEl } from './feedback.js';
 import { record, recordOutcome, summary, handSummary } from './stats.js';
@@ -61,13 +61,18 @@ export function trainerScreen(root) {
     const back = document.createElement('a');
     back.className = 'back';
     back.href = '#/';
-    back.textContent = '‹ 首頁';
+    back.textContent = '‹ 大廳';
     const heading = document.createElement('h1');
     heading.textContent = '整場實戰';
+    bar.append(back, heading);
+    if (phase === 'setup') {
+      bar.append(schemeToggle(() => {}));
+      return bar;
+    }
     const tag = document.createElement('span');
     tag.className = 'mode-tag';
     tag.textContent = state ? `種子 ${state.seed} · ${SEAT_LABELS[state.human_seat]}` : '';
-    bar.append(back, heading, tag);
+    bar.append(tag);
     return bar;
   }
 
@@ -205,57 +210,111 @@ export function trainerScreen(root) {
   }
 
   function setupScreen() {
-    const wrap = document.createElement('div');
-    const seedField = document.createElement('div');
-    seedField.className = 'field';
-    seedField.innerHTML = '<label for="tr-seed">種子</label>';
+    const wrap = document.createElement('section');
+    wrap.className = 'deal';
+    const title = document.createElement('h2');
+    title.textContent = '這一局誰做莊？';
+
+    // Seats in play order from you (counter-clockwise): you, 下家, 對家, 上家.
+    // When seat d deals, you sit (4 - d) % 4 after the dealer, which is the
+    // human_seat value the old select sent (0 莊家, 1 莊的下家, 2 對家, 3 上家).
+    let dealer = 0;
+    let streak = 0;
+    const grid = document.createElement('div');
+    grid.className = 'seat-grid';
+    grid.setAttribute('role', 'group');
+    grid.setAttribute('aria-label', '誰做莊');
+    const seats = ['你', '下家', '對家', '上家'].map((name, index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `seat-pick seat-pick--${index}`;
+      button.dataset.seat = String(index);
+      button.setAttribute('aria-label', `${name}做莊`);
+      const wind = document.createElement('span');
+      wind.className = 'seat-pick-wind';
+      const label = document.createElement('span');
+      label.textContent = name;
+      const chip = document.createElement('span');
+      chip.className = 'seat-pick-chip';
+      chip.setAttribute('aria-hidden', 'true');
+      chip.textContent = '莊';
+      button.append(wind, label, chip);
+      button.addEventListener('click', () => { dealer = index; paintSeats(); });
+      return button;
+    });
+    function paintSeats() {
+      seats.forEach((button, index) => {
+        button.setAttribute('aria-pressed', String(index === dealer));
+        button.querySelector('.seat-pick-wind').textContent = '東南西北'[(index - dealer + 4) % 4];
+      });
+    }
+    paintSeats();
+
+    const centre = document.createElement('div');
+    centre.className = 'seat-centre';
+    const seedLabel = document.createElement('label');
+    seedLabel.htmlFor = 'tr-seed';
+    seedLabel.textContent = '這副牌的編號';
     const seedInput = document.createElement('input');
     seedInput.type = 'number';
     seedInput.id = 'tr-seed';
     seedInput.value = String(randomSeed());
-    seedField.append(seedInput);
+    const shuffle = document.createElement('button');
+    shuffle.type = 'button';
+    shuffle.className = 'pill-btn';
+    shuffle.textContent = '換一副';
+    shuffle.addEventListener('click', () => { seedInput.value = String(randomSeed()); });
+    centre.append(seedLabel, seedInput, shuffle);
+    grid.append(seats[2], seats[3], centre, seats[1], seats[0]);
 
-    const row = document.createElement('div');
-    row.className = 'field-row';
-    const seatField = document.createElement('div');
-    seatField.className = 'field';
-    seatField.innerHTML = '<label for="tr-seat">你的座位</label>';
-    const seatSelect = document.createElement('select');
-    seatSelect.id = 'tr-seat';
-    Object.entries(SEAT_LABELS).forEach(([value, label]) => {
-      const option = document.createElement('option');
-      option.value = value;
-      option.textContent = label;
-      seatSelect.append(option);
+    const actions = document.createElement('div');
+    actions.className = 'deal-actions';
+    const stepper = document.createElement('div');
+    stepper.className = 'stepper';
+    stepper.setAttribute('role', 'group');
+    stepper.setAttribute('aria-label', '已經連莊次數');
+    const value = document.createElement('output');
+    value.id = 'tr-streak';
+    value.setAttribute('aria-live', 'polite');
+    const less = document.createElement('button');
+    const more = document.createElement('button');
+    function paintStreak() {
+      value.textContent = String(streak);
+      less.setAttribute('aria-disabled', String(streak === 0));
+      more.setAttribute('aria-disabled', String(streak === 8));
+    }
+    [[less, '−', '少一次', -1], [more, '+', '多一次', 1]].forEach(([button, text, name, step]) => {
+      button.type = 'button';
+      button.className = 'step-btn';
+      button.textContent = text;
+      button.setAttribute('aria-label', name);
+      button.addEventListener('click', () => { streak = Math.min(8, Math.max(0, streak + step)); paintStreak(); });
     });
-    seatField.append(seatSelect);
-    const streakField = document.createElement('div');
-    streakField.className = 'field';
-    streakField.innerHTML = '<label for="tr-streak">初始連莊數</label>';
-    const streakInput = document.createElement('input');
-    streakInput.type = 'number';
-    streakInput.id = 'tr-streak';
-    streakInput.min = '0';
-    streakInput.max = '8';
-    streakInput.value = '0';
-    streakField.append(streakInput);
-    row.append(seatField, streakField);
+    paintStreak();
+    const before = document.createElement('span');
+    before.textContent = '已經連莊';
+    const after = document.createElement('span');
+    after.textContent = '次';
+    stepper.append(before, less, value, more, after);
+
+    const startButton = document.createElement('button');
+    startButton.className = 'btn primary slab';
+    startButton.textContent = '開始新局';
+    startButton.addEventListener('click', () => {
+      start(Number(seedInput.value) || randomSeed(), (4 - dealer) % 4, streak);
+    });
+    actions.append(stepper, startButton);
 
     const note = document.createElement('div');
     note.className = 'note';
     note.textContent = '每手打牌、可鳴牌與可宣告的暗槓／加槓都會即時 EV 回饋並計分。本桌無花牌。';
 
-    const controls = document.createElement('div');
-    controls.className = 'controls';
-    const startButton = document.createElement('button');
-    startButton.className = 'btn primary';
-    startButton.textContent = '開始新局';
-    startButton.addEventListener('click', () => {
-      start(Number(seedInput.value) || randomSeed(), Number(seatSelect.value), Number(streakInput.value) || 0);
-    });
-    controls.append(startButton);
+    const wall = document.createElement('div');
+    wall.className = 'deal-wall';
+    wall.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < 16; i += 1) wall.append(tileBackEl());
 
-    wrap.append(seedField, row, schemeToggle(() => {}), note, controls);
+    wrap.append(title, grid, actions, note, wall);
     return wrap;
   }
 
