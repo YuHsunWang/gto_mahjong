@@ -4,8 +4,9 @@ Plays one 整場 hand to the end, then checks the post-hand review: one row per
 graded decision in play order, each row coloured by the grade the player saw,
 the hand's quality score counted from those same row colours (only a pick
 inside an unresolved top pair is left out), a row opening that decision's full feedback, the way back landing on
-the same row, and the review surviving a reload. No row may be clipped or make
-the page scroll sideways at phone width.
+the same row, and the review surviving a reload. No row may be clipped; the
+result screen, including the winner's hand and melds, must fit the viewport
+without sideways page scrolling at desktop or phone widths.
 
 Uses the existing phone checker and installed Playwright; no new dependency.
 """
@@ -83,12 +84,18 @@ LAYOUT_PROBLEMS = """() => {
   return problems;
 }"""
 
-# The result card's winner hand can already overflow at phone width; that is
-# not the review's doing, so it is reported, not failed.
-WIDE_OUTSIDE_REVIEW = """() => [...document.querySelectorAll('body *')]
-  .filter(node => !node.closest('.hand-review') && node.getBoundingClientRect().right > innerWidth + .5)
-  .map(node => node.className || node.tagName)
-  .slice(0, 3)"""
+# The whole result screen must fit, including the winner's declared melds.
+VIEWPORT_PROBLEMS = """() => {
+  const problems = [];
+  if (document.documentElement.scrollWidth > innerWidth)
+    problems.push('page scrolls sideways');
+  document.querySelectorAll('body *').forEach(node => {
+    const box = node.getBoundingClientRect();
+    if (box.left < -.5 || box.right > innerWidth + .5)
+      problems.push(`${node.getAttribute('class') || node.tagName} leaves the viewport`);
+  });
+  return [...new Set(problems)];
+}"""
 
 
 def play_hand(page):
@@ -163,11 +170,11 @@ def run(browser, url, shots):
             page.set_viewport_size({"width": width, "height": height})
             if shots:
                 page.screenshot(path=str(shots / f"review-{width}.png"), full_page=True)
+                page.locator(".outcome").screenshot(path=str(shots / f"outcome-{width}.png"))
             problems = page.evaluate(LAYOUT_PROBLEMS)
             assert not problems, (width, height, problems)
-            wide = page.evaluate(WIDE_OUTSIDE_REVIEW)
-            if wide:
-                print(f"note: at {width}px, outside the review: {wide} overflow", flush=True)
+            wide = page.evaluate(VIEWPORT_PROBLEMS)
+            assert not wide, (width, height, wide)
         assert not errors, errors
         verdicts = " ".join(row["state"] for row in review["rows"])
         print(f"seed{SEED}: PASS {len(grades)} decisions ({'/'.join(sorted(kinds))}) "
