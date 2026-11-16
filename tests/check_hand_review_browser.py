@@ -1,12 +1,15 @@
 """Optional browser regression: PYTHONPATH=. python tests/check_hand_review_browser.py.
 
-Plays one 整場 hand to the end, then checks the post-hand review: one row per
-graded decision in play order, each row coloured by the grade the player saw,
-the hand's quality score counted from those same row colours (only a pick
-inside an unresolved top pair is left out), a row opening that decision's full feedback, the way back landing on
-the same row, and the review surviving a reload. No row may be clipped; the
-result screen, including the winner's hand and melds, must fit the viewport
-without sideways page scrolling at desktop or phone widths.
+Plays one 整場 hand to the end, then checks the 牌譜 (game record): one move
+per graded decision in play order, six to a row like a discard river, each a
+tile (discard) or token (pass / call / kong) with the pill of the grade the
+player saw; the summary sentence and the tally counted from those same pills
+(only a pick inside an unresolved top pair is left out); a move opening that
+decision's full feedback, the way back landing on the same move, Tab reaching
+the next move with a visible ring, and the record surviving a reload. No move
+may be clipped, overlap or be smaller than 44px; the result screen, including
+the winner's hand and melds, must fit the viewport without sideways page
+scrolling at desktop or phone widths.
 
 Uses the existing phone checker and installed Playwright; no new dependency.
 """
@@ -35,6 +38,9 @@ def _tied(grade):
             and chosen in (pair["top_discard"], pair["runner_up_discard"]))
 
 
+VERDICT_LABELS = {"best": "模型領先", "good": "正確", "inaccuracy": "小失誤", "mistake": "失誤"}
+
+
 def expected_hand(grades):
     counts = {"best": 0, "good": 0, "inaccuracy": 0, "mistake": 0}
     unresolved = 0
@@ -48,24 +54,41 @@ def expected_hand(grades):
             counts[grade["verdict"]] += 1
     separable = sum(counts.values())
     score = f"{round(100 * (counts['best'] + counts['good']) / separable)}%" if separable else "—"
-    return score, f"{loss:.2f}", unresolved
+    stats = {
+        "decisions": str(len(grades)),
+        "separable": str(separable),
+        "leading": str(counts["best"] + counts["good"]),
+        "score": score,
+        "loss": f"{loss:.2f}",
+    }
+    return stats, {**counts, "unresolved": unresolved}
 
 
 def row_class(grade):
     return "unresolved" if _tied(grade) else grade["verdict"]
 
 
+def expected_pill(grade):
+    return "≈" if _tied(grade) else VERDICT_LABELS[grade["verdict"]]
+
+
 READ_REVIEW = """() => {
   const section = document.querySelector('.hand-review');
   if (!section) return null;
   return {
-    score: section.querySelector('.quality-score-card strong').textContent,
-    loss: section.querySelector('.quality-minis strong').textContent,
-    note: section.querySelector('.quality-note').textContent,
-    rows: [...section.querySelectorAll('.hand-review-row')].map(row => ({
-      index: Number(row.dataset.review),
-      text: row.querySelector('.verdict .text').textContent,
-      state: [...row.querySelector('.verdict').classList].find(name => name !== 'verdict'),
+    title: section.querySelector('h2').textContent,
+    stats: Object.fromEntries([...section.querySelectorAll('[data-stat]')].map(node => [node.dataset.stat, node.textContent])),
+    tally: Object.fromEntries([...section.querySelectorAll('.hand-tally li')].map(item =>
+      [item.dataset.verdict, Number(item.querySelector('.tally-count').textContent)])),
+    retired: document.querySelectorAll('.quality-score-card, .quality-bar, .quality-row, .hand-review-row').length,
+    rows: [...section.querySelectorAll('.hand-river button[data-review]')].map(move => ({
+      index: Number(move.dataset.review),
+      label: move.getAttribute('aria-label'),
+      pill: move.querySelector('.river-pill').textContent,
+      state: [...move.querySelector('.river-pill').classList].find(name => !['river-pill', 'long'].includes(name)),
+      tile: move.querySelector('.tile') ? Number(move.querySelector('.tile').dataset.tile) : null,
+      face: move.querySelector('.tile')?.getAttribute('title') ?? null,
+      token: move.querySelector('.river-token')?.textContent ?? null,
     })),
   };
 }"""
@@ -74,13 +97,29 @@ LAYOUT_PROBLEMS = """() => {
   const problems = [];
   const review = document.querySelector('.hand-review').getBoundingClientRect();
   if (review.right > innerWidth + .5) problems.push('hand review is wider than the viewport');
-  document.querySelectorAll('.hand-review-row').forEach(row => {
-    const box = row.getBoundingClientRect();
-    if (box.width <= 0 || box.height <= 0) problems.push(`row ${row.dataset.review} has no size`);
-    if (box.left < 0 || box.right > innerWidth + .5) problems.push(`row ${row.dataset.review} leaves the viewport`);
-    const text = row.querySelector('.verdict .text');
-    if (text.scrollWidth > text.clientWidth + 1) problems.push(`row ${row.dataset.review} text is clipped`);
+  const moves = [...document.querySelectorAll('.hand-river button[data-review]')];
+  const rows = [];
+  moves.forEach((move, index) => {
+    const box = move.getBoundingClientRect();
+    const name = `move ${move.dataset.review}`;
+    if (Math.min(box.width, box.height) < 44) problems.push(`${name} is ${box.width}x${box.height}, under 44px`);
+    if (box.left < 0 || box.right > innerWidth + .5) problems.push(`${name} leaves the viewport`);
+    const previous = moves[index - 1]?.getBoundingClientRect();
+    if (previous && Math.abs(previous.top - box.top) < 1 && box.left < previous.right - .5) problems.push(`${name} overlaps the move before it`);
+    if (!previous || Math.abs(previous.top - box.top) >= 1) rows.push(0);
+    rows[rows.length - 1] += 1;
+    [...move.children].forEach(part => {
+      const inner = part.getBoundingClientRect();
+      if (inner.left < box.left - .5 || inner.right > box.right + .5 || inner.bottom > box.bottom + .5)
+        problems.push(`${name} clips its ${part.className.baseVal ?? part.className}`);
+    });
+    const pill = move.querySelector('.river-pill');
+    if (pill.scrollWidth > pill.clientWidth + 1) problems.push(`${name} pill text is clipped`);
+    const tile = move.querySelector('.tile');
+    if (tile && tile.getBoundingClientRect().width < 24) problems.push(`${name} tile face is too small to read`);
   });
+  if (rows.slice(0, -1).some(count => count !== 6) || rows.at(-1) > 6)
+    problems.push(`river rows hold ${rows.join('/')} moves, not six per row`);
   return problems;
 }"""
 
@@ -116,15 +155,25 @@ def play_hand(page):
 def assert_review(page, grades, label):
     review = page.evaluate(READ_REVIEW)
     assert review is not None, f"{label}: no hand review on the result screen"
-    score, loss, unresolved = expected_hand(grades)
-    assert (review["score"], review["loss"]) == (score, loss), (label, review, score, loss)
-    assert review["note"].startswith(f"{unresolved} 次"), (label, review["note"])
+    assert review["title"] == "這一局的牌譜", (label, review["title"])
+    assert review["retired"] == 0, f"{label}: the old stat tiles, bar or text rows are still drawn"
+    stats, tally = expected_hand(grades)
+    assert review["stats"] == stats, (label, review["stats"], stats)
+    assert review["tally"] == tally, (label, review["tally"], tally)
     assert [row["index"] for row in review["rows"]] == list(range(len(grades))), (label, review["rows"])
     for row, grade in zip(review["rows"], grades):
-        assert row["text"].startswith(f"第 {row['index'] + 1} 手 · "), row
+        number = row["index"] + 1
         assert row["state"] == row_class(grade), (row, grade["verdict"], grade.get("ranking_state"))
+        assert row["pill"] == expected_pill(grade), (row, grade["verdict"], grade.get("ranking_state"))
+        assert row["label"].startswith(f"第 {number} 手，"), row
+        word = row["label"].rsplit("，", 1)[1]
+        assert word == VERDICT_LABELS[grade["verdict"]] if not _tied(grade) else word in ("無法區分", "差異很小"), row
         if grade["kind"] == "discard":
-            assert row["text"].startswith(f"第 {row['index'] + 1} 手 · 你打 "), row
+            assert row["tile"] == grade["chosen_tile"] and row["token"] is None, (row, grade["chosen_tile"])
+            assert row["label"].startswith(f"第 {number} 手，你打 {row['face']}，"), row
+        else:
+            # The check passes every call and kong, so each one is a 過 token.
+            assert grade["choice"] is None and row["token"] == "過" and row["tile"] is None, (row, grade)
     return review
 
 
@@ -143,12 +192,15 @@ def run(browser, url, shots):
         kinds = {grade["kind"] for grade in grades}
         review = assert_review(page, grades, "result")
 
-        # Open the costliest decision: its full feedback, then back to the same row.
+        # Open the costliest decision: its full feedback, then back to the same move.
         pick = max(range(len(grades)), key=lambda i: (grades[i]["verdict"] != "best", grades[i]["ev_loss"]))
-        page.locator(f'.hand-review-row[data-review="{pick}"]').click()
+        page.locator(f'.hand-river button[data-review="{pick}"]').click()
         current = page.locator(".current-decision .verdict")
         current.wait_for(timeout=LONG)
-        assert current.locator(".text").text_content() == review["rows"][pick]["text"], "opened the wrong decision"
+        title = current.locator(".text").text_content()
+        # Same move number and choice text as the pressed move's label.
+        assert title.startswith(f"第 {pick + 1} 手，") and review["rows"][pick]["label"].startswith(f"{title}，"), \
+            ("opened the wrong decision", title, review["rows"][pick]["label"])
         assert row_class(grades[pick]) in current.get_attribute("class"), current.get_attribute("class")
         if grades[pick]["kind"] == "discard":
             chosen = grades[pick]["chosen_tile"]
@@ -160,7 +212,16 @@ def run(browser, url, shots):
         page.get_by_role("button", name="‹ 回結果").click()
         page.locator(".hand-review").wait_for(timeout=LONG)
         focused = page.evaluate("() => document.activeElement?.dataset?.review ?? null")
-        assert focused == str(pick), f"back should return to row {pick}, focus is on {focused}"
+        assert focused == str(pick), f"back should return to move {pick}, focus is on {focused}"
+        if pick + 1 < len(grades):
+            page.keyboard.press("Tab")
+            ring = page.evaluate("""() => ({
+              review: document.activeElement?.dataset?.review ?? null,
+              outline: getComputedStyle(document.activeElement).outlineStyle,
+              width: parseFloat(getComputedStyle(document.activeElement).outlineWidth),
+            })""")
+            assert ring["review"] == str(pick + 1), f"Tab should reach move {pick + 1}, focus is on {ring}"
+            assert ring["outline"] != "none" and ring["width"] >= 2, f"keyboard focus has no visible ring: {ring}"
 
         page.reload()
         page.locator(".outcome").wait_for(timeout=LONG)
@@ -178,7 +239,7 @@ def run(browser, url, shots):
         assert not errors, errors
         verdicts = " ".join(row["state"] for row in review["rows"])
         print(f"seed{SEED}: PASS {len(grades)} decisions ({'/'.join(sorted(kinds))}) "
-              f"score {review['score']} loss {review['loss']} · {verdicts}", flush=True)
+              f"score {review['stats']['score']} loss {review['stats']['loss']} · {verdicts}", flush=True)
     finally:
         context.close()
 
