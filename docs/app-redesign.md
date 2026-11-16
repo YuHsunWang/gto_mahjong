@@ -129,7 +129,9 @@ Top to bottom on the lacquer panel:
    unchanged (issue #118 still decides its formula).
 6. `分數是怎麼算的` — a closed `<details>` holding `modelScopeEl`.
 
-The rail is shared by 整場, 單手, 殘局 and 攻守; all four get the new layout.
+The rail is shared by 整場, 單手 and 殘局; all three get the new layout. 攻守
+builds its own rail in `attack-defense.js` (its grade is right/wrong per tap,
+with no net-EV options), so it gets the lacquer panel but keeps its content.
 
 ### 4. 結算與牌譜 (trainer result, `trainer.js` `outcomeScreen` + `handReviewEl`)
 

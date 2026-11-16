@@ -282,13 +282,13 @@ button {
   gap: 16px;
 }
 
-.table-board {
-  min-width: 0;
-  padding: 9px;
-  border: 1px solid rgba(217, 194, 230, .18);
-  border-radius: 18px;
-  background: rgba(15, 8, 20, .45);
+/* One table, not nested frames: inside the wood shell the in-game screen is a
+   quiet dark surface, and the board's own wood-framed felt is the only felt. */
+.app.app--table:has(.table-workspace) {
+  background: var(--bg) padding-box, linear-gradient(var(--wood-hi), var(--wood-lo)) border-box;
 }
+
+.table-board { min-width: 0; }
 
 .table-scroll {
   width: 100%;
@@ -724,33 +724,60 @@ details.evwrap summary {
 
 /* ---------- review rail ---------- */
 
-.attack-defense-feedback { padding: 14px; overflow-wrap: anywhere; }
+/* The coach: a lacquer panel beside the felt (docs/app-redesign.md §3). */
+.review-rail {
+  position: sticky;
+  top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border-radius: 18px;
+  background: var(--lacquer);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12), 0 18px 44px rgba(0, 0, 0, .28);
+  overflow-wrap: anywhere;
+}
+
+.attack-defense-feedback { display: block; padding: 14px; }
 .attack-defense-feedback h2 { margin-top: 0; font-size: 18px; }
 .attack-defense-feedback h3 { font-size: 16px; color: var(--gold); }
 .attack-defense-feedback p { font-size: 14px; line-height: 1.6; }
 
-.review-rail {
-  position: sticky;
-  top: 10px;
-  overflow: hidden;
-  border: 1px solid rgba(217, 194, 230, .2);
-  border-radius: 18px;
-  background: rgba(15, 8, 20, .92);
-  box-shadow: 0 18px 44px rgba(0, 0, 0, .28);
+.review-empty { margin: 0; color: var(--ink-dim); font-size: 14px; }
+
+.verdict.verdict--seal { gap: 14px; margin: 0; padding: 0; border-left: 0; background: none; }
+.verdict--seal .seal {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 66px;
+  height: 66px;
+  padding: 7px;
+  border-radius: 10px;
+  background: var(--ink-dim);
+  color: #10201c;
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, .25), inset 0 0 0 5px rgba(16, 32, 28, .45);
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1.1;
+  text-align: center;
+  transform: rotate(-4deg);
 }
+.verdict--seal.best .seal { background: var(--q-best); }
+.verdict--seal.good .seal { background: var(--q-correct); }
+.verdict--seal.inaccuracy .seal { background: var(--q-inaccuracy); }
+.verdict--seal.mistake .seal { background: var(--q-wrong); }
+.verdict--seal.unresolved .seal { background: var(--q-unresolved); font-size: 32px; }
+.verdict-body { min-width: 0; }
+.verdict--seal .text { margin: 0; font-family: var(--serif); font-size: 21px; font-weight: 900; line-height: 1.3; }
+.verdict--seal .delta { margin: 3px 0 0; font-size: 14px; }
 
-.review-head { display: flex; align-items: center; gap: 8px; padding: 12px 13px 10px; border-bottom: 1px solid rgba(217, 194, 230, .15); }
-.review-head h2 { flex: 1; margin: 0; font-size: 14px; }
-.review-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 8px; background: rgba(217, 194, 230, .08); }
-.review-tab { padding: 5px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-dim); font-size: 12px; }
-.review-tab.active { background: #7254a1; color: #fff; }
-.review-tab:disabled { cursor: default; opacity: .4; }
-.review-tab:focus-visible { outline: 2px solid var(--gold); }
-
-.current-decision { padding: 0 12px; }
-.current-decision .verdict { margin-top: 12px; }
+.current-decision .mistake-label { margin-top: 10px; }
 .ranking-banner {
-  margin: 10px 12px 0;
+  margin: 0;
   padding: 10px 11px;
   border: 1px solid var(--q-unresolved);
   border-radius: 11px;
@@ -760,9 +787,40 @@ details.evwrap summary {
 .ranking-banner p { margin: 4px 0 0; color: #cbbede; font-size: 12px; }
 .ranking-banner--marginal { border-style: dashed; background: rgba(165, 139, 226, .1); }
 
-.review-panels { min-width: 0; }
-.review-panel { display: none; padding: 12px 13px 14px; }
-.review-panel.active { display: block; }
+.option-list h3 { margin: 0 0 6px; color: var(--ink-dim); font-size: 14px; font-weight: 500; }
+.option-list ol { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.option-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto 72px;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px 7px;
+  border-radius: 10px;
+}
+.option-row.q-unresolved { background: repeating-linear-gradient(135deg, rgba(165, 139, 226, .14) 0 6px, transparent 6px 12px); }
+.option-row.chosen { background: rgba(224, 163, 0, .14); box-shadow: inset 0 0 0 1px rgba(224, 163, 0, .6); }
+.option-name small { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--gold); color: #241300; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.option-gap { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.option-pill { padding: 2px 6px; border-radius: 999px; background: var(--ink-dim); color: #10201c; font-size: 12.5px; font-weight: 700; text-align: center; white-space: nowrap; }
+.option-pill.q-best { background: var(--q-best); }
+.option-pill.q-correct { background: var(--q-correct); }
+.option-pill.q-inaccuracy { background: var(--q-inaccuracy); }
+.option-pill.q-wrong { background: var(--q-wrong); }
+.option-pill.q-unresolved { background: var(--q-unresolved); }
+
+.rail-details { border-top: 1px solid rgba(255, 255, 255, .1); }
+.rail-details > summary {
+  min-height: 44px;
+  padding: 11px 4px 9px;
+  border-radius: 8px;
+  color: var(--ink-dim);
+  font-size: 14px;
+  cursor: pointer;
+}
+.rail-details > summary:hover { color: var(--ink); }
+.rail-details > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.rail-details[open] > summary { margin-bottom: 6px; }
+.rail-details .bestline { margin-top: 0; }
 .quality-headline { display: grid; grid-template-columns: 1.15fr .85fr; gap: 8px; }
 .current-evidence { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
 .current-evidence > div { display: flex; justify-content: space-between; gap: 6px; padding: 6px 7px; border-radius: 7px; background: rgba(217, 194, 230, .05); font-size: 12px; }
@@ -795,37 +853,6 @@ details.evwrap summary {
 .loss-card { display: flex; align-items: baseline; gap: 9px; margin-top: 10px; padding: 9px 10px; border: 1px solid rgba(217, 194, 230, .14); border-radius: 10px; background: rgba(217, 194, 230, .06); }
 .loss-card strong { font-size: 21px; font-variant-numeric: tabular-nums; }
 .loss-card span { color: var(--ink-dim); font-size: 12px; }
-.review-panel .model-scope { margin-top: 11px; padding-top: 9px; border-top: 1px solid rgba(217, 194, 230, .12); }
-
-.option-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
-.option-cell {
-  position: relative;
-  min-height: 82px;
-  padding: 7px 5px;
-  border: 1px solid rgba(217, 194, 230, .18);
-  border-left-width: 4px;
-  border-radius: 10px;
-  background: rgba(217, 194, 230, .05);
-  color: var(--ink);
-  text-align: left;
-}
-.option-cell.q-best { border-left-color: var(--q-best); }
-.option-cell.q-correct { border-left-color: var(--q-correct); }
-.option-cell.q-inaccuracy { border-left-color: var(--q-inaccuracy); }
-.option-cell.q-wrong { border-left-color: var(--q-wrong); }
-.option-cell.q-unresolved { border-left-color: var(--q-unresolved); }
-.option-cell.indistinguishable { border-color: var(--q-unresolved); background: repeating-linear-gradient(135deg, rgba(165, 139, 226, .14) 0 6px, transparent 6px 12px); }
-.option-cell.chosen { box-shadow: inset 0 0 0 2px var(--gold); }
-.option-cell.selected { outline: 2px solid var(--gold); outline-offset: 1px; }
-.option-cell:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
-.option-rank { position: absolute; top: 5px; right: 6px; color: var(--ink-faint); font-size: 12px; }
-.option-tile { display: block; width: fit-content; }
-.option-cell > strong { display: block; margin-top: 3px; font-size: 15px; font-variant-numeric: tabular-nums; }
-.option-band { display: block; color: var(--ink-dim); font-size: 12px; }
-.option-detail { margin-top: 9px; padding: 9px 10px; border: 1px solid rgba(217, 194, 230, .14); border-radius: 9px; background: rgba(217, 194, 230, .05); }
-.option-detail > div { display: flex; justify-content: space-between; gap: 8px; margin: 3px 0; font-size: 12px; }
-.option-detail span { color: var(--ink-dim); }
-.review-empty { color: var(--ink-faint); font-size: 12px; }
 
 /* ---------- generic controls ---------- */
 
@@ -914,8 +941,8 @@ details.evwrap summary {
   .app > .topbar::after { background: radial-gradient(circle at 0 100%, transparent 9.5px, var(--wood-hi) 10px); }
   .topbar h1 { font-size: 21px; }
   .table-workspace { gap: 9px; }
-  .table-board { padding: 5px; border-radius: 13px; }
-  .review-rail { border-radius: 13px; }
+  .review-rail { padding: 12px; border-radius: 13px; }
+  .option-row { gap: 8px; padding-inline: 6px; }
 }
 
 @media screen and (max-width: 700px) and (orientation: portrait) {

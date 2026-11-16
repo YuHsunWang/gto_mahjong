@@ -435,69 +435,87 @@ export function tileScores(grade, chosenTile) {
   return scores;
 }
 
-function optionGridEl(grade, chosenTile) {
-  const section = document.createElement('div');
-  section.className = 'option-surface';
-  const grid = document.createElement('div');
-  grid.className = 'option-grid';
-  const detail = document.createElement('div');
-  detail.className = 'option-detail';
-  detail.setAttribute('aria-live', 'polite');
-  const entries = (grade.ranked || []).filter((entry) => !entry.is_fold);
-  const pointLeader = entries.length ? entries[0].net_ev : 0;
+const BAND_LABELS = Object.fromEntries(
+  Object.entries(VERDICT_BANDS).map(([verdict, band]) => [band, VERDICT_LABELS[verdict]]),
+);
+
+// The rail's headline: a verdict seal, the choice, and the gap to the leader.
+// A pick inside an unresolved top pair gets ≈ and no number, as in verdictEl.
+function headlineEl(grade, text, chosenTile) {
   const state = grade.ranking_state || 'clear';
-  const topGap = grade.top1_vs_top2;
-
-  function showDetail(entry, button) {
-    grid.querySelectorAll('.option-cell').forEach((cellEl) => cellEl.classList.toggle('selected', cellEl === button));
-    detail.replaceChildren();
-    const lines = [
-      ['選項', faceText(entry.discard)],
-      ['預期淨得分', fixed(entry.net_ev)],
-      ['與點估計領先值差', fixed(pointLeader - entry.net_ev)],
-      ['P(胡牌) / P(流局)', `${fixed(entry.p_win, 3)} / ${fixed(entry.p_draw, 3)}`],
-      ['樣本', String(entry.sample_count ?? '—')],
-    ];
-    lines.forEach(([name, value]) => {
-      const line = document.createElement('div');
-      const label = document.createElement('span');
-      label.textContent = name;
-      const strong = document.createElement('b');
-      strong.textContent = value;
-      line.append(label, strong);
-      detail.append(line);
-    });
+  const unresolved = state !== 'clear' && chosenTile !== null && Boolean(topPairContains(grade, chosenTile));
+  const el = document.createElement('div');
+  el.className = `verdict verdict--seal ${unresolved ? 'unresolved' : grade.verdict}`;
+  const seal = document.createElement('span');
+  seal.className = 'seal';
+  seal.textContent = unresolved ? '≈' : (VERDICT_LABELS[grade.verdict] || grade.verdict);
+  const body = document.createElement('div');
+  body.className = 'verdict-body';
+  const title = document.createElement('h2');
+  title.className = 'text';
+  title.textContent = text;
+  const line = document.createElement('p');
+  line.className = 'delta';
+  if (unresolved) {
+    line.textContent = `${state === 'uncertain' ? '≈ 無法區分' : '≈ 差異很小'}，不計排名獎懲`;
+  } else {
+    line.textContent = `預期淨得分差 ${fixed(grade.ev_delta)}`
+      + (grade.marginal && state === 'clear' ? '（邊緣）' : '');
   }
+  body.append(title, line);
+  el.append(seal, body);
+  return el;
+}
 
-  entries.forEach((entry, index) => {
-    const gap = pointLeader - entry.net_ev;
-    const unresolved = state !== 'clear' && topGap
-      && (entry.discard === topGap.top_discard || entry.discard === topGap.runner_up_discard);
-    const [bandClass, bandLabel] = unresolved
-      ? ['q-unresolved', state === 'uncertain' ? '無法區分' : '差異很小']
-      : optionBand(gap, grade.verdict_thresholds);
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `option-cell ${bandClass}${unresolved ? ' indistinguishable' : ''}`;
-    if (entry.discard === chosenTile) button.classList.add('chosen');
-    const rank = document.createElement('span');
-    rank.className = 'option-rank';
-    rank.textContent = unresolved ? '≈' : `#${index + 1}`;
-    const tile = document.createElement('span');
-    tile.className = 'option-tile';
-    tile.append(tileEl(entry.discard, { size: 'sm' }));
-    const ev = document.createElement('strong');
-    ev.textContent = fixed(entry.net_ev);
-    const label = document.createElement('span');
-    label.className = 'option-band';
-    label.textContent = bandLabel;
-    button.append(rank, tile, ev, label);
-    button.addEventListener('click', () => showDetail(entry, button));
-    grid.append(button);
-    if (index === 0) showDetail(entry, button);
+// One row per evaluated discard, point leader first. Text and colour come from
+// tileScores, so a row always matches the score badge on that tile in the hand.
+function optionListEl(grade, chosenTile) {
+  const entries = (grade.ranked || []).filter((entry) => !entry.is_fold);
+  if (!entries.length) return null;
+  const scores = tileScores(grade, chosenTile);
+  const state = grade.ranking_state || 'clear';
+  const section = document.createElement('section');
+  section.className = 'option-list';
+  const heading = document.createElement('h3');
+  heading.textContent = '每張牌和模型領先的差距';
+  const list = document.createElement('ol');
+  entries.forEach((entry) => {
+    const score = scores[entry.discard];
+    const row = document.createElement('li');
+    row.className = `option-row ${score.band}${score.mine ? ' chosen' : ''}`;
+    row.dataset.tile = String(entry.discard);
+    const tile = tileEl(entry.discard, { size: 'sm' });
+    tile.setAttribute('aria-hidden', 'true');
+    const name = document.createElement('span');
+    name.className = 'option-name';
+    name.textContent = faceText(entry.discard);
+    if (score.mine) {
+      const mine = document.createElement('small');
+      mine.textContent = '你打的';
+      name.append(mine);
+    }
+    const gap = document.createElement('span');
+    gap.className = 'option-gap';
+    gap.textContent = score.text;
+    const pill = document.createElement('span');
+    pill.className = `option-pill ${score.band}`;
+    pill.textContent = score.band === 'q-unresolved'
+      ? (state === 'uncertain' ? '無法區分' : '差異很小')
+      : BAND_LABELS[score.band];
+    row.append(tile, name, gap, pill);
+    list.append(row);
   });
-  section.append(grid, detail);
+  section.append(heading, list);
   return section;
+}
+
+function railDetailsEl(title, ...children) {
+  const details = document.createElement('details');
+  details.className = 'rail-details';
+  const summary = document.createElement('summary');
+  summary.textContent = title;
+  details.append(summary, ...children);
+  return details;
 }
 
 export function reviewRailEl({
@@ -512,94 +530,59 @@ export function reviewRailEl({
 } = {}) {
   const rail = document.createElement('aside');
   rail.className = 'review-rail';
-  rail.setAttribute('aria-label', '決策回饋');
-  const header = document.createElement('div');
-  header.className = 'review-head';
-  const heading = document.createElement('h2');
-  heading.textContent = '本次回顧';
-  const tabs = document.createElement('div');
-  tabs.className = 'review-tabs';
-  tabs.setAttribute('role', 'tablist');
-  const summaryTab = document.createElement('button');
-  summaryTab.type = 'button';
-  summaryTab.className = 'review-tab active';
-  summaryTab.textContent = '摘要';
-  summaryTab.setAttribute('role', 'tab');
-  summaryTab.setAttribute('aria-selected', 'true');
-  const optionsTab = document.createElement('button');
-  optionsTab.type = 'button';
-  optionsTab.className = 'review-tab';
-  optionsTab.textContent = '選項格';
-  optionsTab.setAttribute('role', 'tab');
-  optionsTab.setAttribute('aria-selected', 'false');
-  const hasOptions = Boolean(grade?.ranked?.length);
-  optionsTab.disabled = !hasOptions;
-  tabs.append(summaryTab, optionsTab);
-  header.append(heading, tabs);
-  rail.append(header);
+  rail.setAttribute('aria-label', '這一手的講評');
 
   if (grade) {
     const effectiveChosen = chosenTile ?? grade.chosen?.discard ?? null;
     const current = document.createElement('div');
     current.className = 'current-decision';
-    current.append(gradeVerdictEl(
+    current.append(headlineEl(
       grade,
       choiceText || (effectiveChosen === null ? '本次選擇' : `你打 ${faceText(effectiveChosen)}`),
       effectiveChosen,
     ));
-    if ((grade.ranking_state || 'clear') === 'clear' && grade.best?.discard !== undefined) {
-      current.append(bestLineEl(`模型領先選項：${faceText(grade.best.discard)}（預期淨得分 ${fixed(grade.best.net_ev)}）`));
-    }
     const mistake = mistakeLabelEl(grade);
     if (mistake) current.append(mistake);
     rail.append(current);
     const banner = rankingBannerEl(grade);
     if (banner) rail.append(banner);
-  }
+    const options = optionListEl(grade, effectiveChosen);
+    if (options) rail.append(options);
 
-  const panels = document.createElement('div');
-  panels.className = 'review-panels';
-  const summaryPanel = document.createElement('section');
-  summaryPanel.className = 'review-panel active';
-  const currentEvidence = currentEvidenceEl(grade);
-  if (currentEvidence) summaryPanel.append(currentEvidence);
-  summaryPanel.append(qualitySummaryEl(session, metadata, {
-    primaryLabel, primaryValue, showHandLoss,
-  }), modelScopeEl(metadata));
-  const optionsPanel = document.createElement('section');
-  optionsPanel.className = 'review-panel';
-  if (hasOptions) {
-    optionsPanel.append(optionGridEl(grade, chosenTile));
-    const entries = grade.defense_policy
-      ? [...grade.ranked, grade.defense_policy]
-      : grade.ranked;
-    optionsPanel.append(evDetailsEl(entries, {
-      chosenTile,
-      bestTile: (grade.ranking_state || 'clear') === 'clear' ? grade.best?.discard : null,
-      explain: grade.explain,
-      topGap: grade.top1_vs_top2,
-      rankingState: grade.ranking_state || 'clear',
-    }));
+    // Everything the old 摘要 / 選項格 tabs showed, one click away.
+    const numbers = [];
+    if ((grade.ranking_state || 'clear') === 'clear' && grade.best?.discard !== undefined) {
+      numbers.push(bestLineEl(`模型領先選項：${faceText(grade.best.discard)}（預期淨得分 ${fixed(grade.best.net_ev)}）`));
+    }
+    const currentEvidence = currentEvidenceEl(grade);
+    if (currentEvidence) numbers.push(currentEvidence);
+    if (grade.ranked?.length) {
+      const entries = grade.defense_policy
+        ? [...grade.ranked, grade.defense_policy]
+        : grade.ranked;
+      numbers.push(evDetailsEl(entries, {
+        chosenTile,
+        bestTile: (grade.ranking_state || 'clear') === 'clear' ? grade.best?.discard : null,
+        explain: grade.explain,
+        open: true,
+        topGap: grade.top1_vs_top2,
+        rankingState: grade.ranking_state || 'clear',
+      }));
+    }
+    if (numbers.length) rail.append(railDetailsEl('詳細數字', ...numbers));
   } else {
     const empty = document.createElement('p');
     empty.className = 'review-empty';
-    empty.textContent = '完成打牌評分後顯示預期淨得分選項格。';
-    optionsPanel.append(empty);
+    empty.textContent = '做出這一手的決定後，講評會出現在這裡。';
+    rail.append(empty);
   }
-  panels.append(summaryPanel, optionsPanel);
-  rail.append(panels);
 
-  function select(panel) {
-    const showOptions = panel === 'options' && hasOptions;
-    summaryPanel.classList.toggle('active', !showOptions);
-    optionsPanel.classList.toggle('active', showOptions);
-    summaryTab.classList.toggle('active', !showOptions);
-    optionsTab.classList.toggle('active', showOptions);
-    summaryTab.setAttribute('aria-selected', String(!showOptions));
-    optionsTab.setAttribute('aria-selected', String(showOptions));
-  }
-  summaryTab.addEventListener('click', () => select('summary'));
-  optionsTab.addEventListener('click', () => select('options'));
+  rail.append(
+    railDetailsEl('這次練習的統計', qualitySummaryEl(session, metadata, {
+      primaryLabel, primaryValue, showHandLoss,
+    })),
+    railDetailsEl('分數是怎麼算的', modelScopeEl(metadata)),
+  );
   return rail;
 }
 
