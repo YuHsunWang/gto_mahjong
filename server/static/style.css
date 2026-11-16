@@ -1048,3 +1048,22 @@ details.evwrap summary {
 .outcome .delta.win { color: #7fd8a3; }
 .outcome .delta.lose { color: #f0a0a0; }
 .outcome .nexthand { color: var(--ink-dim); font-size: 13px; margin-top: 8px; }
+
+/* hand review: every graded decision of the finished hand */
+.hand-review { margin-top: 18px; }
+.hand-review h2 { margin: 0 0 10px; font-size: 18px; }
+.hand-review-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.hand-review-row {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hand-review-row .verdict { margin-top: 6px; word-break: keep-all; overflow-wrap: anywhere; }
+.hand-review-row:hover .verdict { background: rgba(217, 194, 230, .12); }
+.hand-review-row:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 10px; }

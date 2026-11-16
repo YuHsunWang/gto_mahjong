@@ -67,6 +67,15 @@ export function verdictEl(verdict, marginal, evDelta, text, {
   return el;
 }
 
+// The verdict line for one graded decision; a pick inside an unresolved top
+// pair shows as unranked, the same way the live feedback does.
+export function gradeVerdictEl(grade, text, chosenTile = null) {
+  return verdictEl(grade.verdict, grade.marginal, grade.ev_delta, text, {
+    rankingState: grade.ranking_state || 'clear',
+    chosenInTopPair: chosenTile !== null && Boolean(topPairContains(grade, chosenTile)),
+  });
+}
+
 function mistakeLabelEl(grade) {
   const label = grade?.mistake_label;
   const text = label && MISTAKE_LABELS[label.label];
@@ -286,7 +295,7 @@ function qualityRow(label, count, className) {
   return row;
 }
 
-function qualitySummaryEl(session, metadata, {
+export function qualitySummaryEl(session, metadata, {
   primaryLabel = '已完成局數',
   primaryValue = session.hands,
   showHandLoss = true,
@@ -531,15 +540,12 @@ export function reviewRailEl({
 
   if (grade) {
     const effectiveChosen = chosenTile ?? grade.chosen?.discard ?? null;
-    const chosenInTopPair = effectiveChosen !== null && topPairContains(grade, effectiveChosen);
     const current = document.createElement('div');
     current.className = 'current-decision';
-    current.append(verdictEl(
-      grade.verdict,
-      grade.marginal,
-      grade.ev_delta,
+    current.append(gradeVerdictEl(
+      grade,
       choiceText || (effectiveChosen === null ? '本次選擇' : `你打 ${faceText(effectiveChosen)}`),
-      { rankingState: grade.ranking_state || 'clear', chosenInTopPair },
+      effectiveChosen,
     ));
     if ((grade.ranking_state || 'clear') === 'clear' && grade.best?.discard !== undefined) {
       current.append(bestLineEl(`模型領先選項：${faceText(grade.best.discard)}（預期淨得分 ${fixed(grade.best.net_ev)}）`));

@@ -5,11 +5,12 @@
 import { post, get, showError, randomSeed } from './api.js';
 import { tileEl } from './tiles.js';
 import { feltEl, handEl, computingEl, faceText } from './table.js';
-import { reviewRailEl, tileScores } from './feedback.js';
-import { record, recordOutcome, summary } from './stats.js';
+import { reviewRailEl, tileScores, gradeVerdictEl, qualitySummaryEl } from './feedback.js';
+import { record, recordOutcome, summary, handSummary } from './stats.js';
 import { schemeToggle, schemeParams } from './scheme.js';
 
 const SESSION_KEY = 'mj-trainer-sid';
+const HISTORY_KEY = 'mj-trainer-history';
 const SEAT_LABELS = { 0: '莊家（你自己做莊）', 1: '莊的下家', 2: '莊的對家', 3: '莊的上家' };
 
 function callLabel(option) {
@@ -20,11 +21,39 @@ function kongLabel(option) {
   return (option.kind === 'concealed' ? '暗槓 ' : '加槓 ') + faceText(option.tile);
 }
 
+function choiceTextFor(decision, feedback) {
+  if (feedback.kind === 'discard') return `你打 ${faceText(feedback.chosen_tile)}`;
+  const isCall = feedback.kind === 'call';
+  if (feedback.choice === null) return `你選擇：${isCall ? '過（不鳴）' : '不槓'}`;
+  const option = decision.options[feedback.choice];
+  return `你選擇：${isCall ? `${callLabel(option)} ${option.meld.map(faceText).join('')}` : kongLabel(option)}`;
+}
+
 export function trainerScreen(root) {
   let state = null; // last server session payload
-  let phase = 'boot'; // boot | setup | awaiting | acting | feedback
-  let frozen = null; // decision being shown during acting/feedback
+  let phase = 'boot'; // boot | setup | awaiting | acting | feedback | review
+  let frozen = null; // decision being shown during acting/feedback/review
   let feedback = null;
+  let history = []; // this hand's graded decisions: { decision, feedback }
+  let reviewIndex = null;
+
+  // Kept beside the session id so a reload on the result screen keeps the review.
+  function saveHistory() {
+    try {
+      sessionStorage.setItem(HISTORY_KEY, JSON.stringify({ id: state.session_id, items: history }));
+    } catch {
+      // The review is a convenience; a full or blocked store must not stop play.
+    }
+  }
+
+  function loadHistory(sessionId) {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(HISTORY_KEY));
+      return saved?.id === sessionId ? saved.items : [];
+    } catch {
+      return [];
+    }
+  }
 
   function header() {
     const bar = document.createElement('div');
@@ -50,6 +79,8 @@ export function trainerScreen(root) {
         seed, human_seat: humanSeat, dealer_streak: dealerStreak, ...schemeParams(),
       });
       sessionStorage.setItem(SESSION_KEY, state.session_id);
+      history = [];
+      saveHistory();
       frozen = null;
       feedback = null;
       phase = 'awaiting';
@@ -69,6 +100,7 @@ export function trainerScreen(root) {
     }
     try {
       state = await get(`/api/trainer/${sessionId}`);
+      history = loadHistory(state.session_id);
       if (state.decision.type === 'outcome') {
         recordOutcome('trainer', state.session_id, state.scheme.id);
       }
@@ -90,6 +122,8 @@ export function trainerScreen(root) {
       });
       feedback = state.feedback;
       record('trainer', feedback, state.scheme.id);
+      history.push({ decision: frozen, feedback });
+      saveHistory();
       if (state.decision.type === 'outcome') {
         recordOutcome('trainer', state.session_id, state.scheme.id);
       }
@@ -112,6 +146,49 @@ export function trainerScreen(root) {
     feedback = null;
     phase = 'awaiting';
     render();
+  }
+
+  function review(index) {
+    ({ decision: frozen, feedback } = history[index]);
+    reviewIndex = index;
+    phase = 'review';
+    render();
+    window.scrollTo(0, 0);
+  }
+
+  function handReviewEl() {
+    if (!history.length) return null; // hand started before this tab kept a record
+    const section = document.createElement('section');
+    section.className = 'hand-review';
+    const title = document.createElement('h2');
+    title.textContent = '局後回顧';
+    const hand = handSummary(history.map((item) => item.feedback));
+    const list = document.createElement('ol');
+    list.className = 'hand-review-list';
+    history.forEach((item, index) => {
+      const row = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'hand-review-row';
+      button.dataset.review = String(index);
+      button.append(gradeVerdictEl(
+        item.feedback,
+        `第 ${index + 1} 手 · ${choiceTextFor(item.decision, item.feedback)}`,
+        item.feedback.chosen_tile ?? null,
+      ));
+      button.addEventListener('click', () => review(index));
+      row.append(button);
+      list.append(row);
+    });
+    const hint = document.createElement('p');
+    hint.className = 'quality-note';
+    hint.textContent = '點一手看當時的完整解說。';
+    section.append(title, qualitySummaryEl(hand, state, {
+      primaryLabel: '本局預期淨得分損失',
+      primaryValue: hand.loss.toFixed(2),
+      showHandLoss: false,
+    }), hint, list);
+    return section;
   }
 
   function workspace(board, grade = null, choiceText = null) {
@@ -347,7 +424,8 @@ export function trainerScreen(root) {
     const decision = frozen;
     const board = document.createElement('section');
     board.className = 'table-board';
-    let choiceText = null;
+    let choiceText = choiceTextFor(decision, feedback);
+    if (phase === 'review') choiceText = `第 ${reviewIndex + 1} 手 · ${choiceText}`;
 
     if (feedback.kind === 'discard') {
       const state = feedback.ranking_state || 'clear';
@@ -364,26 +442,20 @@ export function trainerScreen(root) {
           },
         },
       }));
-      choiceText = `你打 ${faceText(feedback.chosen_tile)}`;
     } else {
       const isCall = feedback.kind === 'call';
-      const chosenLabel = feedback.choice === null
-        ? (isCall ? '過（不鳴）' : '不槓')
-        : (isCall
-          ? `${callLabel(decision.options[feedback.choice])} ${decision.options[feedback.choice].meld.map(faceText).join('')}`
-          : kongLabel(decision.options[feedback.choice]));
       board.append(feltEl(decision.position, {
         offeredTile: isCall ? decision.offered_tile : null,
         handOptions: { drawnTile: isCall ? null : decision.position.drawn_tile },
       }), optionEvRows(decision));
-      choiceText = `你選擇：${chosenLabel}`;
     }
 
     const controls = document.createElement('div');
     controls.className = 'controls';
     const next = document.createElement('button');
     next.className = 'btn primary';
-    next.textContent = state.decision.type === 'outcome' ? '看結果 ▶' : '下一手 ▶';
+    if (phase === 'review') next.textContent = '‹ 回結果';
+    else next.textContent = state.decision.type === 'outcome' ? '看結果 ▶' : '下一手 ▶';
     next.addEventListener('click', advance);
     controls.append(next);
     board.append(controls);
@@ -418,13 +490,17 @@ export function trainerScreen(root) {
       root.append(workspace(board));
       return;
     }
-    if (phase === 'feedback') {
+    if (phase === 'feedback' || phase === 'review') {
       root.append(feedbackScreen());
       return;
     }
     // awaiting: render the server's current decision (or the outcome)
     if (state.decision.type === 'outcome') {
       root.append(outcomeScreen(state.decision));
+      const handReview = handReviewEl();
+      if (handReview) root.append(handReview);
+      if (reviewIndex !== null) root.querySelector(`[data-review="${reviewIndex}"]`)?.focus();
+      reviewIndex = null;
     } else {
       root.append(decisionScreen(state.decision));
     }
