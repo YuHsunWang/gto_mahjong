@@ -2,7 +2,7 @@
 
 import { post, showError, randomSeed } from './api.js';
 import { feltEl, computingEl, faceText } from './table.js';
-import { reviewRailEl } from './feedback.js';
+import { reviewRailEl, tileScores } from './feedback.js';
 import { record, summary } from './stats.js';
 import { schemeToggle, schemeParams } from './scheme.js';
 
@@ -171,6 +171,7 @@ export function drillScreen(root, { apiBase, mode, title }) {
             cut: chosenTile,
             modelLeader: state === 'clear' ? gradeResult.best.discard : null,
             indistinguishable,
+            scores: tileScores(gradeResult, chosenTile),
           },
         },
       }));

@@ -427,6 +427,32 @@ button {
 .handrow .tile.lifted { transform: translateY(-9px); outline: 3px solid var(--gold); outline-offset: 1px; }
 .handrow .gap { flex: 0 0 10px; }
 
+/* graded hand: net-EV gap badge above each evaluated tile, 我 on the played one.
+   The bottom band grows to fit the badges below the seat chip; the core gives
+   up the difference. */
+.felt--scored { grid-template-rows: 15% 7% minmax(0, 1fr) 7% minmax(17%, max-content); }
+.felt--scored .seat--bottom { align-items: flex-end; padding-bottom: 7px; }
+.handrow.has-scores { padding-top: 26px; }
+.handrow.has-scores .tile.cut { opacity: 1; }
+.handrow.has-scores .tile.cut svg.tile-art { opacity: .55; }
+.tile-score, .tile-mine {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  border-radius: 4px;
+  color: #14101a;
+  font: 700 11px/1.35 var(--sans);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tile-score { bottom: calc(100% + 4px); padding: 0 4px; }
+.tile-score.q-best { background: var(--q-best); }
+.tile-score.q-correct { background: var(--q-correct); }
+.tile-score.q-inaccuracy { background: var(--q-inaccuracy); }
+.tile-score.q-wrong { background: var(--q-wrong); }
+.tile-score.q-unresolved { background: var(--q-unresolved); }
+.tile-mine { bottom: -5px; padding: 0 5px; background: var(--red); color: #fff; }
+
 /* declared melds: separated group at the tray's right edge */
 .hand-melds {
   display: flex;
@@ -844,6 +870,10 @@ details.evwrap summary {
   .seat--bottom .table-hand { width: 100%; flex-wrap: wrap; gap: 2px; }
   .seat--bottom .table-hand > .tile { flex-basis: 28px; width: 28px; height: 38px; }
   .seat--bottom .table-hand .gap { flex-basis: 5px; }
+  .felt--scored { grid-template-rows: 15% 7% minmax(0, 1fr) 7% minmax(24%, max-content); }
+  .seat--bottom .table-hand.has-scores { row-gap: 17px; padding-top: 21px; }
+  .seat--bottom .table-hand .tile-score, .seat--bottom .table-hand .tile-mine { font-size: 9px; }
+  .seat--bottom .table-hand .tile-score { bottom: calc(100% + 3px); padding: 0 2px; }
 }
 
 @media screen and (orientation: landscape) and (max-height: 560px) {
