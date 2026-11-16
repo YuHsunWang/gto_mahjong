@@ -140,37 +140,6 @@ function summarize(events) {
   };
 }
 
-// Rolling quality rate over separable, category-aware grade events.
-export function accuracySeries(mode, windowSize = 10, span = 60, schemeId = currentScheme().key) {
-  const events = eventsFor(mode, schemeId)
-    .filter((event) => isGrade(event) && (!event.r || event.r === 'clear') && VERDICTS.includes(event.v))
-    .slice(-span);
-  if (events.length < 2) return [];
-  return events.map((_event, index) => {
-    const window = events.slice(Math.max(0, index - windowSize + 1), index + 1);
-    return window.filter((event) => event.v === 'best' || event.v === 'good').length / window.length;
-  });
-}
-
 export function hasLegacyStats() {
   return localStorage.getItem(LEGACY_KEY) !== null;
-}
-
-export function sparklineEl(points, width = 96, height = 26) {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('width', width);
-  svg.setAttribute('height', height);
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  if (points.length < 2) return svg;
-  const step = width / (points.length - 1);
-  const path = points
-    .map((value, index) => `${index ? 'L' : 'M'}${(index * step).toFixed(1)},${(height - 3 - value * (height - 6)).toFixed(1)}`)
-    .join(' ');
-  const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  line.setAttribute('d', path);
-  line.setAttribute('fill', 'none');
-  line.setAttribute('stroke', 'var(--gold)');
-  line.setAttribute('stroke-width', '1.5');
-  svg.append(line);
-  return svg;
 }

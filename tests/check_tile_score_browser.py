@@ -5,7 +5,8 @@ net-EV gap to the model's point leader. A player reads the badge instead of the
 EV table, so it must say what the grade says: the played tile carries the
 verdict's own delta and colour, the other tiles are coloured by the same
 scheme-scaled cut-offs the server grades with, an unresolved top pair shows no
-order, and no badge may be clipped or cover another tile at phone width.
+order, and no badge may be clipped or cover another tile at phone width. The
+coach rail's option rows must match the badges tile for tile.
 
 Uses the existing phone checker and installed Playwright; no new dependency.
 """
@@ -111,6 +112,43 @@ LAYOUT_PROBLEMS = """() => {
 }"""
 
 
+# The coach rail lists the same options; each row must read exactly like the
+# badge on that tile, or the player sees two different answers.
+READ_RAIL = """() => {
+  const rail = document.querySelector('.review-rail');
+  return {
+    rows: [...rail.querySelectorAll('.option-row')].map(row => ({
+      tile: Number(row.dataset.tile),
+      text: row.querySelector('.option-gap').textContent,
+      band: [...row.classList].find(name => name.startsWith('q-')),
+      pill: [...row.querySelector('.option-pill').classList].find(name => name.startsWith('q-')),
+      mine: row.classList.contains('chosen'),
+    })),
+    seal: rail.querySelector('.current-decision .seal').textContent,
+    delta: rail.querySelector('.current-decision .delta').textContent,
+    visible: rail.innerText,
+    all: rail.textContent,
+  };
+}"""
+
+
+def assert_rail(page, grade, chosen, expected):
+    rail = page.evaluate(READ_RAIL)
+    rows = rail["rows"]
+    leader_first = [entry["discard"] for entry in grade["ranked"] if not entry["is_fold"]]
+    assert [row["tile"] for row in rows] == leader_first, (rows, leader_first)
+    assert {row["tile"]: (row["text"], row["band"]) for row in rows} == expected, (rows, expected)
+    assert all(row["pill"] == row["band"] for row in rows), rows
+    assert [row["tile"] for row in rows if row["mine"]] == [chosen], rows
+    # An unresolved top pair has no order: no number on its rows or headline.
+    assert "最佳" not in rail["all"] and "best" not in rail["visible"].lower(), rail["visible"]
+    if expected[chosen][1] == "q-unresolved":
+        assert rail["seal"] == "≈" and not any(ch.isdigit() for ch in rail["delta"]), rail
+    for row in rows:
+        if row["band"] == "q-unresolved":
+            assert not any(ch.isdigit() for ch in row["text"]), row
+
+
 def assert_badges(page, grade, chosen, scheme, shots, name):
     expected = expected_badges(grade, chosen, scheme)
     shown = page.evaluate(READ_BADGES)
@@ -118,6 +156,7 @@ def assert_badges(page, grade, chosen, scheme, shots, name):
     assert len(shown) == len(expected), f"one badge per evaluated tile, got {shown}"
     assert [item["tile"] for item in shown if item["mine"]] == [chosen], shown
     assert all(item["cut"] for item in shown if item["mine"]), shown
+    assert_rail(page, grade, chosen, expected)
     for width, height in VIEWPORTS:
         page.set_viewport_size({"width": width, "height": height})
         if shots:
