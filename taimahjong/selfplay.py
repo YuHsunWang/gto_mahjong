@@ -244,6 +244,7 @@ def _view(player: Player, seat: int) -> OpponentView:
         hand_count=sum(player.hand),
         discard_count=player.discards,
         concealed_kongs=sum(kong_tiles(kong)[1] for kong in player.kongs),
+        kongs=tuple(player.kongs),
     )
 
 
@@ -306,6 +307,7 @@ def _declare_kong(
     wall: list[int] | None = None,
 ) -> int:
     """Apply a kong and draw its dead-wall replacement under 「一槓一」."""
+    source = None
     if concealed:
         player.hand[tile] -= 4
     else:
@@ -313,11 +315,17 @@ def _declare_kong(
         pon = (tile, tile, tile)
         for index, meld in enumerate(player.melds):
             if meld_tiles(meld) == pon:
+                source = meld if isinstance(meld, DeclaredMeld) else None
                 del player.melds[index]  # the pon becomes a kong
                 break
         else:
             raise ValueError(f"{pon!r} is not in player melds")
-    player.kongs.append(DeclaredKong(tile, concealed))
+    player.kongs.append(DeclaredKong(
+        tile, concealed,
+        called_from_seat=None if source is None else source.called_from_seat,
+        called_from_discard_number=None if source is None else source.called_from_discard_number,
+        kong_type="concealed" if concealed else "added",
+    ))
     replacement = dead.pop(0)
     player.hand[replacement] += 1
     if wall:

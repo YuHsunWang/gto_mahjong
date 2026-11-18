@@ -178,12 +178,16 @@ def test_position_payload_preserves_legacy_arrays_and_adds_aligned_details():
     assert payload["own_kong_details"] == [
         {
             "tile": 22,
+            "kong_type": "open",
+            "called_tile": 22,
             "concealed": False,
             "called_from_seat": 2,
             "called_from_discard_number": 4,
         },
         {
             "tile": 23,
+            "kong_type": "concealed",
+            "called_tile": None,
             "concealed": True,
             "called_from_seat": None,
             "called_from_discard_number": None,
@@ -251,36 +255,44 @@ def test_selfplay_call_provenance_reaches_the_position_payload(
     assert len(source_river) == discard_number - 1
 
 
-def test_big_open_kong_records_source_while_added_and_concealed_kongs_do_not():
-    # Only a big open kong is called off another seat's discard, so only it can
-    # name a source; an added or concealed kong comes from the owner's own hand
-    # and must record nothing.  Seed 211 is the one seed in 1..2000 that deals a
-    # game with exactly one big open kong plus one added kong under this policy —
-    # if the deal ever moves again, rescan for that pair rather than relaxing
-    # the assertions below.
-    game = play_game(211, ("attack",) * 4, kong_policy="all")
-    big_open, added = game.kongs
-    assert isinstance(big_open, DeclaredKong)
-    assert kong_tiles(big_open) == (8, False)
-    assert tuple(big_open) == (8, False)
-    assert big_open.called_from_seat == 2
-    assert big_open.called_from_discard_number == 3
-    assert any(
-        event["seat"] == big_open.called_from_seat
-        and event["turn"] == big_open.called_from_discard_number
-        for event in game.events
-    )
-    assert isinstance(added, DeclaredKong) and not added.concealed
-    assert added.called_from_seat is None
-    assert added.called_from_discard_number is None
+def test_kong_history_preserves_kind_and_original_pon_source_in_api():
+    from server.api import _kong_detail_payload
+    from taimahjong.selfplay import _apply_big_kong, _view
+    from taimahjong.quiz import _opponents_from
+    from types import SimpleNamespace
 
     player = Player("attack")
-    player.hand[4] = 4
-    _declare_kong(player, 4, True, [5])
-    concealed = player.kongs[-1]
-    assert isinstance(concealed, DeclaredKong) and concealed.concealed
-    assert concealed.called_from_seat is None
-    assert concealed.called_from_discard_number is None
+    player.hand[8] = 3
+    _apply_big_kong(player, 8, [5], DeclaredKong(8, False, 2, 3))
+    player.melds.append(DeclaredMeld((4, 4, 4), 4, 3, 7))
+    player.hand[4] = 1
+    _declare_kong(player, 4, False, [5])
+    player.hand[6] = 4
+    _declare_kong(player, 6, True, [5])
+    payloads = [_kong_detail_payload(kong) for kong in player.kongs]
+    assert [p["kong_type"] for p in payloads] == ["open", "added", "concealed"]
+    assert [p["called_from_seat"] for p in payloads] == [2, 3, None]
+    assert [p["called_from_discard_number"] for p in payloads] == [3, 7, None]
+    assert [p["called_tile"] for p in payloads] == [8, 4, None]
+    assert all(tuple(kong) == kong_tiles(kong) for kong in player.kongs)
+    # The public snapshot path must retain metadata, not just danger triplets.
+    view = _view(player, 1)
+    opponents = _opponents_from(SimpleNamespace(opponents=((1, view),), river=(), dealer_streak=0))
+    assert [_kong_detail_payload(kong) for kong in opponents[0].kongs] == payloads
+    position = QuizPosition(
+        seed=1, seat=0, turn=1, drawn_tile=0, hand=(0,) * 34,
+        own_river=(), own_melds=(), opponents=opponents,
+        public_counts=(0,) * 34, visible_counts=(0,) * 34,
+        shanten=0, draws_remaining=1, wall_remaining=4, candidate_ev_gap=0.0,
+    )
+    opponent_payload = _position_payload(position)["opponents"][0]
+    assert opponent_payload["kong_details"] == payloads
+    assert opponent_payload["melds"] == [[8] * 3, [4] * 3, [6] * 3]
+    assert all(len(detail["tiles"]) == 3 for detail in opponent_payload["meld_details"])
+
+    game = play_game(211, ("attack",) * 4, kong_policy="all")
+    assert [kong.kong_type for kong in game.kongs] == ["open", "added"]
+    assert game.kongs[1].called_from_seat is not None
 
 
 @pytest.mark.parametrize(

@@ -7,7 +7,7 @@ probability of a deal-in.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from math import ceil, sqrt
 
@@ -143,7 +143,13 @@ class DeclaredKong:
     called_from_seat: int | None = None
     called_from_discard_number: int | None = None
 
+    kong_type: str | None = field(default=None, repr=False)
+
     def __post_init__(self) -> None:
+        if self.kong_type is None:
+            object.__setattr__(self, "kong_type", "concealed" if self.concealed else "open")
+        if self.kong_type not in ("open", "added", "concealed") or (self.kong_type == "concealed") != self.concealed:
+            raise ValueError("kong_type must agree with concealed flag")
         _validate_kong_tiles((self.tile, self.concealed))
         if self.called_from_seat is None and self.called_from_discard_number is None:
             return
@@ -232,6 +238,8 @@ class OpponentView:
     # How many of ``melds`` are concealed kongs shown as triplets. A concealed
     # kong is not a call, so it may coexist with a migi declaration.
     concealed_kongs: int = 0
+    # Display metadata only; numerical callers continue using triplets above.
+    kongs: tuple[KongLike, ...] = ()
 
     def __post_init__(self) -> None:
         if self.discard_count is None:

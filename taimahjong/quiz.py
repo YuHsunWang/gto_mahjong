@@ -180,6 +180,7 @@ class QuizOpponent:
     dealer_streak: int = 0  # nonzero only when this opponent is the dealer
     hand_count: int = 0
     discard_count: int | None = None
+    kongs: tuple[KongLike, ...] = ()
 
     @property
     def declared(self) -> bool:
@@ -345,6 +346,7 @@ def _opponents_from(snapshot: DecisionSnapshot) -> tuple[QuizOpponent, ...]:
                 dealer_streak=snapshot.dealer_streak if seat == DEALER_SEAT else 0,
                 hand_count=view.hand_count,
                 discard_count=view.discard_count,
+                kongs=view.kongs,
             )
         )
     return tuple(opponents)
@@ -364,6 +366,7 @@ def _position_from(snapshot: DecisionSnapshot, seed: int) -> QuizPosition:
         hand=hand,
         own_river=tuple(snapshot.river),
         own_melds=tuple(snapshot.melds),
+        own_kongs=tuple(snapshot.kongs),
         opponents=_opponents_from(snapshot),
         public_counts=public,
         visible_counts=visible,

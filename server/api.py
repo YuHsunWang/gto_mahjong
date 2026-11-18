@@ -178,6 +178,10 @@ def _kong_detail_payload(kong) -> dict[str, Any]:
     return {
         "tile": tile,
         "concealed": concealed,
+        "kong_type": (
+            ("concealed" if concealed else "open") if detail is None else detail.kong_type
+        ),
+        "called_tile": tile if detail is not None and detail.called_from_seat is not None else None,
         "called_from_seat": None if detail is None else detail.called_from_seat,
         "called_from_discard_number": (
             None if detail is None else detail.called_from_discard_number
@@ -209,6 +213,7 @@ def _position_payload(position: QuizPosition) -> dict[str, Any]:
                 "meld_details": [
                     _meld_detail_payload(meld) for meld in opponent.melds
                 ],
+                "kong_details": [_kong_detail_payload(kong) for kong in opponent.kongs],
                 "declared": opponent.declared,
                 "declared_at": opponent.declared_at,
                 "tenpai_estimate": opponent.tenpai_estimate,
