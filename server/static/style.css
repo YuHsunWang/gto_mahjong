@@ -404,8 +404,8 @@ button {
   min-width: 820px;
   aspect-ratio: 4 / 3;
   overflow: hidden;
-  grid-template-columns: 13% 7% minmax(0, 1fr) 7% 13%;
-  grid-template-rows: 15% 7% minmax(0, 1fr) 7% 17%;
+  grid-template-columns: 13% 4% minmax(0, 1fr) 4% 13%;
+  grid-template-rows: 12% 4% minmax(0, 1fr) 4% 17%;
   /* Side seats run the full height so the upper corners are theirs, the way a
      real table seats them. The bottom band keeps all five columns because the
      live 17-tile hand is the widest thing on the felt. */
@@ -533,11 +533,13 @@ button {
 .table-core {
   grid-area: co;
   display: grid;
-  padding: 5px;
-  gap: 5px;
+  padding: 3px;
+  gap: 4px;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  grid-template-areas: ". rt ." "rl ce rr" ". rb .";
+  grid-template-rows: auto minmax(max-content, 1fr) auto;
+  /* Interlock the rivers at the corners so six-tile rows can grow without
+     reserving three full river depths above and below the side rivers. */
+  grid-template-areas: "rl rt rt" "rl ce rr" "rb rb rr";
 }
 
 .river {
@@ -559,15 +561,15 @@ button {
   color: var(--ink);
   border: 1px solid rgba(70, 91, 107, .12);
   border-radius: 13px;
-  padding: 8px 12px;
+  padding: 6px 8px;
   text-align: center;
   box-shadow: 0 8px 24px rgba(32, 51, 68, .128);
 }
-.center-stats { display: flex; justify-content: center; gap: 13px; }
+.center-stats { display: flex; justify-content: center; gap: 9px; }
 .center-stats span { display: grid; }
-.center-stats strong { font-size: 18px; font-variant-numeric: tabular-nums; line-height: 1.1; }
-.center-stats small, .center-note { color: var(--ink-dim); font-size: 12px; }
-.center-box .noflower { color: var(--ink-faint); font-size: 12px; margin-top: 3px; }
+.center-stats strong { font-size: 16px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.center-stats small, .center-note { color: var(--ink-dim); font-size: 11px; }
+.center-box .noflower { color: var(--ink-faint); font-size: 11px; margin-top: 3px; }
 .center-box .offered { display: flex; justify-content: center; align-items: center; gap: 5px; margin-top: 4px; color: var(--ink-dim); font-size: 12px; }
 .center-box .offered .tile.sm { width: 20px; height: 27px; }
 
@@ -609,7 +611,7 @@ button {
 /* graded hand: net-EV gap badge above each evaluated tile, 我 on the played one.
    The bottom band grows to fit the badges below the seat chip; the core gives
    up the difference. */
-.felt--scored { grid-template-rows: 15% 7% minmax(0, 1fr) 7% minmax(17%, max-content); }
+.felt--scored { grid-template-rows: 12% 4% minmax(0, 1fr) 4% minmax(17%, max-content); }
 .felt--scored .seat--bottom { align-items: flex-end; padding-bottom: 7px; }
 .handrow.has-scores { padding-top: 26px; }
 .handrow.has-scores .tile.cut { opacity: 1; }
@@ -1591,7 +1593,7 @@ details.evwrap summary {
 }
 
 /* Seat-local exposed sets: slots reserve the rotated footprint of each tile. */
-.felt { --meld-w: 22px; --meld-h: 30px; --river-w: 22px; --river-h: 30px; }
+.felt { --meld-w: 22px; --meld-h: 30px; --river-w: 34px; --river-h: 46px; }
 .seat-meld, .hand-meld { display: grid; grid-auto-flow: column; align-items: end; gap: 1px; padding-top: 16px; }
 .meld-slot { position: relative; display: block; width: var(--meld-w, 22px); height: var(--meld-h, 30px); }
 .meld-slot--called { width: var(--meld-h, 30px); height: var(--meld-w, 22px); }
@@ -1619,20 +1621,23 @@ details.evwrap summary {
 .seat--right .seat-meld { transform: scaleY(-1); }
 .seat--right .seat-meld > * { transform: scaleY(-1); }
 .seat--left:has(.seat-melds), .seat--right:has(.seat-melds) { justify-content: flex-end; gap: 8px; padding-bottom: 8px; }
-.seat--left:has(.seat-melds) .concealed-hand, .seat--right:has(.seat-melds) .concealed-hand { gap: 0; }
-.seat--left:has(.seat-melds) .tile-back + .tile-back, .seat--right:has(.seat-melds) .tile-back + .tile-back { margin-top: -9px; }
+.concealed-hand--landscape { gap: 2px; flex-shrink: 0; }
+/* A standing side tile has its own light edge; never overlap adjacent backs. */
+.felt .concealed-hand--landscape > .tile-back.sm { width: 28px; height: 13px; }
+.seat--right .concealed-hand .tile-back-art { transform: rotate(180deg); }
 .river { --seat-angle: 0deg; }
 .river > .tile.sm { width: var(--river-w); height: var(--river-h); }
 .river--top { transform: rotate(180deg); }
 .river--left, .river--right { direction: rtl; grid-template-rows: repeat(6, var(--river-w)); grid-auto-columns: var(--river-h); grid-auto-flow: column; }
 .river--left > .tile.sm, .river--right > .tile.sm { width: var(--river-h); height: var(--river-w); }
-.river--left .tile-art, .river--right .tile-art { position: absolute; width: var(--river-w); height: var(--river-h); transform: rotate(90deg); }
+.river--left > .tile.sm .tile-art, .river--right > .tile.sm .tile-art { position: absolute; width: var(--river-w); height: var(--river-h); transform: rotate(90deg); }
 .river--right { transform: rotate(180deg); }
 @media screen and (max-width: 700px) and (orientation: portrait) {
-  .felt { --meld-w: 18px; --meld-h: 25px; --river-w: 13px; --river-h: 18px;
+  .felt { --meld-w: 18px; --meld-h: 25px; --river-w: 16px; --river-h: 22px;
     min-height: 620px; aspect-ratio: auto; grid-template-columns: 48px 6px minmax(0, 1fr) 6px 48px;
     grid-template-rows: 100px 20px minmax(255px, 1fr) 20px minmax(160px, max-content); }
   .seat--left, .seat--right { padding-inline: 0; }
+  .felt .concealed-hand--landscape > .tile-back.sm { width: 26px; height: 12px; }
   .seat--left .seat-meld, .seat--right .seat-meld { padding-left: 0; }
   .seat--left .meld-provenance, .seat--right .meld-provenance { left: -1px; top: -8px; }
   .seat-melds { gap: 12px; }
@@ -1641,7 +1646,7 @@ details.evwrap summary {
   .center-box { padding: 5px 2px; border-radius: 6px; }
   .center-stats { gap: 3px; }
   .center-stats strong { font-size: 14px; }
-  .center-stats small, .center-note, .noflower { font-size: 9px; }
+  .center-stats small, .center-note, .center-box .noflower { font-size: 9px; }
   .seat--top { flex-wrap: wrap; gap: 2px; align-content: center; }
   .seat--top .seat-melds { justify-content: center; }
   .seat--top .concealed-hand { flex-shrink: 0; }
@@ -1650,8 +1655,13 @@ details.evwrap summary {
 }
 
 @media screen and (max-width: 360px) and (orientation: portrait) {
+  .felt { --river-w: 15px; --river-h: 21px;
+    grid-template-rows: 100px 20px minmax(320px, 1fr) 20px minmax(160px, max-content); }
+  .felt--scored { grid-template-rows: 100px 20px minmax(320px, 1fr) 20px minmax(180px, max-content); }
+  /* Keep the side rivers at opposite corners, leaving a readable centre. */
+  .river--left, .river--right { align-content: start; }
   .center-stats { flex-direction: column; gap: 2px; }
   .center-stats span { display: flex; justify-content: center; align-items: baseline; gap: 2px; }
-  .center-box { min-width: 0; width: 100%; }
+  .center-box { min-width: 0; width: 92px; }
   .center-note { overflow-wrap: anywhere; }
 }
