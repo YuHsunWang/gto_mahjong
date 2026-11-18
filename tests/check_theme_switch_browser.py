@@ -63,6 +63,106 @@ def snapshot(page, theme, name, width):
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
 
 
+
+def check_lobby(browser, url):
+    """The chosen cards must retain all seven routes and preference behavior."""
+    entries = [
+        ('trainer', '整場實戰'), ('quiz', '單手練習'), ('endgame', '殘局練習'),
+        ('attack-defense', '攻守練習'), ('lessons', '教學'),
+        ('score', '算台'), ('analyze', '打牌分析'),
+    ]
+    errors = []
+    context = browser.new_context(viewport={'width': 1280, 'height': 900})
+    page = context.new_page()
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.on('console', lambda msg: errors.append(msg.text) if msg.type == 'error' else None)
+    page.add_init_script('Math.random = () => 0;')
+    try:
+        page.goto(url)
+        for theme in 'ABCD':
+            page.get_by_role('combobox', name='牌桌風格', exact=True).select_option(theme)
+            for width in (1280, 390, 320):
+                page.set_viewport_size({'width': width, 'height': 900 if width == 1280 else 844})
+                page.mouse.move(0, 0)
+                page.wait_for_function("[...document.querySelectorAll('.lobby a')].every(el => getComputedStyle(el).transform === 'none')")
+                cards = page.locator('.lobby a')
+                assert cards.count() == 7
+                assert cards.evaluate_all('(cards) => cards.map(c => c.hash)') == ['#/' + route for route, _ in entries]
+                assert page.locator('.lobby-art svg').count() == 5
+                assert page.locator('.lobby-progress').all_text_contents() == ['還沒練過'] * 4
+                assert page.locator('.home-settings .scheme-toggle button').count() == 2
+                assert page.get_by_role('combobox', name='牌桌風格', exact=True).is_visible()
+                assert page.get_by_role('checkbox', name='打牌免確認（一點即切）', exact=True).is_visible()
+                problems = page.evaluate("""() => {
+                  const nodes = [...document.querySelectorAll('.lobby a, .lobby-name, .lobby-desc, .lobby-progress, .lobby-art, .home-settings label, .home-settings button')];
+                  return nodes.filter(el => {
+                    const r = el.getBoundingClientRect();
+                    return r.left < 0 || r.right > innerWidth + .5 || el.scrollWidth > el.clientWidth + 1;
+                  }).map(el => el.className);
+                }""")
+                assert not problems, (theme, width, problems)
+                assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                boxes = page.locator('.lobby-card').evaluate_all('(cards) => cards.map(c => {const r=c.getBoundingClientRect(); return {x:r.x, y:r.y, width:r.width};})')
+                assert len({round(box['width']) for box in boxes}) == 1
+                if width == 1280:
+                    assert len({box['y'] for box in boxes}) == 2
+                else:
+                    assert len({box['x'] for box in boxes}) == 1
+                if width == 1280 or (width == 390 and theme in 'AD'):
+                    page.screenshot(path=str(SHOTS / f'r5-{theme}-lobby-{width}.png'), full_page=True)
+            page.set_viewport_size({'width': 1280, 'height': 900})
+            # Exercise actual clicks and native Enter activation for every entry.
+            for keyboard in (False, True):
+                for index, (route, heading) in enumerate(entries):
+                    page.goto(url)
+                    cards = page.locator('.lobby a')
+                    cards.first.wait_for()
+                    if keyboard:
+                        cards.first.focus()
+                        for _ in range(index):
+                            page.keyboard.press('Tab')
+                        assert cards.nth(index).evaluate('(el) => el === document.activeElement')
+                        assert cards.nth(index).evaluate('(el) => parseFloat(getComputedStyle(el).outlineWidth) >= 2')
+                        page.keyboard.press('Enter')
+                    else:
+                        cards.nth(index).click()
+                    page.wait_for_url('**/#/' + route)
+                    page.get_by_role('heading', name=heading).wait_for()
+                    page.wait_for_load_state('networkidle', timeout=180000)
+            page.goto(url)
+        # Original header order: scheme pills, theme select, one-tap checkbox.
+        page.goto(url)
+        page.locator('.skip-link').focus()
+        for selector in ('.scheme-toggle button:nth-of-type(1)', '.scheme-toggle button:nth-of-type(2)', '.theme-control select', '.home-settings input', '.lobby-card:first-child'):
+            page.keyboard.press('Tab')
+            assert page.locator(selector).evaluate('(el) => el === document.activeElement'), selector
+        page.get_by_role('button', name='底5台2', exact=True).click()
+        assert page.evaluate("localStorage.getItem('mj-scheme')") == '5-2'
+        checkbox = page.get_by_role('checkbox', name='打牌免確認（一點即切）', exact=True)
+        checkbox.check()
+        page.reload()
+        assert checkbox.is_checked()
+        assert page.get_by_role('button', name='底5台2', exact=True).get_attribute('class') == 'active'
+        checkbox.uncheck()
+        assert page.evaluate("localStorage.getItem('mj-onetap')") == '0'
+        # Real stats API, including the existing special attack/defense bucket.
+        page.evaluate("""async () => {
+          const {record} = await import('/js/stats.js');
+          const grade = {verdict: 'good', ev_loss: 0, ranking_state: 'clear'};
+          for (const mode of ['trainer', 'quiz', 'endgame']) record(mode, grade);
+          record('attack-defense', grade, 'drill');
+        }""")
+        page.reload()
+        assert page.locator('.lobby-progress').all_text_contents() == ['已答 1，品質 100%'] * 3 + ['已答 1 次選牌，正確率 100%']
+        assert page.locator('.lobby-progress.played').count() == 4
+        page.get_by_role('button', name='底3台1', exact=True).click()
+        assert page.locator('.lobby-progress').all_text_contents() == ['還沒練過'] * 3 + ['已答 1 次選牌，正確率 100%']
+        assert not errors, errors
+        print('Lobby: PASS (7 routes × click/Enter × A/B/C/D; 320/390/1280px; Tab order, progress, header preferences; console errors=0)', flush=True)
+    finally:
+        context.close()
+
+
 def run(browser, url):
     errors = []
     context = browser.new_context(viewport={'width': 1280, 'height': 900})
@@ -180,12 +280,17 @@ def main():
         with sync_playwright() as p:
             browser = p.chromium.launch()
             try:
+                check_lobby(browser, url)
                 run(browser, url)
             finally:
                 browser.close()
     finally:
         process.terminate()
-        process.wait(timeout=5)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
 
 
 if __name__ == '__main__':

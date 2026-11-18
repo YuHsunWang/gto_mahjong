@@ -8,6 +8,7 @@ import { lessonsScreen } from './lessons.js';
 import { summary, hasLegacyStats } from './stats.js';
 import { tileEl } from './tiles.js';
 import { schemeToggle } from './scheme.js';
+import { modeCard, toolCard } from './lobby.js';
 
 const app = document.getElementById('app');
 
@@ -31,7 +32,7 @@ function tableThemeControl() {
   return label;
 }
 
-// The 大廳 plaques: two stacked characters, first ink, second cinnabar.
+// Lobby order also defines the native keyboard focus order.
 const MODES = [
   { hash: '#/trainer', chars: '整場', desc: '一局打到底，每一手都幫你評分。', statsKey: 'trainer' },
   { hash: '#/quiz', chars: '單手', desc: '只考最關鍵的那一手。', statsKey: 'quiz' },
@@ -47,53 +48,6 @@ function statsLine(statsKey) {
   if (!stats.decisions) return '還沒練過';
   if (statsKey === 'attack-defense') return `已答 ${stats.decisions} 次選牌，正確率 ${stats.qualityScore}%`;
   return `已答 ${stats.decisions}，品質 ${stats.qualityScore === null ? '—' : `${stats.qualityScore}%`}`;
-}
-
-function modeTile(mode, index) {
-  const link = document.createElement('a');
-  link.className = index === 0 ? 'mode mode--lead' : 'mode';
-  link.href = mode.hash;
-  const face = document.createElement('span');
-  face.className = 'mode-face';
-  face.setAttribute('role', 'img');
-  face.setAttribute('aria-label', mode.chars);
-  [...mode.chars].forEach((char) => {
-    const span = document.createElement('span');
-    span.textContent = char;
-    face.append(span);
-  });
-  const text = document.createElement('span');
-  text.className = 'mode-desc';
-  const desc = document.createElement('span');
-  desc.textContent = mode.desc;
-  text.append(desc);
-  if (mode.statsKey) {
-    const stats = document.createElement('span');
-    stats.textContent = statsLine(mode.statsKey);
-    stats.className = stats.textContent === '還沒練過' ? 'mode-stats' : 'mode-stats played';
-    text.append(stats);
-  }
-  link.append(face, text);
-  return link;
-}
-
-function toolLink(hash, token, color, name, desc) {
-  const link = document.createElement('a');
-  link.className = 'tool-link';
-  link.href = hash;
-  const disc = document.createElement('span');
-  disc.className = 'token';
-  disc.setAttribute('aria-hidden', 'true');
-  disc.style.setProperty('--token', color);
-  disc.textContent = token;
-  const text = document.createElement('span');
-  const title = document.createElement('b');
-  title.textContent = name;
-  const sub = document.createElement('small');
-  sub.textContent = desc;
-  text.append(title, sub);
-  link.append(disc, text);
-  return link;
 }
 
 function homeScreen(root) {
@@ -130,16 +84,17 @@ function homeScreen(root) {
   const heading = document.createElement('h2');
   heading.textContent = '今天練哪一種？';
   const modes = document.createElement('nav');
-  modes.className = 'mode-tiles';
+  modes.className = 'lobby-grid';
   modes.setAttribute('aria-label', '練習模式');
-  MODES.forEach((mode, index) => modes.append(modeTile(mode, index)));
+  MODES.forEach((mode, index) => modes.append(modeCard(mode, index, mode.statsKey ? statsLine(mode.statsKey) : null)));
   const tools = document.createElement('div');
-  tools.className = 'tool-links';
+  tools.className = 'lobby-tools';
   tools.append(
-    toolLink('#/score', '台', 'var(--tool-red)', '算台', '這手牌胡了幾台'),
-    toolLink('#/analyze', '析', 'var(--tool-blue)', '打牌分析', '自己擺牌，看每張牌的分數'),
+    toolCard('#/score', '算台', '這手牌胡了幾台', 'count'),
+    toolCard('#/analyze', '打牌分析', '自己擺牌，看每張牌的分數', 'chart'),
   );
-  lobby.append(heading, modes, tools);
+  modes.append(tools);
+  lobby.append(heading, modes);
 
   const foot = document.createElement('footer');
   foot.className = 'shell-foot';

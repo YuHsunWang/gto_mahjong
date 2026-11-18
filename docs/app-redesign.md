@@ -56,6 +56,16 @@ so decorative pigments do not become low-contrast interface text.
 Verdict colours remain unchanged; their text and the EV leader/tag-chip
 backgrounds keep dark pigments independently of C's light body ink.
 
+## Lobby game cards — round 5 (2026-11-18)
+
+The owner selected direction 1 from the completed lobby study in `8d90cbb`.
+Five sparrow cards and two smaller tool cards replace the tile plaques, with
+three columns on desktop and one on phones. `js/lobby.js` owns the migrated
+SVGs; the study files are removed. Routes, progress text, focus order and all
+three header preferences retain their existing behavior. There was no
+last-used state; the old fixed first-mode outline gives way to the selected
+study's uniform cards.
+
 ## Why
 
 The in-game table already reads as a mahjong table. Every other screen reads as

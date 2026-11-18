@@ -183,7 +183,7 @@ body {
   max-width: 1480px;
   border-radius: 18px;
 }
-.app.app--home { max-width: 1180px; display: flex; flex-direction: column; padding-bottom: 0; }
+.app.app--home { background: linear-gradient(var(--page), var(--page)) padding-box, linear-gradient(var(--wood-hi), var(--wood-hi)) border-box; max-width: 1180px; display: flex; flex-direction: column; padding-bottom: 0; }
 
 @media (max-width: 1320px) {
   .app.app--table { width: auto; margin-inline: 0; }
@@ -1128,16 +1128,24 @@ details.evwrap summary {
 .home-settings .check input { width: 20px; height: 20px; accent-color: var(--gold); }
 
 .lobby {
-  flex: 1 0 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 36px;
-  padding: 24px 0 40px;
+  width: 100%;
+  max-width: 1100px;
+  margin: auto;
+  padding: 18px 30px 44px;
 }
+.lobby h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  margin-bottom: 28px;
+  font-size: clamp(25px, 3vw, 32px);
+  line-height: 1.4;
+  letter-spacing: .03em;
+  text-align: left;
+}
+.lobby h2::after { content: ''; flex: 1; height: 1px; background: var(--wood-hi); }
 
-.lobby h2, .deal h2 {
+.deal h2 {
   margin: 0;
   font-family: var(--sans);
   font-size: 34px;
@@ -1146,90 +1154,40 @@ details.evwrap summary {
   text-align: center;
 }
 
-.mode-tiles {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: flex-start;
-  gap: 28px 20px;
+.lobby-card, .lobby-tool { position: relative; border: 1px solid var(--wood-hi); background: var(--lacquer); transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease; }
+.lobby-card { display: flex; flex-direction: column; min-width: 0; border-radius: 20px; overflow: hidden; box-shadow: 0 3px 0 color-mix(in srgb, var(--wood) 25%, transparent), 0 8px 20px color-mix(in srgb, var(--ink) 4%, transparent); }
+.lobby-card-copy { display: flex; flex-direction: column; align-items: flex-start; padding: 20px 22px 22px; gap: 8px; flex: 1; }
+.lobby-name { display: flex; width: 100%; align-items: center; justify-content: space-between; font-size: 23px; line-height: 1.4; font-weight: 700; letter-spacing: .04em; }
+.lobby-desc { display: block; font-size: 14px; line-height: 1.7; color: var(--ink-dim); }
+.lobby-progress { display: inline-flex; align-items: center; gap: 6px; margin-top: 5px; padding: 4px 9px; border: 1px solid var(--wood-hi); border-radius: 7px; font-size: 12px; line-height: 1.5; color: var(--ink-faint); background: var(--panel); overflow-wrap: anywhere; }
+.lobby-progress::before { flex: 0 0 4px; content: ''; width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+.lobby-chevron { flex: 0 0 auto; width: 20px; height: 20px; color: var(--ink-dim); }
+.lobby-art { display: grid; place-items: center; height: 126px; margin: 10px 10px 0; border-radius: 12px; background: var(--felt-2); overflow: hidden; }
+.lobby-art svg { display: block; height: 100%; width: 100%; max-width: 270px; }
+.lobby-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.lobby-tools { display: grid; gap: 14px; }
+.lobby-tool { display: flex; align-items: center; gap: 14px; padding: 22px; border-radius: 16px; min-height: 94px; }
+.lobby-tool-copy { flex: 1; min-width: 0; }
+.lobby-tool strong { display: block; margin-bottom: 5px; font-size: 17px; }
+.lobby-tool .lobby-desc { font-size: 13px; }
+.lobby-icon { display: grid; place-items: center; flex: 0 0 46px; width: 46px; height: 46px; color: var(--ink); background: var(--felt-2); border-radius: 13px; }
+.lobby-icon svg { width: 25px; height: 25px; }
+.lobby-card, .lobby-tool { color: var(--ink); text-decoration: none; }
+.lobby-progress.played { color: var(--focus); }
+.lobby-card:active, .lobby-tool:active { transform: translateY(1px); }
+@media (hover: hover) {
+  .lobby-card:hover, .lobby-tool:hover {
+    transform: translateY(-3px);
+    border-color: var(--ink-dim);
+    box-shadow: 0 8px 22px color-mix(in srgb, var(--ink) 10%, transparent);
+  }
 }
-
-.mode {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 22px;
-  width: 168px;
-  padding-top: 12px;
-  border-radius: 14px;
-  color: var(--ink);
-  text-align: center;
-  text-decoration: none;
+@media (max-width: 1000px) and (min-width: 701px) {
+  .lobby-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-
-/* A plaque, not a real tile: bone face with two stacked serif characters. */
-.mode-face {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 104px;
-  height: 143px;
-  border-radius: 13px;
-  background: var(--bone);
-  box-shadow: inset 0 0 0 1px var(--bone-edge), 0 9px 0 var(--tile-side), 0 18px 20px rgba(32, 51, 68, .144);
-  font-family: var(--sans);
-  font-size: 50px;
-  font-weight: 900;
-  line-height: 1.08;
-  color: var(--mode-ink);
-  transition: transform .15s ease-out;
-}
-.mode-face span + span { color: var(--mode-red); }
-.mode--lead .mode-face { outline: 4px solid var(--gold); outline-offset: 4px; }
-.mode:hover .mode-face, .mode:focus-visible .mode-face { transform: translateY(-12px); }
-.mode-desc { display: flex; flex-direction: column; gap: 4px; }
-.mode-stats { font-size: 13px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
-.mode-stats.played { color: var(--focus); }
-
 @media (prefers-reduced-motion: reduce) {
-  .mode-face { transition: none; }
-  .mode:hover .mode-face, .mode:focus-visible .mode-face { transform: none; }
-}
-
-.tool-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
-.tool-link {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 52px;
-  padding: 8px 20px 8px 10px;
-  border-radius: 999px;
-  background: var(--panel);
-  box-shadow: inset 0 0 0 1px rgba(70, 91, 107, .16);
-  color: var(--ink);
-  text-decoration: none;
-  line-height: 1.3;
-}
-.tool-link:hover { box-shadow: inset 0 0 0 1px var(--gold); }
-.tool-link b { display: block; }
-.tool-link small { display: block; font-size: 13px; color: var(--ink-dim); }
-
-/* A round token with one serif character. */
-.token {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--token, var(--cinnabar));
-  box-shadow: inset 0 0 0 3px var(--bone), inset 0 0 0 5px var(--token, var(--cinnabar));
-  color: var(--bone);
-  font-family: var(--sans);
-  font-size: 15px;
-  font-weight: 900;
+  .lobby-card, .lobby-tool { transition: none; }
+  .lobby-card:hover, .lobby-tool:hover, .lobby-card:active, .lobby-tool:active { transform: none; }
 }
 
 /* The rail under the felt; same rounding trick as the top bar. */
@@ -1255,11 +1213,14 @@ details.evwrap summary {
 .shell-foot p { margin: 0 0 8px; max-width: 70ch; font-size: 13px; }
 
 @media (max-width: 700px) {
-  .lobby { gap: 26px; padding: 8px 0 26px; }
-  .lobby h2, .deal h2 { font-size: 26px; }
-  .mode-tiles { gap: 22px 12px; }
-  .mode { width: 132px; gap: 16px; }
-  .mode-face { width: 84px; height: 116px; font-size: 40px; }
+  .lobby { padding: 8px 6px 30px; }
+  .lobby h2 { margin-bottom: 22px; gap: 12px; }
+  .deal h2 { font-size: 26px; }
+  .lobby-grid { grid-template-columns: 1fr; gap: 18px; }
+  .lobby-art { height: 110px; }
+  .lobby-card-copy { padding: 16px 20px 19px; gap: 6px; }
+  .lobby-tools { gap: 12px; }
+  .lobby-tool { padding: 18px; }
   .shell-foot::before, .shell-foot::after { width: 10px; height: 10px; }
   .shell-foot::before { background: radial-gradient(circle at 100% 0, transparent 9.5px, var(--wood-lo) 10px); }
   .shell-foot::after { background: radial-gradient(circle at 0 0, transparent 9.5px, var(--wood-lo) 10px); }
