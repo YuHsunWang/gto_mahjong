@@ -29,11 +29,14 @@ def wait_for_server(url, process):
     raise RuntimeError(f"server did not respond at {url}")
 
 
-def check_page(browser, url, width, height, route, screenshot=None):
+def check_page(browser, url, width, height, route, screenshot=None, theme="A"):
     context = browser.new_context(viewport={"width": width, "height": height})
     page = context.new_page()
     try:
-        page.add_init_script("Math.random = () => 0")
+        page.add_init_script(f"Math.random = () => 0; localStorage.setItem('mj-table-theme', '{theme}');")
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
         page.goto(f"{url}/#/" + route)
         if route == "trainer":
             page.locator("#tr-seed").fill("1")
@@ -93,8 +96,9 @@ def check_page(browser, url, width, height, route, screenshot=None):
                       and result["hiddenSideChildren"] == 0
                       and result["clippedSideChildren"] == 0
                       and result["topBacks"] == 16 and result["topInside"])
+        passed = passed and not errors
         status = "PASS" if passed else "FAIL"
-        print(f"{width}x{height} #/{route}: {status} "
+        print(f"{theme} {width}x{height} #/{route}: {status} "
               f"tiles={result['count']} outside={result['outside']} "
               f"scrollWidth={result['scrollWidth']}"
               + (f" chips={result['chips']} overflowingChips={result['overflowingChips']} "
@@ -125,21 +129,23 @@ def main():
             browser = playwright.chromium.launch(headless=True)
             try:
                 passed = True
-                for width, height in PHONES:
-                    for route in ROUTES:
-                        shot = None
-                        if args.screenshot_prefix and (width, height, route) == (390, 844, "quiz"):
-                            shot = Path(f"{args.screenshot_prefix}-390x844-quiz.png")
-                        try:
-                            passed = check_page(browser, url, width, height, route, shot) and passed
-                        except Exception as error:
-                            print(f"{width}x{height} #/{route}: FAIL {error}", flush=True)
-                            passed = False
+                for theme in "ABCD":
+                    for width, height in PHONES:
+                        for route in ROUTES:
+                            shot = None
+                            if args.screenshot_prefix and (width, height, route) == (390, 844, "quiz"):
+                                shot = Path(f"{args.screenshot_prefix}-{theme}-390x844-quiz.png")
+                            try:
+                                passed = check_page(browser, url, width, height, route, shot, theme) and passed
+                            except Exception as error:
+                                print(f"{theme} {width}x{height} #/{route}: FAIL {error}", flush=True)
+                                passed = False
                 if args.screenshot_prefix:
                     passed = check_page(browser, url, 1440, 900, "quiz",
                                         Path(f"{args.screenshot_prefix}-1440x900-quiz.png")) and passed
             finally:
                 browser.close()
+        print(f"Phone themes: {'PASS' if passed else 'FAIL'} (4 themes × 3 widths × 3 routes)", flush=True)
         return 0 if passed else 1
     finally:
         if process is not None:

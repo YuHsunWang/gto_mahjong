@@ -11,6 +11,26 @@ import { schemeToggle } from './scheme.js';
 
 const app = document.getElementById('app');
 
+function tableThemeControl() {
+  const label = document.createElement('label');
+  label.className = 'theme-control';
+  label.append(document.createTextNode('牌桌風格'));
+  const select = document.createElement('select');
+  ['瓷白', '茶室', '夜藍', '聯名風'].forEach((name, index) => {
+    select.add(new Option(name, 'ABCD'[index]));
+  });
+  select.value = document.documentElement.dataset.tableTheme || 'A';
+  select.addEventListener('change', () => {
+    let theme = select.value;
+    try { localStorage.setItem('mj-table-theme', theme); }
+    catch (_) { theme = 'A'; }
+    document.documentElement.dataset.tableTheme = theme;
+    select.value = theme;
+  });
+  label.append(select);
+  return label;
+}
+
 // The 大廳 plaques: two stacked characters, first ink, second cinnabar.
 const MODES = [
   { hash: '#/trainer', chars: '整場', desc: '一局打到底，每一手都幫你評分。', statsKey: 'trainer' },
@@ -21,7 +41,9 @@ const MODES = [
 ];
 
 function statsLine(statsKey) {
-  const stats = summary(statsKey, statsKey === 'attack-defense' ? 'drill' : undefined);
+  let stats;
+  try { stats = summary(statsKey, statsKey === 'attack-defense' ? 'drill' : undefined); }
+  catch (_) { return '還沒練過'; }
   if (!stats.decisions) return '還沒練過';
   if (statsKey === 'attack-defense') return `已答 ${stats.decisions} 次選牌，正確率 ${stats.qualityScore}%`;
   return `已答 ${stats.decisions}，品質 ${stats.qualityScore === null ? '—' : `${stats.qualityScore}%`}`;
@@ -87,13 +109,18 @@ function homeScreen(root) {
 
   const setting = document.createElement('div');
   setting.className = 'home-settings';
-  setting.append(schemeToggle(() => route()));
+  // Other lobby preferences also read storage. A blocked store must still
+  // leave the theme control usable with its default A.
+  try { setting.append(schemeToggle(() => route())); } catch (_) {}
+  setting.append(tableThemeControl());
   const label = document.createElement('label');
   label.className = 'check';
   const box = document.createElement('input');
   box.type = 'checkbox';
-  box.checked = localStorage.getItem('mj-onetap') === '1';
-  box.addEventListener('change', () => localStorage.setItem('mj-onetap', box.checked ? '1' : '0'));
+  try { box.checked = localStorage.getItem('mj-onetap') === '1'; } catch (_) {}
+  box.addEventListener('change', () => {
+    try { localStorage.setItem('mj-onetap', box.checked ? '1' : '0'); } catch (_) {}
+  });
   label.append(box, document.createTextNode('打牌免確認（一點即切）'));
   setting.append(label);
   bar.append(brand, setting);
@@ -109,8 +136,8 @@ function homeScreen(root) {
   const tools = document.createElement('div');
   tools.className = 'tool-links';
   tools.append(
-    toolLink('#/score', '台', 'var(--cinnabar)', '算台', '這手牌胡了幾台'),
-    toolLink('#/analyze', '析', 'var(--tile-blue)', '打牌分析', '自己擺牌，看每張牌的分數'),
+    toolLink('#/score', '台', 'var(--tool-red)', '算台', '這手牌胡了幾台'),
+    toolLink('#/analyze', '析', 'var(--tool-blue)', '打牌分析', '自己擺牌，看每張牌的分數'),
   );
   lobby.append(heading, modes, tools);
 
@@ -121,11 +148,13 @@ function homeScreen(root) {
   summaryEl.textContent = '分數是怎麼算的';
   const footnote = document.createElement('p');
   footnote.className = 'footnote';
+  let legacyStats = false;
+  try { legacyStats = hasLegacyStats(); } catch (_) {}
   footnote.textContent = '選項只依模型模擬到牌局結束的預期淨得分排序；P(胡牌)、P(流局)與胡牌值只作解讀。'
     + '校準資料只來自內建機器人，缺表時會明示改用簡化估計，不代表真人牌局。'
     + '預期淨得分來自反覆隨機模擬：貼著判定門檻的手會自動加碼精算，仍標「（邊緣）」者受殘餘取樣誤差影響。'
     + '本桌無花牌（花牌建模為獨立的未來里程碑）。'
-    + (hasLegacyStats() ? ' 舊版未標底台的統計已保留為舊紀錄，未併入目前方案。' : '');
+    + (legacyStats ? ' 舊版未標底台的統計已保留為舊紀錄，未併入目前方案。' : '');
   details.append(summaryEl, footnote);
   foot.append(details);
   root.append(bar, lobby, foot);

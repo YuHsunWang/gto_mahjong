@@ -263,6 +263,7 @@ def main():
                 run(browser, url, args.shots)
             finally:
                 browser.close()
+        print("Hand review: PASS (live hand, replay, reload, keyboard, 1280/390/320px)", flush=True)
         return 0
     finally:
         process.terminate()

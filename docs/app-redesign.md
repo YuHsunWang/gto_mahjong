@@ -23,6 +23,39 @@ dim `#465B6B` → `#3E5261`, faint `#526777` → `#425664`,
 gold edge `#805400` → `#724A00`, focus `#245D89` → `#205580`.
 These are the only approved palette values adjusted for contrast.
 
+## Table styles — round 4 (2026-11-18)
+
+The lobby's `牌桌風格` select sits beside `底台`: 瓷白 (A, default), 茶室
+(B), 夜藍 (C), 聯名風 (D). The native select supports keyboard navigation
+and fits beside the scheme pills at 390px. `index.html` reads
+`mj-table-theme` before loading CSS; invalid or unavailable storage uses A.
+Writes are guarded too and restore A if they fail. Switching the root
+`data-table-theme` updates existing tiles and all app surfaces immediately.
+
+`style.css` overrides tokens only for B/C/D. Page, felt and rail colours match
+the material studies in `TILE_THEMES`; tile faces and backs keep their existing
+attribute-selected palettes. B adds the woven texture, D the approved pink
+confetti colours. C uses dark panels and light text throughout.
+
+Minimum contrast ratios across each text token's surfaces (gradient endpoints
+included), recomputed by `tests/check_theme_switch_browser.py`:
+
+| Theme | Body/accent | Rail | Lobby tile/tool text | Verdict/score badges | Actions | Bold result numbers |
+|---|---:|---:|---:|---:|---:|---:|
+| A | 4.53 | 6.57 | 5.83 | 5.24 | 4.67 | 3.16 |
+| B | 4.57 | 6.15 | 6.23 | 5.24 | 4.67 | 3.15 |
+| C | 6.44 | 6.96 | 5.85 | 5.24 | 7.58 | 5.35 |
+| D | 5.52 | 4.75 | 4.76 | 5.24 | 4.67 | 3.77 |
+
+Normal text meets 4.5:1; bold result numbers meet 3:1. Decorative SVG pigments
+remain the approved artwork. B uses darker secondary text `#60503e`; C uses
+`#d0ddf0` secondary text and light accent/result text. D's footer ink is
+`#613849` (the original `#673e50` gave 4.33:1 on the pink rail). Its lobby
+lettering uses `#5e70af` / `#bd2c4c`, and tool discs use `#bd2c4c` / `#285d88`,
+so decorative pigments do not become low-contrast interface text.
+Verdict colours remain unchanged; their text and the EV leader/tag-chip
+backgrounds keep dark pigments independently of C's light body ink.
+
 ## Why
 
 The in-game table already reads as a mahjong table. Every other screen reads as

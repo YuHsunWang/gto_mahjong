@@ -259,6 +259,7 @@ def main():
             != expected_badges(grade, grade["chosen"]["discard"], DEFAULT_SCHEME)
             for grade, (_, _, scheme) in zip(grades, CASES)
         ), "cases must cover a gap that only the scheme-scaled cut-offs colour correctly"
+        print("Tile scores: PASS (5 quiz cases + trainer; 1280/390/320px)", flush=True)
         return 0
     finally:
         process.terminate()
