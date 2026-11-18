@@ -146,6 +146,7 @@ export function attackDefenseScreen(root) {
     const felt = feltEl(position, {
       handOptions: { onDiscard: choosing ? pick : null },
     });
+    felt.classList.add('attack-defense-table');
     // This drill always uses one click per choice, independent of discard
     // confirmation settings. Capture before the shared hand's discard handler.
     if (choosing) {

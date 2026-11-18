@@ -57,7 +57,7 @@ def set_theme(page, theme):
 
 
 def snapshot(page, theme, name, width):
-    page.set_viewport_size({'width': width, 'height': 844 if width == 390 else 900})
+    page.set_viewport_size({'width': width, 'height': 390 if width == 844 else 900})
     set_theme(page, theme)
     page.screenshot(path=str(SHOTS / f'r4-{theme}-{name}-{width}.png'), full_page=True)
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
@@ -236,6 +236,8 @@ def run(browser, url):
     blocked_select.select_option('D')
     assert blocked_select.input_value() == 'A'
     blocked.close()
+    # Table interaction resumes in landscape after the portrait lobby checks.
+    page.set_viewport_size({'width': 1280, 'height': 900})
     # One real hand supplies a mid-hand discard, coach feedback and result.
     page.evaluate("localStorage.setItem('mj-onetap', '1')")
     page.goto(url + '/#/trainer')
@@ -256,7 +258,7 @@ def run(browser, url):
     for theme in 'ABCD':
         snapshot(page, theme, 'table', 1280)
         assert not page.evaluate(LAYOUT_PROBLEMS)
-        snapshot(page, theme, 'table', 390)
+        snapshot(page, theme, 'table', 844)
         assert not page.evaluate(LAYOUT_PROBLEMS)
     page.get_by_role('button', name='▶').click()
     play_hand(page)

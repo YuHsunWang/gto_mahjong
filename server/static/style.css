@@ -347,7 +347,7 @@ button {
   outline-offset: 1px;
   background: repeating-linear-gradient(135deg, rgba(165, 139, 226, .2) 0 5px, transparent 5px 10px);
 }
-.tile.tsumogiri::after, .tile.tedashi::after {
+.attack-defense-table .tile.tsumogiri::after, .attack-defense-table .tile.tedashi::after {
   content: "";
   position: absolute;
   top: 2px;
@@ -357,7 +357,7 @@ button {
   border-radius: 999px;
   background: var(--red);
 }
-.tile.tedashi::after { background: var(--blue); }
+.attack-defense-table .tile.tedashi::after { background: var(--blue); }
 
 .tile.landed { animation: land .28s ease-out; }
 
@@ -1047,45 +1047,7 @@ details.evwrap summary {
   .option-row { gap: 8px; padding-inline: 6px; }
 }
 
-@media screen and (max-width: 700px) and (orientation: portrait) {
-  .felt {
-    min-width: 0;
-    aspect-ratio: 2 / 3;
-    grid-template-rows: 15% 7% minmax(0, 1fr) 7% 24%;
-  }
-  .seat--left .seat-identity, .seat--right .seat-identity {
-    left: 2px;
-    right: 2px;
-    max-width: calc(100% - 4px);
-    flex-direction: column;
-    gap: 1px;
-    padding: 2px;
-    font-size: 12px;
-    line-height: 14px;
-    white-space: normal;
-    overflow-wrap: anywhere;
-    text-align: center;
-  }
-  .seat--left .seat-identity > *, .seat--right .seat-identity > * {
-    max-width: 100%;
-    flex-shrink: 0;
-  }
-  .seat--left .dealer-chip, .seat--right .dealer-chip { padding-inline: 2px; }
-  .seat--top .concealed-hand { width: 100%; justify-content: center; }
-  .seat--top .concealed-hand .tile-back {
-    flex: 0 1 18px;
-    min-width: 0;
-    width: 18px;
-    height: 25px;
-  }
-  .seat--bottom .table-hand { width: 100%; flex-wrap: wrap; gap: 2px; }
-  .seat--bottom .table-hand > .tile { flex-basis: 28px; width: 28px; height: 38px; }
-  .seat--bottom .table-hand .gap { flex-basis: 5px; }
-  .felt--scored { grid-template-rows: 15% 7% minmax(0, 1fr) 7% minmax(24%, max-content); }
-  .seat--bottom .table-hand.has-scores { row-gap: 17px; padding-top: 21px; }
-  .seat--bottom .table-hand .tile-score, .seat--bottom .table-hand .tile-mine { font-size: 9px; }
-  .seat--bottom .table-hand .tile-score { bottom: calc(100% + 3px); padding: 0 2px; }
-}
+
 
 @media screen and (orientation: landscape) and (max-height: 560px) {
   .app.app--table > .topbar { padding-bottom: 5px; margin-bottom: 8px; }
@@ -1631,38 +1593,64 @@ details.evwrap summary {
 .river--left > .tile.sm, .river--right > .tile.sm { width: var(--river-h); height: var(--river-w); }
 .river--left > .tile.sm .tile-art, .river--right > .tile.sm .tile-art { position: absolute; width: var(--river-w); height: var(--river-h); transform: rotate(90deg); }
 .river--right { transform: rotate(180deg); }
-@media screen and (max-width: 700px) and (orientation: portrait) {
-  .felt { --meld-w: 18px; --meld-h: 25px; --river-w: 16px; --river-h: 22px;
-    min-height: 620px; aspect-ratio: auto; grid-template-columns: 48px 6px minmax(0, 1fr) 6px 48px;
-    grid-template-rows: 100px 20px minmax(255px, 1fr) 20px minmax(160px, max-content); }
-  .seat--left, .seat--right { padding-inline: 0; }
-  .felt .concealed-hand--landscape > .tile-back.sm { width: 26px; height: 12px; }
-  .seat--left .seat-meld, .seat--right .seat-meld { padding-left: 0; }
-  .seat--left .meld-provenance, .seat--right .meld-provenance { left: -1px; top: -8px; }
-  .seat-melds { gap: 12px; }
-  .table-core { padding: 1px; gap: 2px; grid-template-columns: auto minmax(0, 1fr) auto; }
+
+
+
+
+/* Phone tables use a wide felt; the coach follows it in document order. */
+.rotate-prompt[hidden] { display: none; }
+.rotate-prompt {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: var(--page); color: var(--ink); font-size: 24px; font-weight: 700;
+}
+.table-portrait { overflow: hidden; }
+.table-portrait .app { visibility: hidden; }
+@media screen and (max-width: 1000px) and (max-height: 560px) and (orientation: landscape) {
+  .app.app--table { position: relative; --felt-pad: 4px; margin: 4px; width: auto; padding-top: 0; }
+  .app.app--table > .topbar { gap: 4px 8px; margin-bottom: 6px; }
+  .app.app--table:has(> .scheme-toggle) > .topbar { padding-right: 190px; }
+  .app.app--table > .scheme-toggle { position: absolute; right: 4px; top: 0; z-index: 5; margin: 0; min-height: 44px; }
+  .app.app--table > .scheme-toggle button { min-height: 44px; }
+  .app.app--table .topbar h1 { font-size: 20px; }
+  .app.app--table .topbar .mode-tag { font-size: 12px; }
+  .table-workspace { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .review-rail { position: static; }
+  .felt {
+    --meld-w: 12px; --meld-h: 17px; --river-w: 12px; --river-h: 16px;
+    min-width: 0; aspect-ratio: auto; height: calc(100svh - 70px); border-width: 6px;
+    grid-template-columns: 76px 10px minmax(0, 1fr) 10px 76px;
+    grid-template-rows: 48px 6px minmax(0, 1fr) 6px 64px;
+  }
+  .felt--scored { height: calc(100svh - 44px); grid-template-rows: 48px 6px minmax(0, 1fr) 6px 90px; }
+  .seat-band { gap: 5px; }
+  .seat--top { padding-top: 20px; }
+  .seat--top .seat-meld { padding-top: 10px; }
+  .seat--left, .seat--right { padding: 50px 0 4px; }
+  .seat--left:has(.seat-melds), .seat--right:has(.seat-melds) {
+    display: grid; grid-template-columns: 18px auto; align-items: end;
+    justify-content: center; gap: 3px; padding-bottom: 4px;
+  }
+  .concealed-hand--landscape { gap: 1px; }
+  .seat--left .seat-identity, .seat--right .seat-identity { left: 2px; right: 2px; max-width: calc(100% - 4px); padding: 2px; gap: 2px; font-size: 10px; line-height: 12px; }
+  .seat--left .seat-meld, .seat--right .seat-meld { padding-left: 12px; }
+  .seat-melds { gap: 9px; }
+  .felt .concealed-hand--landscape > .tile-back.sm { width: 18px; height: 7px; }
+  .seat--top .concealed-hand > .tile-back.sm { width: 14px; height: 20px; }
+  .table-core { padding: 1px; gap: 2px; }
   .river { gap: 1px; }
-  .center-box { padding: 5px 2px; border-radius: 6px; }
-  .center-stats { gap: 3px; }
+  .center-box { padding: 3px; border-radius: 6px; }
+  .center-note { display: none; }
+  .center-stats { gap: 4px; }
   .center-stats strong { font-size: 14px; }
   .center-stats small, .center-note, .center-box .noflower { font-size: 9px; }
-  .seat--top { flex-wrap: wrap; gap: 2px; align-content: center; }
-  .seat--top .seat-melds { justify-content: center; }
-  .seat--top .concealed-hand { flex-shrink: 0; }
-  .felt--scored { grid-template-rows: 100px 20px minmax(255px, 1fr) 20px minmax(180px, max-content); }
-  .seat--bottom .hand-melds { flex-wrap: wrap; max-width: 100%; margin-left: 0; padding-left: 0; border-left: 0; }
+  .seat--bottom .table-hand { gap: 2px; padding-inline: 4px; }
+  .seat--bottom .table-hand > .tile { flex-basis: 30px; width: 30px; height: 42px; }
+  .seat--bottom .table-hand .gap { flex-basis: 5px; }
+  .seat--bottom .table-hand .tile-score, .seat--bottom .table-hand .tile-mine { font-size: 9px; }
+  .table-hand .hand-melds { margin-left: 4px; padding-left: 4px; gap: 3px; }
 }
 
-@media screen and (max-width: 360px) and (orientation: portrait) {
-  .felt { --river-w: 15px; --river-h: 21px;
-    grid-template-rows: 100px 20px minmax(320px, 1fr) 20px minmax(160px, max-content); }
-  .felt--scored { grid-template-rows: 100px 20px minmax(320px, 1fr) 20px minmax(180px, max-content); }
-  /* ponytail: the symmetric cross is ~220px wide and does not fit a 320px
-     phone, so only here the rivers interlock at the corners. */
-  .table-core { grid-template-areas: "rl rt rt" "rl ce rr" "rb rb rr"; }
-  .river--left, .river--right { align-content: start; }
-  .center-stats { flex-direction: column; gap: 2px; }
-  .center-stats span { display: flex; justify-content: center; align-items: baseline; gap: 2px; }
-  .center-box { min-width: 0; width: 92px; }
-  .center-note { overflow-wrap: anywhere; }
+@media screen and (max-width: 1000px) and (max-height: 560px) and (orientation: landscape) {
+  .seat--bottom .table-hand .tile-score { padding-inline: 1px; letter-spacing: -.2px; }
 }

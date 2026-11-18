@@ -253,3 +253,9 @@ source and stack their fourth tile over its claimed tile. Concealed kongs
 keep two covered ends. Phone side lanes use 18×25px meld tiles.
 
 Round 7: larger six-tile rivers interlock around the centre; separate side-seat backs show a light standing-tile edge in every theme.
+
+Round 9: phone tables require landscape; portrait felt screens are inert behind
+a full-screen rotate prompt. Supported browsers request fullscreen and landscape
+lock from a tap; leaving the table releases both. The coach follows the felt
+below on phones. Only attack-defense retains colored discard-origin bars.
+Opponents' concealed kongs show four backs; own kongs retain two visible faces.

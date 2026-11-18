@@ -22,10 +22,10 @@ def fixture():
              dict(tiles=[31] * 4, kong_type='concealed', concealed=True)]
     top = [meld([3, 4, 5], 1, 5)]
     hand = [0] * 34
-    for tile in range(13):
+    for tile in range(17):
         hand[tile] += 1
-    return dict(seat=0, hand=hand, drawn_tile=12, own_river=river(0),
-                own_melds=[[28] * 3], own_meld_details=[meld([28] * 3, 1)],
+    return dict(seat=0, hand=hand, drawn_tile=16, own_river=river(0),
+                own_melds=[], own_meld_details=[],
                 own_kong_details=[], wall_remaining=36, turn=16, draws_remaining=9,
                 seat_scores=[0] * 4, opponents=[
                     dict(seat=seat, river=river(seat * 5), melds=[m['tiles'][:3] for m in details],
@@ -73,7 +73,11 @@ CHECK = """() => {
     const [a,b] = [...stack.children].map(rect);
     if (a.left < b.right-.5 && b.left < a.right-.5 && a.top < b.bottom-.5 && b.top < a.bottom-.5) problems.push('stacked kong tiles overlap');
   }
-  if (document.querySelectorAll('[data-kong-type="concealed"] .tile-back').length !== 2) problems.push('concealed kong ends');
+  if (document.querySelectorAll('[data-kong-type="concealed"] .tile-back').length !== 4) problems.push('opponent concealed kong must have four backs');
+  if (document.querySelector('[data-kong-type="concealed"] .tile:not(.tile-back) svg')) problems.push('opponent concealed kong leaks a face');
+  if ([...document.querySelectorAll('.river > .tile')].some(tile => !['none','normal'].includes(getComputedStyle(tile, '::after').content))) problems.push('live river origin bar');
+  const ownTiles = [...document.querySelectorAll('.seat--bottom .handrow > .tile')];
+  if (ownTiles.length !== 17 || ownTiles.some(tile => !inside(rect(tile), felt) || !inside(rect(tile), rect(tile.closest('.seat-band'))) || rect(tile).bottom > innerHeight)) problems.push('17-tile hand clipped');
   if (!document.querySelector('.river--bottom .tile:last-child.cut')) problems.push('last discard highlight');
   const center = rect(document.querySelector('.center-box'));
   for (const tile of document.querySelectorAll('.river > .tile')) {
@@ -88,8 +92,8 @@ CHECK = """() => {
 }"""
 
 
-def check(browser, url, width, theme, shots):
-    context = browser.new_context(viewport=dict(width=width, height=900 if width == 1280 else 844), device_scale_factor=3)
+def check(browser, url, width, height, theme, shots):
+    context = browser.new_context(viewport=dict(width=width, height=height), device_scale_factor=3)
     page = context.new_page()
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
@@ -107,7 +111,7 @@ def check(browser, url, width, theme, shots):
         page.wait_for_timeout(350)
         problems = page.evaluate(CHECK) + errors
         shots.mkdir(exist_ok=True)
-        page.screenshot(path=str(shots / f'r6-{theme}-table-{width}.png'), full_page=True, scale='css')
+        page.screenshot(path=str(shots / f'r9-{theme}-table-{width if width == 1280 else str(width) + chr(120) + str(height)}.png'), full_page=True, scale='css')
         if theme == 'A' and width == 1280:
             page.locator('.seat--right .seat-melds').screenshot(path=str(shots / 'r6-A-melds-zoom.png'))
         print(f'Side seats {theme} {width}: {"PASS" if not problems else "FAIL"} console_errors={len(errors)} {problems}', flush=True)
@@ -126,12 +130,12 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
-            results = [check(browser, url, width, theme, args.shots)
-                       for width, themes in [(1280,'ABCD'), (390,'AD'), (320,'A')] for theme in themes]
+            results = [check(browser, url, width, height, theme, args.shots)
+                       for width, height, themes in [(1280,900,'ABCD'), (844,390,'AD'), (667,375,'A'), (740,360,'C')] for theme in themes]
         finally:
             browser.close()
     passed = all(results)
-    print(f'Side-seat fixture: {"PASS" if passed else "FAIL"} (7 views; five meld types; four 13-tile rivers)', flush=True)
+    print(f'Side-seat fixture: {"PASS" if passed else "FAIL"} (8 views; five meld types; four 13-tile rivers; 17-tile hand; concealed privacy; no live bars)', flush=True)
     return 0 if passed else 1
 
 

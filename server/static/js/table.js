@@ -78,7 +78,7 @@ function meldGroupEl(tiles, detail, ownerSeat, viewerSeat, className) {
     const slot = document.createElement('span');
     const called = index === calledSlot;
     slot.className = `meld-slot${called ? ' meld-slot--called' : ''}${called && added ? ' meld-slot--stacked' : ''}`;
-    const faceDown = concealed && (index === 0 || index === ordered.length - 1);
+    const faceDown = concealed && (ownerSeat !== viewerSeat || index === 0 || index === ordered.length - 1);
     slot.append(faceDown ? tileBackEl({size: 'sm'}) : tileEl(tile, {size: 'sm'}));
     if (called && added) slot.append(tileEl(tile, {size: 'sm', classes: ['added-kong-tile']}));
     group.append(slot);

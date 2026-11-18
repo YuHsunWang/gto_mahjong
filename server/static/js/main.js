@@ -127,12 +127,67 @@ const ROUTES = {
   '#/score': scoreScreen,
 };
 
+const TABLE_ROUTES = ['#/quiz', '#/endgame', '#/trainer', '#/attack-defense'];
+const phonePortrait = matchMedia('(max-width: 700px) and (orientation: portrait)');
+const phoneScreen = matchMedia('(pointer: coarse) and (max-width: 700px) and (orientation: portrait), (pointer: coarse) and (max-width: 1000px) and (max-height: 560px)');
+const rotatePrompt = document.getElementById('rotate-prompt');
+let previousFocus = null;
+
+function updateRotationPrompt() {
+  const blocked = phonePortrait.matches && !!app.querySelector('.felt');
+  if (blocked === !rotatePrompt.hidden) return;
+  rotatePrompt.hidden = !blocked;
+  app.inert = blocked;
+  document.body.classList.toggle('table-portrait', blocked);
+  if (blocked) {
+    previousFocus = document.activeElement;
+    rotatePrompt.focus({preventScroll: true});
+  } else if (previousFocus?.isConnected) {
+    previousFocus.focus({preventScroll: true});
+  }
+}
+new MutationObserver(updateRotationPrompt).observe(app, {childList: true, subtree: true});
+phonePortrait.addEventListener('change', updateRotationPrompt);
+
+let fullscreenGeneration = 0;
+
+async function exitTableFullscreen() {
+  fullscreenGeneration += 1;
+  try { screen.orientation?.unlock?.(); } catch (_) {}
+  try { if (document.fullscreenElement) await document.exitFullscreen(); } catch (_) {}
+}
+
+async function enterTableFullscreen() {
+  if (!phoneScreen.matches) return;
+  const generation = ++fullscreenGeneration;
+  try {
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();
+    // Leaving the route can overtake the fullscreen request.
+    if (generation !== fullscreenGeneration) {
+      if (!TABLE_ROUTES.includes(location.hash)) await exitTableFullscreen();
+      return;
+    }
+    await screen.orientation?.lock?.('landscape');
+  } catch (_) { /* iOS and denied fullscreen/lock keep the rotate prompt. */ }
+}
+
+// Fullscreen must start in the tap handler, before hashchange loses activation.
+document.addEventListener('click', (event) => {
+  const link = event.target.closest('a');
+  if (link ? TABLE_ROUTES.includes(link.hash)
+    : TABLE_ROUTES.includes(location.hash) && event.target.closest('#app button')) {
+    void enterTableFullscreen();
+  }
+}, true);
+
 function route() {
   const screen = ROUTES[window.location.hash] || homeScreen;
-  app.classList.toggle('app--table', ['#/quiz', '#/endgame', '#/trainer', '#/attack-defense'].includes(window.location.hash));
+  app.classList.toggle('app--table', TABLE_ROUTES.includes(window.location.hash));
   app.classList.toggle('app--home', screen === homeScreen);
+  if (!TABLE_ROUTES.includes(location.hash)) void exitTableFullscreen();
   app.replaceChildren();
   screen(app);
+  updateRotationPrompt();
   window.scrollTo(0, 0);
 }
 
