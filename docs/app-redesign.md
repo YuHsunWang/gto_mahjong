@@ -5,6 +5,24 @@ branch `feat/app-redesign`, stacked on #117 → #119 → #120.
 
 Mockup (four screens, hard-coded data): https://claude.ai/artifact/LJneR8rCX9rdbyAdtwVG64
 
+## Porcelain studio — palette refresh (2026-11-18)
+
+This owner-approved direction supersedes the dark surface and display-font
+specifications below. Geometry, tile artwork, tile pigments and verdict colours
+stay unchanged. The table uses matte blue-grey fabric, a visually thin ceramic
+rail and soft blue-grey shadows. Headings and body use sans; only seat/wind
+marks use serif. Existing CSS token names remain for compatibility.
+
+Palette: page `#F3F5F7`, workspace `#E7EDF1`, felt `#B8CAD5` / `#CCDCE5` /
+`#DDE8EE`, rail `#A9BBC8` / `#D4DFE7` / `#A9BBC8`, coaching `#FFFFFF`,
+panels `#F8FAFC`, ink/rail ink `#203344`, accent `#B77A08`.
+The felt gradient uses the three felt tokens. Gold text uses the darker edge.
+
+WCAG AA corrections for normal text on the darkest felt (`#B8CAD5`):
+dim `#465B6B` → `#3E5261`, faint `#526777` → `#425664`,
+gold edge `#805400` → `#724A00`, focus `#245D89` → `#205580`.
+These are the only approved palette values adjusted for contrast.
+
 ## Why
 
 The in-game table already reads as a mahjong table. Every other screen reads as
