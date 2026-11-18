@@ -1,6 +1,6 @@
 // Approved porcelain study artwork, shared by the app and full sample sheets.
 // Engine indices stay 0–33; flowers use a separate, sample-only API.
-const CJK_SERIF = "'BiauKai', 'DFKai-SB', 'KaiTi', 'Noto Serif TC', 'PMingLiU', 'MingLiU', serif";
+import { TILE_GLYPHS } from './tile-face-glyphs.js';
 export const NUMERAL_FACES = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
 export const HONOR_FACES = ['東', '南', '西', '北', '白', '發', '中'];
 
@@ -47,32 +47,18 @@ function variants(traditional, club) {
   return `<g style="display:var(--tile-traditional-display)">${traditional}</g><g style="display:var(--tile-club-display)">${club}</g>`;
 }
 
-// Normalized 100 × 100 pen strokes, deliberately cut like engraved tile marks.
-const GLYPHS = {
-  '一': 'M12 53 Q48 50 88 49',
-  '二': 'M18 30L82 28 M10 76L90 74',
-  '三': 'M18 16L83 15 M25 48L76 47 M10 84L90 82',
-  '四': 'M13 17H87V86H13Z M37 18Q39 55 21 61 M61 18V55Q61 63 72 61L83 59',
-  '六': 'M45 7L55 20 M12 35L88 34 M35 52Q29 75 12 89 M65 52L88 88',
-  '七': 'M10 43L89 32 M45 8L43 79Q42 90 57 90L83 88L88 73',
-  '八': 'M35 20Q30 65 9 89 M63 17Q66 61 91 88',
-  '五': 'M18 14 L83 14 M50 15 L39 83 M20 44 L71 44 L67 83 M11 85 L90 85',
-  '九': 'M16 37 L64 34 L59 77 Q57 88 70 88 L87 87 L91 72 M42 12 Q47 71 13 92',
-  '萬': 'M11 15 L90 15 M32 6 L32 27 M69 6 L69 27 M24 33 L77 33 L77 58 L24 58 Z M25 45 L76 45 M50 32 L50 80 M15 72 L15 96 M15 72 L86 72 L86 94 L74 91 M33 82 L66 80 L61 74',
-  '東': 'M10 16 L90 16 M23 30 L78 30 L78 60 L23 60 Z M24 45 L77 45 M50 6 L50 94 M48 60 Q32 81 9 87 M53 61 Q69 79 91 85',
-  '南': 'M9 20H91 M50 6V34 M17 95V35H83V94L72 91 M33 44L39 54 M66 44L60 54 M29 60H71 M28 76H72 M50 56V92',
-  '西': 'M9 14H91 M16 34H84V89H16Z M39 15V41Q39 61 25 66 M61 15V57Q61 63 72 62L81 59 M17 77H83',
-  '北': 'M35 8V87 M10 35H35 M8 84L35 72 M62 8V79Q62 91 76 89L90 87L93 72 M63 45L86 27',
-  '中': 'M15 27 L85 27 L85 67 L15 67 Z M50 7 L50 94',
-  '發': 'M16 10 L37 10 Q29 34 9 43 M12 23 L24 29 M54 8 Q68 31 91 38 M69 10 L59 21 M85 20 L73 29 M20 48 L43 48 L42 61 L20 61 L18 72 L43 72 Q43 92 28 92 L18 89 M61 44 L78 44 L78 58 L89 58 M60 45 L60 57 L52 64 M55 69 L84 69 Q77 87 54 94 M59 71 Q71 87 91 93',
-};
-
 function path(d, color, width = 7) {
   return `<path d="${d}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"/>`;
 }
 
 function glyph(name, color, x, y, width, height) {
-  return `<g transform="translate(${x} ${y}) scale(${width / 100} ${height / 100})">${path(GLYPHS[name], color)}</g>`;
+  const { path: outline, bbox: [left, top, right, bottom] } = TILE_GLYPHS[name];
+  // Preserve the font's proportions, including the tight spacing of 二 and 三.
+  // Centre the actual ink bounds rather than the font's advance or em square.
+  const scale = Math.min(width / (right - left), height / (bottom - top));
+  const dx = x + width / 2 - (left + right) * scale / 2;
+  const dy = y + height / 2 - (top + bottom) * scale / 2;
+  return `<path d="${outline}" fill="${color}" transform="translate(${dx} ${dy}) scale(${scale})"/>`;
 }
 
 function engraved(art) {
@@ -95,7 +81,7 @@ function shell(t, art, label, landscape = false, back = false) {
 }
 
 function wan(t, number) {
-  return shell(t, engraved(glyph(number, t.ink, 20, 13, 56, 38) + glyph('萬', t.red, 21, 59, 54, 49)), `${number}萬`);
+  return shell(t, engraved(glyph(number, t.ink, 20, 13, 56, 40) + glyph('萬', t.red, 21, 59, 54, 49)), `${number}萬`);
 }
 function pip(x, y, r, color) {
   return `<g fill="none" stroke="${color}"><circle cx="${x}" cy="${y}" r="${r}" stroke-width="2.5"/><circle cx="${x}" cy="${y}" r="${r - 4}" stroke-width="1.5"/><circle cx="${x}" cy="${y}" r="2" fill="${color}" stroke="none"/></g>`;
@@ -171,7 +157,7 @@ function faceWhite(t) {
 }
 
 function flowerLabel(name, number, color) {
-  return `<text x="14" y="25" fill="${color}" font-family="${CJK_SERIF}" font-size="17" font-weight="600">${name}</text><text x="76" y="24" text-anchor="middle" fill="${color}" font-family="Georgia, serif" font-size="15">${number}</text>`;
+  return glyph(name, color, 14, 9, 17, 17) + `<text x="76" y="24" text-anchor="middle" fill="${color}" font-family="Georgia, serif" font-size="15">${number}</text>`;
 }
 function facePlum(t) {
   const blossom = (x, y, size) => `<g transform="translate(${x} ${y}) scale(${size})" fill="${t.blossom}" stroke="${t.red}" stroke-width="2">${[0, 72, 144, 216, 288].map(angle => `<ellipse cx="0" cy="-8" rx="5" ry="7" transform="rotate(${angle})"/>`).join('')}<circle r="3" fill="#d0a34c" stroke="none"/></g>`;
