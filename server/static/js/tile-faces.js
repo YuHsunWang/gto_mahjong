@@ -273,10 +273,8 @@ export function flowerFaceSvg(name) {
 export function tileBackSvg(orientation = 'portrait') {
   if (orientation === 'landscape') {
     return svgNode(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 26" class="tile-art tile-back-art" aria-hidden="true" focusable="false">
-      <rect x="1" y="1" width="54" height="24" rx="3" fill="${PIGMENT.face}" stroke="${PIGMENT.edge}"/>
-      <rect x="1" y="1" width="44" height="24" rx="3" fill="${PIGMENT.back}" stroke="${PIGMENT.backEdge}"/>
-      <path d="M5 4H40" stroke="${PIGMENT.backHi}" stroke-width="1.5" fill="none"/>
-      <path d="M47 3V23" stroke="#fff" opacity=".7"/>
+      <rect x="1" y="1" width="54" height="24" rx="3" fill="${PIGMENT.back}" stroke="${PIGMENT.backEdge}"/>
+      <path d="M5 4H51" stroke="${PIGMENT.backHi}" stroke-width="1.5" fill="none"/>
     </svg>`);
   }
   return svgNode(faceBack(PIGMENT, orientation === 'landscape'));

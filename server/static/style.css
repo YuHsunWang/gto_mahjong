@@ -537,9 +537,9 @@ button {
   gap: 4px;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-rows: auto minmax(max-content, 1fr) auto;
-  /* Interlock the rivers at the corners so six-tile rows can grow without
-     reserving three full river depths above and below the side rivers. */
-  grid-template-areas: "rl rt rt" "rl ce rr" "rb rb rr";
+  /* Symmetric cross: side rivers span the full height so six-tile rows fit
+     without reserving three river depths above and below them. */
+  grid-template-areas: "rl rt rr" "rl ce rr" "rl rb rr";
 }
 
 .river {
@@ -1622,9 +1622,8 @@ details.evwrap summary {
 .seat--right .seat-meld > * { transform: scaleY(-1); }
 .seat--left:has(.seat-melds), .seat--right:has(.seat-melds) { justify-content: flex-end; gap: 8px; padding-bottom: 8px; }
 .concealed-hand--landscape { gap: 2px; flex-shrink: 0; }
-/* A standing side tile has its own light edge; never overlap adjacent backs. */
+/* Flat top-down backs, one per tile; never overlap adjacent backs. */
 .felt .concealed-hand--landscape > .tile-back.sm { width: 28px; height: 13px; }
-.seat--right .concealed-hand .tile-back-art { transform: rotate(180deg); }
 .river { --seat-angle: 0deg; }
 .river > .tile.sm { width: var(--river-w); height: var(--river-h); }
 .river--top { transform: rotate(180deg); }
@@ -1658,7 +1657,9 @@ details.evwrap summary {
   .felt { --river-w: 15px; --river-h: 21px;
     grid-template-rows: 100px 20px minmax(320px, 1fr) 20px minmax(160px, max-content); }
   .felt--scored { grid-template-rows: 100px 20px minmax(320px, 1fr) 20px minmax(180px, max-content); }
-  /* Keep the side rivers at opposite corners, leaving a readable centre. */
+  /* ponytail: the symmetric cross is ~220px wide and does not fit a 320px
+     phone, so only here the rivers interlock at the corners. */
+  .table-core { grid-template-areas: "rl rt rt" "rl ce rr" "rb rb rr"; }
   .river--left, .river--right { align-content: start; }
   .center-stats { flex-direction: column; gap: 2px; }
   .center-stats span { display: flex; justify-content: center; align-items: baseline; gap: 2px; }
