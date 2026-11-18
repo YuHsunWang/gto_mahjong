@@ -459,6 +459,8 @@ button {
 }
 
 .seat--right .seat-identity { left: auto; right: 6px; }
+/* Side columns are narrow; wrap the chip instead of clipping 明牌/分數. */
+.seat--left .seat-identity, .seat--right .seat-identity { flex-wrap: wrap; row-gap: 0; }
 /* The side seats own the top corners, so centre the facing seat's chip
    instead of letting three labels pile into the top-left. */
 .seat--top .seat-identity { left: 50%; transform: translateX(-50%); }
