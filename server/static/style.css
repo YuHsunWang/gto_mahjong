@@ -402,7 +402,7 @@ button {
   display: grid;
   width: 100%;
   min-width: 820px;
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 4 / 3;
   overflow: hidden;
   grid-template-columns: 13% 7% minmax(0, 1fr) 7% 13%;
   grid-template-rows: 15% 7% minmax(0, 1fr) 7% 17%;
@@ -544,10 +544,10 @@ button {
   align-content: center;
   justify-content: center;
 }
-.river--top { grid-area: rt; grid-template-columns: repeat(6, 22px); }
-.river--bottom { grid-area: rb; grid-template-columns: repeat(6, 22px); }
-.river--left { grid-area: rl; grid-template-rows: repeat(4, 30px); grid-auto-flow: column; }
-.river--right { grid-area: rr; grid-template-rows: repeat(4, 30px); grid-auto-flow: column; }
+.river--top { grid-area: rt; grid-template-columns: repeat(6, var(--river-w)); }
+.river--bottom { grid-area: rb; grid-template-columns: repeat(6, var(--river-w)); }
+.river--left { grid-area: rl; }
+.river--right { grid-area: rr; }
 
 .center-box {
   grid-area: ce;
@@ -1586,4 +1586,70 @@ details.evwrap summary {
   .hand-review { padding-inline: 6px; }
   .hand-river { column-gap: 2px; }
   .river-pill.long { max-width: calc(2em + 6px); }
+}
+
+/* Seat-local exposed sets: slots reserve the rotated footprint of each tile. */
+.felt { --meld-w: 22px; --meld-h: 30px; --river-w: 22px; --river-h: 30px; }
+.seat-meld, .hand-meld { display: grid; grid-auto-flow: column; align-items: end; gap: 1px; padding-top: 16px; }
+.meld-slot { position: relative; display: block; width: var(--meld-w, 22px); height: var(--meld-h, 30px); }
+.meld-slot--called { width: var(--meld-h, 30px); height: var(--meld-w, 22px); }
+.meld-slot--stacked { height: calc(var(--meld-w, 22px) * 2 + 1px); }
+.meld-slot > .tile.sm { position: absolute; left: 50%; top: 50%; width: var(--meld-w, 22px); height: var(--meld-h, 30px); transform: translate(-50%, -50%) rotate(var(--seat-angle, 0deg)); }
+.meld-slot--called > .tile.sm { transform: translate(-50%, -50%) rotate(calc(var(--seat-angle, 0deg) + 90deg)); }
+.meld-slot--stacked > .tile.sm { top: auto; bottom: 0; transform: translate(-50%, 0) translateY(calc((var(--meld-h, 30px) - var(--meld-w, 22px)) / 2)) rotate(calc(var(--seat-angle, 0deg) + 90deg)); }
+.meld-slot--stacked > .tile.added-kong-tile { bottom: calc(var(--meld-w, 22px) + 1px); }
+.seat--top { --seat-angle: 180deg; }
+.seat--top .seat-melds { flex-direction: row-reverse; }
+.seat--top .seat-meld { direction: rtl; align-items: start; }
+.seat--left { --seat-angle: 90deg; }
+.seat--right { --seat-angle: -90deg; }
+.seat--left .seat-meld, .seat--right .seat-meld { grid-auto-flow: row; padding: 0 0 0 15px; align-items: center; }
+.seat--left .meld-slot, .seat--right .meld-slot { width: var(--meld-h); height: var(--meld-w); }
+.seat--left .meld-slot--called, .seat--right .meld-slot--called { width: var(--meld-w); height: var(--meld-h); }
+.seat--left .meld-slot--stacked, .seat--right .meld-slot--stacked { width: calc(var(--meld-w) * 2 + 1px); }
+.seat--left .meld-slot--stacked > .tile.sm, .seat--right .meld-slot--stacked > .tile.sm { top: 50%; bottom: auto; left: calc(var(--meld-w) / 2); transform: translate(-50%, -50%) rotate(calc(var(--seat-angle) + 90deg)); }
+.seat--left .meld-slot--stacked > .tile.added-kong-tile, .seat--right .meld-slot--stacked > .tile.added-kong-tile { left: calc(var(--meld-w) * 1.5 + 1px); }
+.seat--right .meld-slot--stacked > .tile.sm { left: calc(var(--meld-w) * 1.5 + 1px); }
+.seat--right .meld-slot--stacked > .tile.added-kong-tile { left: calc(var(--meld-w) / 2); }
+.seat--left .meld-provenance, .seat--right .meld-provenance { left: 0; top: 0; padding-inline: 1px; font-size: 9px; line-height: 11px; }
+.seat--right .seat-melds { flex-direction: column-reverse; }
+.seat--right .seat-meld > .meld-slot { grid-column: 1; }
+.seat--right .seat-meld { transform: scaleY(-1); }
+.seat--right .seat-meld > * { transform: scaleY(-1); }
+.seat--left:has(.seat-melds), .seat--right:has(.seat-melds) { justify-content: flex-end; gap: 8px; padding-bottom: 8px; }
+.seat--left:has(.seat-melds) .concealed-hand, .seat--right:has(.seat-melds) .concealed-hand { gap: 0; }
+.seat--left:has(.seat-melds) .tile-back + .tile-back, .seat--right:has(.seat-melds) .tile-back + .tile-back { margin-top: -9px; }
+.river { --seat-angle: 0deg; }
+.river > .tile.sm { width: var(--river-w); height: var(--river-h); }
+.river--top { transform: rotate(180deg); }
+.river--left, .river--right { direction: rtl; grid-template-rows: repeat(6, var(--river-w)); grid-auto-columns: var(--river-h); grid-auto-flow: column; }
+.river--left > .tile.sm, .river--right > .tile.sm { width: var(--river-h); height: var(--river-w); }
+.river--left .tile-art, .river--right .tile-art { position: absolute; width: var(--river-w); height: var(--river-h); transform: rotate(90deg); }
+.river--right { transform: rotate(180deg); }
+@media screen and (max-width: 700px) and (orientation: portrait) {
+  .felt { --meld-w: 18px; --meld-h: 25px; --river-w: 13px; --river-h: 18px;
+    min-height: 620px; aspect-ratio: auto; grid-template-columns: 48px 6px minmax(0, 1fr) 6px 48px;
+    grid-template-rows: 100px 20px minmax(255px, 1fr) 20px minmax(160px, max-content); }
+  .seat--left, .seat--right { padding-inline: 0; }
+  .seat--left .seat-meld, .seat--right .seat-meld { padding-left: 0; }
+  .seat--left .meld-provenance, .seat--right .meld-provenance { left: -1px; top: -8px; }
+  .seat-melds { gap: 12px; }
+  .table-core { padding: 1px; gap: 2px; grid-template-columns: auto minmax(0, 1fr) auto; }
+  .river { gap: 1px; }
+  .center-box { padding: 5px 2px; border-radius: 6px; }
+  .center-stats { gap: 3px; }
+  .center-stats strong { font-size: 14px; }
+  .center-stats small, .center-note, .noflower { font-size: 9px; }
+  .seat--top { flex-wrap: wrap; gap: 2px; align-content: center; }
+  .seat--top .seat-melds { justify-content: center; }
+  .seat--top .concealed-hand { flex-shrink: 0; }
+  .felt--scored { grid-template-rows: 100px 20px minmax(255px, 1fr) 20px minmax(180px, max-content); }
+  .seat--bottom .hand-melds { flex-wrap: wrap; max-width: 100%; margin-left: 0; padding-left: 0; border-left: 0; }
+}
+
+@media screen and (max-width: 360px) and (orientation: portrait) {
+  .center-stats { flex-direction: column; gap: 2px; }
+  .center-stats span { display: flex; justify-content: center; align-items: baseline; gap: 2px; }
+  .center-box { min-width: 0; width: 100%; }
+  .center-note { overflow-wrap: anywhere; }
 }

@@ -244,3 +244,10 @@ PYTHONPATH=. python scripts/check_phone_layout.py
 PYTHONPATH=. python tests/check_tile_score_browser.py
 PYTHONPATH=. python tests/check_hand_review_browser.py
 ```
+
+## Side seats — round 6 (2026-11-18)
+
+Exposed sets and six-tile river rows follow each seat's table edge. Claimed
+tiles turn sideways in source order; added kongs retain the original pon's
+source and stack their fourth tile over its claimed tile. Concealed kongs
+keep two covered ends. Phone side lanes use 18×25px meld tiles.
