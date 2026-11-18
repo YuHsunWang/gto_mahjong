@@ -22,16 +22,16 @@
   --bone: #fbfaf2;
   --bone-edge: #cfcabc;
   --bone-shadow: #b5b0a0;
-  --tile-side: #b9ad95;
-  --tile-foot: #a2957c;
-  --tile-ink: #1d2430;
-  --cinnabar: #c2352f;
-  --tile-blue: #28599c;
-  --tile-green: #1f7a52;
-  /* Preserve the existing amber tile backs and tile pigments. */
-  --tile-back: #b5762e;
-  --tile-back-edge: #7a4d17;
-  --tile-back-highlight: #d99a4e;
+  --tile-side: #c8c2b1;
+  --tile-foot: #ada694;
+  --tile-ink: #202d40;
+  --cinnabar: #b72e2b;
+  --tile-blue: #254e83;
+  --tile-green: #176543;
+  /* Approved theme A; tile-faces.js supplies attribute-selected tile themes. */
+  --tile-back: #15583f;
+  --tile-back-edge: #0d3c2c;
+  --tile-back-highlight: #377b5f;
   --wall-top: #efe9d8;
   --wall-side: #a99d84;
   --gold: #B77A08;
