@@ -1404,8 +1404,8 @@ details.evwrap summary {
 .outcome-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 6px 22px; }
 .outcome .headline { margin: 0; font-family: var(--sans); font-size: 46px; font-weight: 900; line-height: 1.2; letter-spacing: .12em; }
 .outcome .delta { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.outcome .delta.win { color: #a6f0c6; background: var(--ink); }
-.outcome .delta.lose { color: #ffc2b6; background: var(--ink); }
+.outcome .delta.win { color: #1e7a4c; }
+.outcome .delta.lose { color: #b2402b; }
 .outcome-line { margin: 0; font-size: 17px; }
 .outcome .nexthand { margin: 0; max-width: 60ch; color: var(--ink-dim); }
 .outcome .controls { gap: 14px; margin-top: 4px; }
