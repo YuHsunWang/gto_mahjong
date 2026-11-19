@@ -270,9 +270,10 @@ class OpponentView:
         if (
             not isinstance(self.concealed_kongs, int)
             or isinstance(self.concealed_kongs, bool)
-            or not 0 <= self.concealed_kongs <= 4
+            or not 0 <= self.concealed_kongs <= 5
         ):
-            raise ValueError("concealed_kongs must be an integer from 0 through 4")
+            # Taiwanese hands have five sets, so all five may be concealed kongs.
+            raise ValueError("concealed_kongs must be an integer from 0 through 5")
         if isinstance(self.river, list):
             self.river = [RiverEntry(entry) if _is_tile(entry) else entry for entry in self.river]
 

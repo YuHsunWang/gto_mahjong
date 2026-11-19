@@ -763,3 +763,5 @@ def test_declared_player_may_concealed_kong():
     with pytest.raises(ValueError, match="called meld"):
         OpponentView([0], [(5, 5, 5)], 0, concealed_kongs=1).validate()
     OpponentView([0], [], 0, concealed_kongs=1).validate()
+    # A Taiwanese hand has five sets; all five may be concealed kongs.
+    assert OpponentView([], [], concealed_kongs=5).set_count == 5
