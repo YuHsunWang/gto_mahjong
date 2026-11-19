@@ -1,3 +1,5 @@
+import { sparrowArt } from './sparrow-coach.js';
+
 // Owner-selected game cards from the completed lobby study.
 const PATHS = {
   count: '<rect x="5" y="3" width="22" height="26" rx="4"/><path d="M10 9h12M10 15h2m8 0h2m-12 5h2m8 0h2m-12 5h2m8 0h2"/>',
@@ -21,14 +23,7 @@ function illustration(scene) {
     <ellipse cx="136" cy="118" rx="86" ry="7" fill="var(--wood)" opacity=".35"/>
     <circle cx="134" cy="64" r="49" fill="var(--panel)" opacity=".48"/>
     <g transform="translate(${scene === 2 || scene === 3 ? 102 : 75} -1)" stroke="var(--ink)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="m41 87-9 19 15-7 9 8 4-21" fill="var(--wood)"/>
-      <path d="M49 24q24-2 29 22 14 16 4 36-10 17-32 16-24 0-32-19-9-19 6-34 2-20 20-21-5-6-1-6l10 7" fill="var(--wood-hi)"/>
-      <path d="M27 39q18-24 45 1-13-5-21-2-12-5-24 1Z" fill="var(--wood)" stroke="none"/>
-      <path d="M25 65q23-15 48 0 3 27-23 27-25-1-25-27Z" fill="var(--panel)" stroke="none"/>
-      <path d="M23 66q14-7 19 9-9 7-18 1m50-10q-13-6-16 9 10 9 20 0" fill="var(--wood)"/>
-      <path d="m44 51 11 4-10 6Z" fill="var(--gold)"/>
-      <circle cx="34" cy="47" r="2.4" fill="var(--ink)" stroke="none"/><circle cx="65" cy="47" r="2.4" fill="var(--ink)" stroke="none"/>
-      <path d="M45 66q5 4 10-1M37 97l-2 5m29-5 2 5"/>
+${sparrowArt()}
     </g>${props}
     <g stroke="var(--ink)" stroke-width="1.4" stroke-linecap="round"><path d="M204 36v8m-4-4h8M58 36v5m-2.5-2.5h5"/><circle cx="213" cy="88" r="2"/></g>
   </svg></div>`;

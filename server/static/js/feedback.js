@@ -1,6 +1,7 @@
 // Decision feedback: net-EV comparison, paired-ranking state, and session mix.
 
 import { faceText, tileEl } from './tiles.js';
+import { withCoach } from './sparrow-coach.js';
 
 export const VERDICT_LABELS = {
   best: '模型領先',
@@ -64,7 +65,7 @@ export function verdictEl(verdict, marginal, evDelta, text, {
   delta.className = 'delta';
   delta.textContent = unresolvedChoice ? '不計排名獎懲' : `預期淨得分差 ${fixed(evDelta)}`;
   el.append(badge, body, delta);
-  return el;
+  return withCoach(el, visualState);
 }
 
 // The verdict line for one graded decision; a pick inside an unresolved top
@@ -464,7 +465,7 @@ function headlineEl(grade, text, chosenTile) {
   }
   body.append(title, line);
   el.append(seal, body);
-  return el;
+  return withCoach(el, unresolved ? 'unresolved' : grade.verdict);
 }
 
 // One row per evaluated discard, point leader first. Text and colour come from
