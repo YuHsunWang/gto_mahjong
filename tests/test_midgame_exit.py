@@ -39,6 +39,15 @@ def test_legacy_corpus_golden_output():
     # Captured on this branch before adding stratification, including full
     # states, selected indices, original payoffs, and seed draw order.
     data = [case_document(case) for case in build_corpus(6, 1)]
+    # Compare the historical game state without the additive display metadata.
+    # Full kong metadata is checked independently in test_meld_provenance.
+    for case in data:
+        for player in case["state"]["players"]:
+            for kong in player["kongs"]:
+                if isinstance(kong, dict):
+                    if kong.pop("kong_type", None) == "added":
+                        kong["called_from_seat"] = None
+                        kong["called_from_discard_number"] = None
     assert hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest() == "f2feb1658cbbad5c6a20a0f41a110ff81494ccc1cb7b2bc961d15df6a0d6234f"
 
 

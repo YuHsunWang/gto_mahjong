@@ -25,7 +25,7 @@ from playwright.sync_api import sync_playwright
 from scripts.check_phone_layout import ROOT, wait_for_server
 
 
-VIEWPORTS = ((1280, 800), (390, 844), (320, 568))
+VIEWPORTS = ((1280, 800), (844, 390), (740, 360), (667, 375))
 SEED = 1
 LONG = 180000
 
@@ -263,6 +263,7 @@ def main():
                 run(browser, url, args.shots)
             finally:
                 browser.close()
+        print("Hand review: PASS (live hand, replay, reload, keyboard, 1280/844/740/667px)", flush=True)
         return 0
     finally:
         process.terminate()

@@ -25,7 +25,7 @@ from taimahjong.quiz import verdict_for_delta
 from taimahjong.scoring import DEFAULT_SCHEME, ScoringScheme
 
 
-VIEWPORTS = ((1280, 800), (390, 844), (320, 568))
+VIEWPORTS = ((1280, 800), (844, 390), (740, 360), (667, 375))
 SCHEMES = {"3-1": DEFAULT_SCHEME, "5-2": ScoringScheme(5, 2)}
 # (seed, which evaluated discard to play, scheme). Seeds only pick the position;
 # every expectation below is recomputed from the server's own grade payload.
@@ -259,6 +259,7 @@ def main():
             != expected_badges(grade, grade["chosen"]["discard"], DEFAULT_SCHEME)
             for grade, (_, _, scheme) in zip(grades, CASES)
         ), "cases must cover a gap that only the scheme-scaled cut-offs colour correctly"
+        print("Tile scores: PASS (5 quiz cases + trainer; 1280/844/740/667px)", flush=True)
         return 0
     finally:
         process.terminate()

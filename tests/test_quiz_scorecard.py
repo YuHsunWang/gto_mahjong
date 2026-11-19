@@ -86,7 +86,7 @@ assert.equal(summary(mode, '3-1').best, 5);
 assert.equal(summary(mode, '3-1').loss, 3);
 """
     result = subprocess.run(
-        ["node", "--experimental-default-type=module", "--input-type=module",
+        ["node", "--input-type=module",
          "-e", script, stats_url, mode],
         capture_output=True, text=True, timeout=10,
     )
@@ -131,7 +131,7 @@ assert.equal(one.loss, summary('trainer', '3-1').loss); // same tie rule for los
 assert.equal(Math.round(one.loss * 100), 380);
 """
     result = subprocess.run(
-        ["node", "--experimental-default-type=module", "--input-type=module",
+        ["node", "--input-type=module",
          "-e", script, stats_url],
         capture_output=True, text=True, timeout=10,
     )

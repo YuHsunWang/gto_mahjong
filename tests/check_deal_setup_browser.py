@@ -38,7 +38,7 @@ def main():
             browser = playwright.chromium.launch(headless=True)
             try:
                 for dealer in range(4):
-                    context = browser.new_context(viewport={"width": 390, "height": 844})
+                    context = browser.new_context(viewport={"width": 844, "height": 390})
                     try:
                         page = context.new_page()
                         errors = []

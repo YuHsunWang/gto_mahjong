@@ -38,7 +38,7 @@ function provenanceArrow(ownerSeat, sourceSeat, viewerSeat) {
 }
 
 function provenanceEl(detail, ownerSeat, viewerSeat) {
-  if (!detail || detail.called_from_seat === null || detail.called_from_discard_number === null) return null;
+  if (!detail || !Number.isInteger(detail.called_from_seat) || !Number.isInteger(detail.called_from_discard_number)) return null;
   const sourceSeat = detail.called_from_seat;
   const number = detail.called_from_discard_number;
   const accessible = `${WINDS[sourceSeat]}家第${number}張棄牌所鳴`;
@@ -58,7 +58,31 @@ function meldGroupEl(tiles, detail, ownerSeat, viewerSeat, className) {
   group.className = className;
   const provenance = provenanceEl(detail, ownerSeat, viewerSeat);
   if (provenance) group.append(provenance);
-  tiles.forEach((tile) => group.append(tileEl(tile, { size: 'sm' })));
+  const source = detail?.called_from_seat;
+  const knownSource = Number.isInteger(source) && source !== ownerSeat;
+  const delta = knownSource ? (source - ownerSeat + 4) % 4 : null;
+  // In the owner's view: upstream = left, opposite = middle, downstream = right.
+  const isKong = tiles.length === 4;
+  const added = isKong && detail?.kong_type === 'added' && knownSource;
+  const concealed = isKong && detail?.concealed;
+  const calledSlot = knownSource && !concealed ? ({3: 0, 2: 1, 1: added ? 2 : tiles.length - 1}[delta]) : -1;
+  const ordered = [...tiles];
+  if (calledSlot >= 0) {
+    const calledIndex = ordered.indexOf(detail.called_tile ?? detail.tile);
+    if (calledIndex >= 0) ordered.splice(calledIndex, 1);
+    ordered.splice(calledSlot, 0, detail.called_tile ?? detail.tile);
+  }
+  if (added) ordered.pop();
+  group.dataset.kongType = isKong ? (detail?.kong_type || (concealed ? 'concealed' : 'open')) : '';
+  ordered.forEach((tile, index) => {
+    const slot = document.createElement('span');
+    const called = index === calledSlot;
+    slot.className = `meld-slot${called ? ' meld-slot--called' : ''}${called && added ? ' meld-slot--stacked' : ''}`;
+    const faceDown = concealed && (ownerSeat !== viewerSeat || index === 0 || index === ordered.length - 1);
+    slot.append(faceDown ? tileBackEl({size: 'sm'}) : tileEl(tile, {size: 'sm'}));
+    if (called && added) slot.append(tileEl(tile, {size: 'sm', classes: ['added-kong-tile']}));
+    group.append(slot);
+  });
   return group;
 }
 
@@ -134,7 +158,16 @@ function opponentSeatEl(positionName, opponent, viewerSeat, seatScores) {
     section.append(identityEl(0, { role: SEAT_ROLES[positionName] }));
     return section;
   }
-  const meldTileCount = (opponent.meld_details || opponent.melds || [])
+  let melds = opponent.melds || [];
+  let details = opponent.meld_details || [];
+  const kongs = opponent.kong_details || [];
+  // Quiz/trainer retain legacy danger triplets; the additive kong list supplies
+  // display metadata. Attack/defense already includes four-tile kong details.
+  if (kongs.length && !details.some(detail => detail.kind === 'kong')) {
+    melds = melds.slice(0, -kongs.length).concat(kongs.map(kong => Array(4).fill(kong.tile)));
+    details = details.slice(0, -kongs.length).concat(kongs.map(kong => ({...kong, tiles: Array(4).fill(kong.tile)})));
+  }
+  const meldTileCount = (details.length ? details : melds)
     .reduce((sum, meld) => sum + (meld.tiles || meld).length, 0);
   section.dataset.seat = String(opponent.seat);
   section.append(identityEl(opponent.seat, {
@@ -148,8 +181,8 @@ function opponentSeatEl(positionName, opponent, viewerSeat, seatScores) {
   }));
   const orientation = positionName === 'top' ? 'portrait' : 'landscape';
   section.append(concealedHandEl(opponent.hand_count, orientation));
-  if (opponent.melds?.length) {
-    section.append(meldsEl(opponent.melds, opponent.meld_details, opponent.seat, viewerSeat));
+  if (melds.length) {
+    section.append(meldsEl(melds, details, opponent.seat, viewerSeat));
   }
   return section;
 }

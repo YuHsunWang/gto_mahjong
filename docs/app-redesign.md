@@ -5,6 +5,67 @@ branch `feat/app-redesign`, stacked on #117 → #119 → #120.
 
 Mockup (four screens, hard-coded data): https://claude.ai/artifact/LJneR8rCX9rdbyAdtwVG64
 
+## Porcelain studio — palette refresh (2026-11-18)
+
+This owner-approved direction supersedes the dark surface and display-font
+specifications below. Geometry, tile artwork, tile pigments and verdict colours
+stay unchanged. The table uses matte blue-grey fabric, a visually thin ceramic
+rail and soft blue-grey shadows. Headings and body use sans; only seat/wind
+marks use serif. Existing CSS token names remain for compatibility.
+
+Palette: page `#F3F5F7`, workspace `#E7EDF1`, felt `#B8CAD5` / `#CCDCE5` /
+`#DDE8EE`, rail `#A9BBC8` / `#D4DFE7` / `#A9BBC8`, coaching `#FFFFFF`,
+panels `#F8FAFC`, ink/rail ink `#203344`, accent `#B77A08`.
+The felt gradient uses the three felt tokens. Gold text uses the darker edge.
+
+WCAG AA corrections for normal text on the darkest felt (`#B8CAD5`):
+dim `#465B6B` → `#3E5261`, faint `#526777` → `#425664`,
+gold edge `#805400` → `#724A00`, focus `#245D89` → `#205580`.
+These are the only approved palette values adjusted for contrast.
+
+## Table styles — round 4 (2026-11-18)
+
+The lobby's `牌桌風格` select sits beside `底台`: 瓷白 (A, default), 茶室
+(B), 夜藍 (C), 聯名風 (D). The native select supports keyboard navigation
+and fits beside the scheme pills at 390px. `index.html` reads
+`mj-table-theme` before loading CSS; invalid or unavailable storage uses A.
+Writes are guarded too and restore A if they fail. Switching the root
+`data-table-theme` updates existing tiles and all app surfaces immediately.
+
+`style.css` overrides tokens only for B/C/D. Page, felt and rail colours match
+the material studies in `TILE_THEMES`; tile faces and backs keep their existing
+attribute-selected palettes. B adds the woven texture, D the approved pink
+confetti colours. C uses dark panels and light text throughout.
+
+Minimum contrast ratios across each text token's surfaces (gradient endpoints
+included), recomputed by `tests/check_theme_switch_browser.py`:
+
+| Theme | Body/accent | Rail | Lobby tile/tool text | Verdict/score badges | Actions | Bold result numbers |
+|---|---:|---:|---:|---:|---:|---:|
+| A | 4.53 | 6.57 | 5.83 | 5.24 | 4.67 | 3.16 |
+| B | 4.57 | 6.15 | 6.23 | 5.24 | 4.67 | 3.15 |
+| C | 6.44 | 6.96 | 5.85 | 5.24 | 7.58 | 5.35 |
+| D | 5.52 | 4.75 | 4.76 | 5.24 | 4.67 | 3.77 |
+
+Normal text meets 4.5:1; bold result numbers meet 3:1. Decorative SVG pigments
+remain the approved artwork. B uses darker secondary text `#60503e`; C uses
+`#d0ddf0` secondary text and light accent/result text. D's footer ink is
+`#613849` (the original `#673e50` gave 4.33:1 on the pink rail). Its lobby
+lettering uses `#5e70af` / `#bd2c4c`, and tool discs use `#bd2c4c` / `#285d88`,
+so decorative pigments do not become low-contrast interface text.
+Verdict colours remain unchanged; their text and the EV leader/tag-chip
+backgrounds keep dark pigments independently of C's light body ink.
+
+## Lobby game cards — round 5 (2026-11-18)
+
+The owner selected direction 1 from the completed lobby study in `8d90cbb`.
+Five sparrow cards and two smaller tool cards replace the tile plaques, with
+three columns on desktop and one on phones. `js/lobby.js` owns the migrated
+SVGs; the study files are removed. Routes, progress text, focus order and all
+three header preferences retain their existing behavior. There was no
+last-used state; the old fixed first-mode outline gives way to the selected
+study's uniform cards.
+
 ## Why
 
 The in-game table already reads as a mahjong table. Every other screen reads as
@@ -183,3 +244,18 @@ PYTHONPATH=. python scripts/check_phone_layout.py
 PYTHONPATH=. python tests/check_tile_score_browser.py
 PYTHONPATH=. python tests/check_hand_review_browser.py
 ```
+
+## Side seats — round 6 (2026-11-18)
+
+Exposed sets and six-tile river rows follow each seat's table edge. Claimed
+tiles turn sideways in source order; added kongs retain the original pon's
+source and stack their fourth tile over its claimed tile. Concealed kongs
+keep two covered ends. Phone side lanes use 18×25px meld tiles.
+
+Round 7: larger six-tile rivers interlock around the centre; separate side-seat backs show a light standing-tile edge in every theme.
+
+Round 9: phone tables require landscape; portrait felt screens are inert behind
+a full-screen rotate prompt. Supported browsers request fullscreen and landscape
+lock from a tap; leaving the table releases both. The coach follows the felt
+below on phones. Only attack-defense retains colored discard-origin bars.
+Opponents' concealed kongs show four backs; own kongs retain two visible faces.
