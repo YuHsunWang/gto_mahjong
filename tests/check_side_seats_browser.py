@@ -8,7 +8,7 @@ from playwright.sync_api import sync_playwright
 from scripts.check_phone_layout import ROOT, wait_for_server
 
 
-def fixture():
+def fixture(own_melds=False):
     def meld(tiles, source, called=None, **extra):
         return dict(tiles=tiles, called_tile=tiles[0] if called is None else called,
                     called_from_seat=source, called_from_discard_number=7, **extra)
@@ -21,11 +21,12 @@ def fixture():
     right = [meld([18] * 4, 0, kong_type='added', concealed=False),
              dict(tiles=[31] * 4, kong_type='concealed', concealed=True)]
     top = [meld([3, 4, 5], 1, 5)]
+    own = [meld([20, 21, 22], 3, 20), meld([24] * 3, 2)] if own_melds else []
     hand = [0] * 34
-    for tile in range(17):
+    for tile in range(17 - 3 * len(own)):
         hand[tile] += 1
-    return dict(seat=0, hand=hand, drawn_tile=16, own_river=river(0),
-                own_melds=[], own_meld_details=[],
+    return dict(seat=0, hand=hand, drawn_tile=16 - 3 * len(own), own_river=river(0),
+                own_melds=[m['tiles'] for m in own], own_meld_details=own,
                 own_kong_details=[], wall_remaining=36, turn=16, draws_remaining=9,
                 seat_scores=[0] * 4, opponents=[
                     dict(seat=seat, river=river(seat * 5), melds=[m['tiles'][:3] for m in details],
@@ -91,6 +92,24 @@ CHECK = """() => {
   return problems;
 }"""
 
+# Own melds: every tile matches its slot's footprint (phones shrink slots).
+OWN_MELD_CHECK = """() => {
+  const r = el => el.getBoundingClientRect();
+  const slots = [...document.querySelectorAll('.hand-meld .meld-slot:not(.meld-slot--called)')];
+  if (slots.length < 4) return ['own meld fixture not rendered'];
+  return slots.filter(slot => {
+    const t = r(slot.querySelector('.tile')), b = r(slot);
+    return Math.abs(t.width - b.width) >= 1 || Math.abs(t.height - b.height) >= 1;
+  }).map(() => 'own meld tile does not fit its slot');
+}"""
+
+RENDER = """async position => {
+  const {feltEl} = await import('/js/table.js');
+  const next = feltEl(position, {ownRiverHighlight:true});
+  next.id = 'side-fixture';
+  (document.querySelector('#side-fixture') || document.querySelector('.table-scroll')).replaceWith(next);
+}"""
+
 
 def check(browser, url, width, height, theme, shots):
     context = browser.new_context(viewport=dict(width=width, height=height), device_scale_factor=3)
@@ -104,12 +123,12 @@ def check(browser, url, width, height, theme, shots):
         page.locator('#tr-seed').fill('1')
         page.get_by_role('button', name='開始新局').click()
         page.locator('.felt').wait_for(timeout=60000)
-        page.evaluate("""async position => {
-          const {feltEl} = await import('/js/table.js');
-          document.querySelector('.table-scroll').replaceWith(feltEl(position, {ownRiverHighlight:true}));
-        }""", fixture())
+        page.evaluate(RENDER, fixture(own_melds=True))
         page.wait_for_timeout(350)
-        problems = page.evaluate(CHECK) + errors
+        own_problems = page.evaluate(OWN_MELD_CHECK)
+        page.evaluate(RENDER, fixture())
+        page.wait_for_timeout(350)
+        problems = page.evaluate(CHECK) + own_problems + errors
         shots.mkdir(exist_ok=True)
         page.screenshot(path=str(shots / f'r9-{theme}-table-{width if width == 1280 else str(width) + chr(120) + str(height)}.png'), full_page=True, scale='css')
         if theme == 'A' and width == 1280:
