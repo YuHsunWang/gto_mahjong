@@ -646,7 +646,7 @@ button {
 }
 
 .table-hand .hand-melds { margin-left: 8px; padding-left: 7px; }
-.table-hand .hand-meld .tile.sm { width: 22px; height: 30px; }
+.table-hand .hand-meld .tile.sm { width: var(--meld-w, 22px); height: var(--meld-h, 30px); }
 
 .hand-hint {
   text-align: center;
