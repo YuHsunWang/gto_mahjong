@@ -161,11 +161,14 @@ function opponentSeatEl(positionName, opponent, viewerSeat, seatScores) {
   let melds = opponent.melds || [];
   let details = opponent.meld_details || [];
   const kongs = opponent.kong_details || [];
-  // Quiz/trainer retain legacy danger triplets; the additive kong list supplies
-  // display metadata. Attack/defense already includes four-tile kong details.
+  // Quiz/trainer retain legacy danger triplets for open kongs only (an
+  // opponent's concealed kong has no triplet and a null tile, #128); the
+  // additive kong list supplies display metadata. Attack/defense already
+  // includes four-tile kong details.
   if (kongs.length && !details.some(detail => detail.kind === 'kong')) {
-    melds = melds.slice(0, -kongs.length).concat(kongs.map(kong => Array(4).fill(kong.tile)));
-    details = details.slice(0, -kongs.length).concat(kongs.map(kong => ({...kong, tiles: Array(4).fill(kong.tile)})));
+    const keep = melds.length - kongs.filter(kong => !kong.concealed).length;
+    melds = melds.slice(0, keep).concat(kongs.map(kong => Array(4).fill(kong.tile)));
+    details = details.slice(0, keep).concat(kongs.map(kong => ({...kong, tiles: Array(4).fill(kong.tile)})));
   }
   const meldTileCount = (details.length ? details : melds)
     .reduce((sum, meld) => sum + (meld.tiles || meld).length, 0);

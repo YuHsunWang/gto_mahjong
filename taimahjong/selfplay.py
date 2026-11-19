@@ -218,25 +218,33 @@ class GameState:
     consume_calibration: bool
 
 
-def _public_counts(players: list[Player]) -> tuple[int, ...]:
+def _public_counts(players: list[Player], viewer: int | None = None) -> tuple[int, ...]:
+    """Tiles seen by ``viewer``; ``None`` means every kong is counted.
+
+    Another seat's concealed kong is hidden from the viewer (#128); pass
+    ``viewer=-1`` to hide every concealed kong.
+    """
     counts = [0] * 34
-    for player in players:
+    for seat, player in enumerate(players):
         for entry in player.river:
             counts[entry.tile] += 1
         for meld in player.melds:
             for tile in meld_tiles(meld):
                 counts[tile] += 1
         for kong in player.kongs:
-            tile, _ = kong_tiles(kong)
+            tile, concealed = kong_tiles(kong)
+            if concealed and viewer is not None and seat != viewer:
+                continue
             counts[tile] += 4
     return tuple(counts)
 
 
 def _view(player: Player, seat: int) -> OpponentView:
-    # A kong is public but OpponentView.melds is strictly three tiles, so we
-    # expose the kong to the shape/danger layer as its triplet; the fourth copy
-    # is already in the visible counts (_public_counts adds all four).
-    kong_triplets = [(tile, tile, tile) for tile, _ in map(kong_tiles, player.kongs)]
+    # An open kong is public but OpponentView.melds is strictly three tiles, so
+    # we expose it to the shape/danger layer as its triplet; the fourth copy is
+    # already in the visible counts. A concealed kong's tile is hidden (#128):
+    # only its count reaches the view.
+    kong_triplets = [(tile, tile, tile) for tile, concealed in map(kong_tiles, player.kongs) if not concealed]
     return OpponentView(
         list(player.river), list(player.melds) + kong_triplets, player.declared_at,
         is_dealer=seat == DEALER_SEAT,
@@ -257,7 +265,7 @@ def _decision_snapshot(player_index: int, drawn_tile: int | None, players: list[
         river=tuple(player.river),
         melds=tuple(player.melds),
         opponents=tuple((index, _view(other, index)) for index, other in enumerate(players) if index != player_index),
-        public_counts=_public_counts(players),
+        public_counts=_public_counts(players, player_index),
         turn=player.discards + 1,
         drawn_tile=drawn_tile,
         wall_remaining=wall_remaining,
@@ -417,8 +425,8 @@ def _assert_conservation(players: list[Player], wall: list[int], dead: list[int]
     assert all(count == 4 for count in all_counts), "individual tile copies were not conserved"
 
 
-def _danger_for(player_index: int, tile: int, post_hand: list[int], players: list[Player]) -> float:
-    visible = _public_counts(players)
+def _danger_for(player_index: int, tile: int, post_hand: list[int], players: list[Player], viewer: int) -> float:
+    visible = _public_counts(players, viewer)
     return danger_score(tile, _view(players[player_index], player_index), visible, tuple(post_hand)).score
 
 
@@ -542,7 +550,7 @@ def _ev_aware_discard(
 ) -> int:
     """Choose from M2's top candidates plus the raw minimum-danger discard."""
     player = players[player_index]
-    visible = _public_counts(players)
+    visible = _public_counts(players, player_index)
     opponents = [(index, _view(other, index)) for index, other in enumerate(players) if index != player_index]
     danger_by_candidate: dict[int, dict[int, float]] = {}
     for analysis in analyses:
@@ -590,7 +598,7 @@ def _choose_discard(
     if player.declared:
         assert drawn_tile is not None
         return drawn_tile, False
-    visible = _public_counts(players)
+    visible = _public_counts(players, player_index)
     analyses = _cached_analysis(tuple(player.hand), _declared(player), visible)
     assert analyses
     if player.policy == "ev_aware":
@@ -615,7 +623,7 @@ def _choose_discard(
         post = list(player.hand)
         post[analysis.discard] -= 1
         ranked.append((
-            max(_danger_for(opponent, analysis.discard, post, players) * _cautious_dealer_weight(opponent, players) for opponent in threats),
+            max(_danger_for(opponent, analysis.discard, post, players, player_index) * _cautious_dealer_weight(opponent, players) for opponent in threats),
             order, analysis.discard,
         ))
     return min(ranked)[2], True
@@ -1021,7 +1029,7 @@ def play_game(
         true_shanten = _cached_shanten(tuple(player.hand), _declared(player))
         true_tenpai = true_shanten == 0
         dangers = {
-            index: _danger_for(index, tile, player.hand, players)
+            index: _danger_for(index, tile, player.hand, players, current)
             for index in range(4)
             if index != current
         }

@@ -286,8 +286,10 @@ def test_kong_history_preserves_kind_and_original_pon_source_in_api():
         shanten=0, draws_remaining=1, wall_remaining=4, candidate_ev_gap=0.0,
     )
     opponent_payload = _position_payload(position)["opponents"][0]
-    assert opponent_payload["kong_details"] == payloads
-    assert opponent_payload["melds"] == [[8] * 3, [4] * 3, [6] * 3]
+    # The opponent's concealed kong keeps its kind but not its tile (#128).
+    hidden = {**payloads[2], "tile": None}
+    assert opponent_payload["kong_details"] == payloads[:2] + [hidden]
+    assert opponent_payload["melds"] == [[8] * 3, [4] * 3]
     assert all(len(detail["tiles"]) == 3 for detail in opponent_payload["meld_details"])
 
     game = play_game(211, ("attack",) * 4, kong_policy="all")
