@@ -118,7 +118,7 @@ def finish_case(case: MidgameCase, profile: tuple[str, ...], *, wall: tuple[int,
 
 def actor_shanten(case: MidgameCase) -> int:
     player = case.state.players[case.state.current]
-    return _cached_analysis(tuple(player.hand), len(player.melds) + len(player.kongs), _public_counts(case.state.players))[0].shanten_after
+    return _cached_analysis(tuple(player.hand), len(player.melds) + len(player.kongs), _public_counts(case.state.players, case.state.current))[0].shanten_after
 
 
 def paired_case_gains(base: list, other: list, role: int) -> tuple[float, ...]:

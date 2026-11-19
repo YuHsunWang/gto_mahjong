@@ -50,7 +50,7 @@ def decision_features(observation: DecisionSnapshot) -> dict:
         "safest_danger": risks[safest],
         "attack_danger_rank": 1 + sum(risk < risks[attack] for risk in risks.values()),
         "max_opponent_tenpai_score": max(tenpai_score(opponent).score for _, opponent in observation.opponents),
-        "opponent_melds": sum(len(opponent.melds) for _, opponent in observation.opponents),
+        "opponent_melds": sum(opponent.set_count for _, opponent in observation.opponents),
         "attack_is_drawn": attack == observation.drawn_tile,
         "attack_equals_safest": attack == safest,
         "keep_safe_tile": keep_safe,
