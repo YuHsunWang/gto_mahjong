@@ -30,6 +30,7 @@ from .danger import (
     danger_score,
     deal_in_weight,
     fold_score,
+    kong_tiles,
     meld_tiles,
     tenpai_score,
 )
@@ -1031,7 +1032,7 @@ def _sampled_tenpai_rate(
     turn = opponent.lookup_turn
     if opponent.declared_at is None and calibration is not None:
         rate = calibration.tenpai_probability(
-            len(opponent.melds), turn, _trailing_tsumogiri_run(opponent.river),
+            opponent.set_count, turn, _trailing_tsumogiri_run(opponent.river),
         )
         if rate is not None:
             return rate
@@ -1069,16 +1070,33 @@ def _sample_production_world(
         4 - hand[tile] - seen[tile]
         for tile in range(34)
     ]
+    # #128: an opponent's concealed-kong tile is hidden information, so each
+    # world draws one from the kinds whose four copies are all still unseen.
+    # Its own RNG leaves worlds without concealed kongs unchanged.
+    kong_rng = random.Random(f"concealed-kong:{world_seed}")
+    seen = list(seen)  # this world's sampled kong tiles become seen below
+    for seat, view in enumerate(seat_views):
+        if seat == acting_seat or view is None:
+            continue
+        for _ in range(view.concealed_kongs):
+            kinds = [tile for tile in range(34) if remaining[tile] == 4]
+            if not kinds:
+                raise ValueError("visible state leaves no tile kind for a concealed kong")
+            tile = kong_rng.choice(kinds)
+            remaining[tile] = 0
+            seen[tile] += 4
+            players[seat].kongs.append((tile, True))
     rng = random.Random(world_seed)
     opponent_ordinal = 0
     for seat, player in enumerate(players):
         if seat == acting_seat:
             continue
         view = seat_views[seat]
+        sets = len(player.melds) + len(player.kongs)
         concealed = (
             view.hand_count
             if view is not None and view.hand_count > 0
-            else 16 - 3 * len(player.melds)
+            else 16 - 3 * sets
         )
         if concealed < 0 or concealed > sum(remaining):
             raise ValueError("visible state leaves too few tiles for opponent hands")
@@ -1093,7 +1111,7 @@ def _sample_production_world(
         )
         sampled = (
             _construct_tenpai_hand(
-                remaining, concealed, len(player.melds), rng,
+                remaining, concealed, sets, rng,
             )
             if target_tenpai
             else None
@@ -1121,7 +1139,7 @@ def _sample_production_world(
                 )
                 if target is not None:
                     sampled = _construct_shanten_hand(
-                        remaining, concealed, len(player.melds), target, rng,
+                        remaining, concealed, sets, target, rng,
                     )
         if sampled is None:
             sampled = _draw_pool_tiles(remaining, concealed, rng)
@@ -1337,7 +1355,9 @@ def _calibrated_ron(
         # A new players sequence starts a fresh trial and rebuilds the state.
         if players is not trial_players:
             trial_players = players
-            public_counts = list(_public_counts(list(players)))
+            # Concealed kongs are hidden from everyone here; the discarder's
+            # own are added back below, matching self-play's viewer (#128).
+            public_counts = list(_public_counts(list(players), viewer=-1))
             public_views = [_view(player, seat) for seat, player in enumerate(players)]
             river_lengths = [len(player.river) for player in players]
         else:
@@ -1347,7 +1367,15 @@ def _calibrated_ron(
                     public_views[seat].river.append(entry)
                 public_views[seat].discard_count = player.discards
                 river_lengths[seat] = len(player.river)
-        public = tuple(public_counts)
+        own_hidden = [kong_tiles(kong) for kong in players[discarder].kongs]
+        if any(concealed for _, concealed in own_hidden):
+            seen = list(public_counts)
+            for kong_tile, concealed in own_hidden:
+                if concealed:
+                    seen[kong_tile] += 4
+            public = tuple(seen)
+        else:
+            public = tuple(public_counts)
         # Calibration rows were recorded from each discarder against every
         # other seat, with that discarder's post-discard hand as the private
         # tile blockers.  Reproduce those semantics here for every seat.  Using

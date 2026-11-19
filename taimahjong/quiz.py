@@ -180,7 +180,8 @@ class QuizOpponent:
     dealer_streak: int = 0  # nonzero only when this opponent is the dealer
     hand_count: int = 0
     discard_count: int | None = None
-    kongs: tuple[KongLike, ...] = ()
+    kongs: tuple[KongLike, ...] = ()  # display only; see OpponentView.kongs
+    concealed_kongs: int = 0
 
     @property
     def declared(self) -> bool:
@@ -196,6 +197,7 @@ class QuizOpponent:
             is_dealer=self.is_dealer, dealer_streak=self.dealer_streak,
             hand_count=self.hand_count,
             discard_count=self.discard_count,
+            concealed_kongs=self.concealed_kongs,
         )
 
 
@@ -334,6 +336,7 @@ def _opponents_from(snapshot: DecisionSnapshot) -> tuple[QuizOpponent, ...]:
         frozen_view = OpponentView(
             list(frozen_river), list(frozen_melds), view.declared_at,
             discard_count=view.discard_count,
+            concealed_kongs=view.concealed_kongs,
         )
         opponents.append(
             QuizOpponent(
@@ -347,6 +350,7 @@ def _opponents_from(snapshot: DecisionSnapshot) -> tuple[QuizOpponent, ...]:
                 hand_count=view.hand_count,
                 discard_count=view.discard_count,
                 kongs=view.kongs,
+                concealed_kongs=view.concealed_kongs,
             )
         )
     return tuple(opponents)
@@ -512,7 +516,7 @@ def _interesting(position: QuizPosition) -> bool:
     return (
         position.shanten <= SHANTEN_MAX
         and position.turn >= MIN_TURN
-        and any(len(opponent.melds) >= 2 or opponent.declared or opponent.tenpai_estimate >= 0.4 for opponent in position.opponents)
+        and any(len(opponent.melds) + opponent.concealed_kongs >= 2 or opponent.declared or opponent.tenpai_estimate >= 0.4 for opponent in position.opponents)
     )
 
 

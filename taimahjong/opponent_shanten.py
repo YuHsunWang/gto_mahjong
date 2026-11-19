@@ -36,7 +36,7 @@ def cell_key(melds: int, turn: int, run: int) -> str:
 def view_key(opponent: OpponentView, turn: int | None = None) -> str:
     """The key for a public view, read the way `tenpai_score` reads it."""
     return cell_key(
-        len(opponent.melds), opponent.lookup_turn if turn is None else turn,
+        opponent.set_count, opponent.lookup_turn if turn is None else turn,
         _trailing_tsumogiri_run(opponent.river),
     )
 

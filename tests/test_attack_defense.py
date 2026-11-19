@@ -135,8 +135,10 @@ def test_public_table_preserves_every_river_meld_and_four_tile_kong():
         player = original.state.players[opponent["seat"]]
         assert opponent["river"] == api._river_payload(player.river)
         origins.update(entry["origin"] for entry in opponent["river"])
-        assert opponent["melds"] == [list(meld_tiles(m)) for m in player.melds] + [[kong_tiles(k)[0]] * 4 for k in player.kongs]
-        assert opponent["kong_details"] == [api._kong_detail_payload(k) for k in player.kongs]
+        # An opponent's concealed-kong tile is hidden information (#128).
+        hidden = [None if kong_tiles(k)[1] else kong_tiles(k)[0] for k in player.kongs]
+        assert opponent["melds"] == [list(meld_tiles(m)) for m in player.melds] + [[tile] * 4 for tile in hidden]
+        assert opponent["kong_details"] == [api._kong_detail_payload(k, hide_concealed=True) for k in player.kongs]
         kongs += len(opponent["kong_details"])
     assert kongs > 0
     assert origins == {"tsumogiri", "tedashi"}

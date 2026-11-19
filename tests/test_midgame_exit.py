@@ -228,7 +228,7 @@ def test_features_match_public_fold_scores_and_efficiency(cases):
         assert features["safest_danger"] == danger[safe] == min(danger.values())
         assert features["attack_danger_rank"] == 1 + sum(value < danger[attack] for value in danger.values())
         assert features["max_opponent_tenpai_score"] == max(tenpai_score(opponent).score for _, opponent in obs.opponents)
-        assert features["opponent_melds"] == sum(len(opponent.melds) for _, opponent in obs.opponents)
+        assert features["opponent_melds"] == sum(opponent.set_count for _, opponent in obs.opponents)
         assert features["wall_remaining"] == len(case.state.wall)
         assert features["stage"] == case.stage
         assert features["attack_is_drawn"] == (attack == obs.drawn_tile)
