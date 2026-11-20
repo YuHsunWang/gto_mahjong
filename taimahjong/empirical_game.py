@@ -69,6 +69,7 @@ from .best_response import ActorObservation, observation_for, sample_worlds
 
 # A seat policy: (own 17-tile hand, belief pool, opponent declared) -> discard.
 SeatPolicy = Callable[[tuple[int, ...], tuple[int, ...], bool], int]
+_Decision = tuple[tuple[int, ...], tuple[int, ...], bool]
 
 
 def efficiency(
@@ -184,6 +185,8 @@ def profile_payoffs(
     observation: ActorObservation,
     profile: tuple[str, str, str, str],
     rules: RulesConfig = DEFAULT_RULES,
+    *,
+    _decisions: list[dict[_Decision, int]] | None = None,
 ) -> tuple[Fraction, Fraction, Fraction, Fraction]:
     """Exact per-*role* expectation over draw orders for one world and profile.
 
@@ -219,13 +222,13 @@ def profile_payoffs(
             player.declared_at is not None
             for other, player in enumerate(state.players) if other != seat
         )
-        chosen = (
-            drawn_tile
-            if drawn_tile is not None and state.players[seat].declared_at is not None
-            else policies[seat](
-                drawn_hand, _belief(drawn_hand, public), opponent_declared,
-            )
-        )
+        if drawn_tile is not None and state.players[seat].declared_at is not None:
+            chosen = drawn_tile
+        else:
+            info = (drawn_hand, _belief(drawn_hand, public), opponent_declared)
+            chosen = policies[seat](*info)
+            if _decisions is not None:
+                _decisions[(seat - acting) % 4][info] = chosen
         if not drawn_hand[chosen]:
             raise ValueError("a seat policy returned a tile it does not hold")
         post = list(drawn_hand)
@@ -284,6 +287,53 @@ def profile_payoffs(
         None,
     )
     return tuple(totals[(acting + role) % 4] for role in range(4))
+
+
+def _world_payoffs(
+    state: ReferenceState,
+    observation: ActorObservation,
+    profiles: tuple[tuple[str, ...], ...],
+    rules: RulesConfig,
+) -> dict[tuple[str, ...], tuple[Fraction, ...]]:
+    """Reuse a representative only when every reachable policy choice agrees.
+
+    Records and choice caches belong to this world, observation and rules.
+    Agreement on the whole draw tree gives the same terminal distribution;
+    agreement on just the opening discard does not.  Declared draws are
+    forced independently of the profile and need no policy comparison.
+    """
+    representatives = []
+    choices = {}
+    payoffs = {}
+
+    def matches(profile, representative, decisions):
+        for role in range(4):
+            if profile[role] == representative[role]:
+                continue
+            for info, chosen in decisions[role].items():
+                key = (profile[role], info)
+                if key not in choices:
+                    choices[key] = STRATEGIES[profile[role]](*info)
+                if choices[key] != chosen:
+                    return False
+        return True
+
+    for profile in profiles:
+        for representative, payoff, decisions in representatives:
+            if matches(profile, representative, decisions):
+                payoffs[profile] = payoff
+                break
+        else:
+            decisions = [{} for _ in range(4)]
+            payoff = profile_payoffs(
+                state, observation, profile, rules, _decisions=decisions,
+            )
+            representatives.append((profile, payoff, decisions))
+            payoffs[profile] = payoff
+            for role in range(4):
+                for info, chosen in decisions[role].items():
+                    choices[(profile[role], info)] = chosen
+    return payoffs
 
 
 @dataclass(frozen=True)
@@ -468,17 +518,18 @@ def build_game(
             sample_worlds(observation, sims, seed + case.seed),
         ))
 
+    profiles = tuple(product(strategies, repeat=4))
+    rows_by_profile = {profile: [] for profile in profiles}
+    for observation, worlds in sampled:
+        for world in worlds:
+            for profile, payoff in _world_payoffs(
+                world, observation, profiles, rules,
+            ).items():
+                rows_by_profile[profile].append(tuple(float(value) for value in payoff))
+
     payoffs: dict[tuple[str, ...], tuple[float, float, float, float]] = {}
     units: dict[tuple[str, ...], tuple[tuple[float, float, float, float], ...]] = {}
-    for profile in product(strategies, repeat=4):
-        rows = []
-        for observation, worlds in sampled:
-            for world in worlds:
-                rows.append(tuple(
-                    float(value) for value in profile_payoffs(
-                        world, observation, profile, rules,
-                    )
-                ))
+    for profile, rows in rows_by_profile.items():
         units[profile] = tuple(rows)
         payoffs[profile] = tuple(
             sum(row[seat] for row in rows) / len(rows) for seat in range(4)
