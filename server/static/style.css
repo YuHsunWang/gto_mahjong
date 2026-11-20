@@ -1481,7 +1481,11 @@ details.evwrap summary {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  margin: 18px 0 6px;
+  /* As wide as its six-per-row river, centred under the centred result (#122). */
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 640px;
+  margin: 18px auto 6px;
   padding: 22px;
   border-radius: 18px;
   background: var(--lacquer);
