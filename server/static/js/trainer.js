@@ -5,8 +5,8 @@
 import { post, get, showError, randomSeed } from './api.js';
 import { tileEl, tileBackEl } from './tiles.js';
 import { feltEl, handEl, computingEl, faceText } from './table.js';
-import { reviewRailEl, tileScores, gradeVerdictEl, VERDICT_LABELS } from './feedback.js';
-import { record, recordOutcome, summary, handSummary } from './stats.js';
+import { reviewRailEl, tileScores, VERDICT_LABELS } from './feedback.js';
+import { record, recordOutcome, summary, handSummary, choiceIsUnresolved } from './stats.js';
 import { schemeToggle, schemeParams } from './scheme.js';
 
 const SESSION_KEY = 'mj-trainer-sid';
@@ -21,18 +21,29 @@ function kongLabel(option) {
   return (option.kind === 'concealed' ? '暗槓 ' : '加槓 ') + faceText(option.tile);
 }
 
-function choiceTextFor(decision, feedback) {
-  if (feedback.kind === 'discard') return `你打 ${faceText(feedback.chosen_tile)}`;
-  const isCall = feedback.kind === 'call';
-  if (feedback.choice === null) return `你選擇：${isCall ? '過（不鳴）' : '不槓'}`;
-  const option = decision.options[feedback.choice];
-  return `你選擇：${isCall ? `${callLabel(option)} ${option.meld.map(faceText).join('')}` : kongLabel(option)}`;
+function optionChoiceText(decision, choice) {
+  const isCall = decision.type === 'call';
+  if (choice === null) return isCall ? '過（不鳴）' : '不槓';
+  const option = decision.options[choice];
+  return isCall ? `${callLabel(option)} ${option.meld.map(faceText).join('')}` : kongLabel(option);
 }
 
-// The serif character standing in for a move that discarded no tile.
-function tokenFor(decision, feedback) {
-  if (feedback.choice === null) return '過';
-  return feedback.kind === 'call' ? callLabel(decision.options[feedback.choice]) : '槓';
+function choiceTextFor(decision, feedback) {
+  if (feedback.kind === 'discard') return `你打 ${faceText(feedback.chosen_tile)}`;
+  return `你選擇：${optionChoiceText(decision, feedback.choice)}`;
+}
+
+function recommendationText(decision, grade) {
+  const ranked = (grade.ranking_state || 'clear') === 'clear';
+  if (grade.kind === 'discard') {
+    const pair = grade.top1_vs_top2;
+    return !ranked && pair
+      ? [pair.top_discard, pair.runner_up_discard].map(faceText).join(' ≈ ')
+      : faceText(grade.best.discard);
+  }
+  const tied = grade.indistinguishable_indices;
+  const choices = !ranked && tied?.length > 1 ? tied : [grade.best_index];
+  return choices.map((choice) => optionChoiceText(decision, choice)).join(' ≈ ');
 }
 
 // Same branch order as the server's TrainerOutcome.headline, shortened.
@@ -220,50 +231,139 @@ export function trainerScreen(root) {
       tally.append(item);
     });
 
-    const hint = document.createElement('p');
-    hint.className = 'quality-note';
-    hint.textContent = '照打出的順序排，一排六手。點一手看當時的完整解說。';
+    section.append(title, summaryLine, tally, handReplayEl());
+    return section;
+  }
 
-    const river = document.createElement('ol');
-    river.className = 'hand-river';
-    history.forEach(({ decision, feedback: grade }, index) => {
-      // The verdict line the player saw decides the pill, so an unresolved
-      // top-pair pick shows here exactly as it did live.
-      const seen = gradeVerdictEl(grade, '');
-      const verdict = seen.classList[1];
-      const unresolved = verdict === 'unresolved';
-      const label = VERDICT_LABELS[grade.verdict] || grade.verdict;
+  function handReplayEl() {
+    let frame = reviewIndex ?? 0;
+    let timer = null;
+    const last = history.length - 1;
+    const replay = document.createElement('div');
+    replay.className = 'hand-replay';
+    const layout = document.createElement('div');
+    layout.className = 'replay-layout';
+    const board = document.createElement('div');
+    board.className = 'replay-board';
+    const card = document.createElement('div');
+    card.className = 'replay-card';
+    const details = document.createElement('div');
+    details.className = 'replay-details';
+    details.setAttribute('aria-live', 'polite');
+    const progress = document.createElement('p');
+    progress.className = 'replay-progress';
+    const pill = document.createElement('span');
+    const choice = document.createElement('p');
+    choice.className = 'replay-choice';
+    const recommendation = document.createElement('p');
+    recommendation.className = 'replay-recommendation';
+    details.append(progress, pill, choice, recommendation);
+
+    function replayButton(label, onClick) {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = `river-move ${verdict}`;
-      button.dataset.review = String(index);
-      button.setAttribute('aria-label', `第 ${index + 1} 手，${choiceTextFor(decision, grade)}，${
-        unresolved ? seen.querySelector('.badge').textContent.replace('≈ ', '') : label}`);
-      const number = document.createElement('span');
-      number.className = 'river-n';
-      number.textContent = String(index + 1);
-      let face;
-      if (grade.kind === 'discard') {
-        face = tileEl(grade.chosen_tile, { size: 'sm' });
-        face.dataset.tile = String(grade.chosen_tile);
-      } else {
-        face = document.createElement('span');
-        face.className = 'river-token';
-        face.textContent = tokenFor(decision, grade);
-      }
-      face.setAttribute('aria-hidden', 'true');
-      const pill = document.createElement('span');
-      pill.textContent = unresolved ? '≈' : label;
-      // A four-character label breaks 2 + 2 on the narrowest phones.
-      pill.className = `river-pill ${verdict}${pill.textContent.length > 3 ? ' long' : ''}`;
-      button.append(number, face, pill);
-      button.addEventListener('click', () => review(index));
-      const cell = document.createElement('li');
-      cell.append(button);
-      river.append(cell);
+      button.className = 'btn';
+      button.textContent = label;
+      button.addEventListener('click', onClick);
+      return button;
+    }
+
+    const explain = replayButton('看解說', () => {
+      pause();
+      review(frame);
     });
-    section.append(title, summaryLine, tally, hint, river);
-    return section;
+    explain.classList.add('replay-explain');
+    card.append(details, explain);
+    layout.append(board, card);
+
+    const controls = document.createElement('div');
+    controls.className = 'controls replay-controls';
+    const prev = replayButton('上一手', () => jump(frame - 1));
+    const next = replayButton('下一手', () => jump(frame + 1));
+    const play = replayButton('播放', () => {
+      if (timer !== null) {
+        pause();
+        return;
+      }
+      if (frame === last) return;
+      play.textContent = '暫停';
+      timer = setInterval(() => {
+        if (!replay.isConnected) {
+          pause();
+          return;
+        }
+        showFrame(frame + 1);
+      }, 1500);
+    });
+    controls.append(prev, play, next);
+
+    const timeline = document.createElement('div');
+    timeline.className = 'replay-timeline';
+    timeline.setAttribute('role', 'group');
+    timeline.setAttribute('aria-label', '牌譜時間軸');
+    const verdicts = history.map(({ feedback: grade }) => choiceIsUnresolved(grade) ? 'unresolved' : grade.verdict);
+    const cells = verdicts.map((verdict, index) => {
+      const cell = replayButton('', () => jump(index));
+      cell.className = `replay-cell ${verdict}`;
+      const label = verdict === 'unresolved' ? '≈ 無法區分' : VERDICT_LABELS[verdict] || verdict;
+      cell.setAttribute('aria-label', `第 ${index + 1} 手，${label}`);
+      return cell;
+    });
+    timeline.append(...cells);
+    replay.append(layout, controls, timeline);
+    replay.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      jump(frame + (event.key === 'ArrowLeft' ? -1 : 1));
+    });
+
+    function pause() {
+      clearInterval(timer);
+      timer = null;
+      play.textContent = '播放';
+    }
+
+    function jump(index) {
+      if (index < 0 || index > last) return;
+      pause();
+      if (index !== frame) showFrame(index);
+    }
+
+    function showFrame(index) {
+      cells[frame].removeAttribute('aria-current');
+      frame = index;
+      cells[frame].setAttribute('aria-current', 'step');
+      const { decision, feedback: grade } = history[frame];
+      const previous = frame > 0 ? history[frame - 1].decision.position : null;
+      const newRiverFrom = new Map(previous
+        ? (previous.opponents || []).map(({ seat, river }) => [seat, river?.length ?? 0])
+        : []);
+      const isCall = grade.kind === 'call';
+      const cut = grade.kind === 'discard' ? grade.chosen_tile
+        : grade.kind === 'kong' ? decision.options[grade.choice]?.tile : null;
+      const table = feltEl(decision.position, {
+        offeredTile: isCall ? decision.offered_tile : null,
+        offeredTileChosen: isCall && grade.choice !== null,
+        newRiverFrom,
+        handOptions: { drawnTile: isCall ? null : decision.position.drawn_tile, marks: { cut } },
+      });
+      const focused = board.contains(document.activeElement);
+      board.replaceChildren(table);
+      if (focused) table.focus({ preventScroll: true });
+      const verdict = verdicts[frame];
+      progress.textContent = `第 ${frame + 1} / ${history.length} 手`;
+      pill.className = `replay-pill ${verdict}`;
+      pill.textContent = verdict === 'unresolved' ? '≈' : VERDICT_LABELS[verdict] || verdict;
+      choice.textContent = choiceTextFor(decision, grade);
+      recommendation.textContent = `模型建議：${recommendationText(decision, grade)}`;
+      prev.setAttribute('aria-disabled', String(frame === 0));
+      next.setAttribute('aria-disabled', String(frame === last));
+      play.setAttribute('aria-disabled', String(frame === last));
+      if (frame === last) pause();
+    }
+
+    showFrame(frame);
+    return replay;
   }
 
   function workspace(board, grade = null, choiceText = null) {
@@ -640,7 +740,7 @@ export function trainerScreen(root) {
       root.append(outcomeScreen(state.decision));
       const handReview = handReviewEl();
       if (handReview) root.append(handReview);
-      if (reviewIndex !== null) root.querySelector(`[data-review="${reviewIndex}"]`)?.focus();
+      if (reviewIndex !== null) root.querySelector('.replay-explain')?.focus();
       reviewIndex = null;
     } else {
       root.append(decisionScreen(state.decision));
