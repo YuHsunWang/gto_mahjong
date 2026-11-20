@@ -155,7 +155,7 @@ VIEWPORT_PROBLEMS = """() => {
 }"""
 
 
-def play_hand(page, decision):
+def play_hand(page, decision=None):
     """Discard the first hand tile and pass every call/kong until the outcome."""
     frames = []
     while True:
@@ -250,12 +250,14 @@ def assert_frame(page, frames, index, colors):
     assert shown["chosen"] == chosen and shown["offered"] == offered, (index, shown["chosen"], shown["offered"])
 
     previous = frames[index - 1][0]["position"]["opponents"] if index else []
-    lengths = {opponent["seat"]: len(opponent["river"]) for opponent in previous}
+    before = {opponent["seat"]: opponent["river"] for opponent in previous}
     expected = [(position["seat"], position["own_river"], [],
                  meld_faces(position["own_melds"], position["own_kong_details"], own=True))]
     for opponent in position["opponents"]:
         seat, river = opponent["seat"], opponent["river"]
-        start = lengths.get(seat, len(river))
+        # A claimed discard leaves its river, so "new" starts at the first mismatch.
+        old = before.get(seat, river)
+        start = next((i for i, (a, b) in enumerate(zip(old, river)) if a != b), min(len(old), len(river)))
         expected.append((seat, river, list(range(start, len(river))),
                          meld_faces(opponent["melds"], opponent["kong_details"])))
     for seat, river, fresh, melds in expected:

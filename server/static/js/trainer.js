@@ -335,8 +335,18 @@ export function trainerScreen(root) {
       cells[frame].setAttribute('aria-current', 'step');
       const { decision, feedback: grade } = history[frame];
       const previous = frame > 0 ? history[frame - 1].decision.position : null;
+      // A claimed discard is popped from its river (_apply_call), so a seat's
+      // river can shrink and regrow; new tiles start where it stops matching.
+      // ponytail: a claimed tile replaced by an identical tile reads as old.
+      const current = new Map((decision.position.opponents || []).map(({ seat, river }) => [seat, river || []]));
       const newRiverFrom = new Map(previous
-        ? (previous.opponents || []).map(({ seat, river }) => [seat, river?.length ?? 0])
+        ? (previous.opponents || []).map(({ seat, river = [] }) => {
+          const now = current.get(seat) || [];
+          let same = 0;
+          while (same < river.length && same < now.length
+            && river[same].tile === now[same].tile && river[same].origin === now[same].origin) same += 1;
+          return [seat, same];
+        })
         : []);
       const isCall = grade.kind === 'call';
       const cut = grade.kind === 'discard' ? grade.chosen_tile
