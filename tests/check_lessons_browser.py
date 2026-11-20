@@ -49,7 +49,7 @@ def main():
                                 mistake_label: source === 'label'
                                   ? {label: 'ignored_danger', confidence: .9} : null,
                                 matched_lesson: source
-                                  ? {id: 'respect-threat', source, title: '有威脅，先看現物'} : null,
+                                  ? {id: 'respect-threat', source, title: '三家都聽牌了，先打安全牌'} : null,
                               };
                               const session = {
                                 hands: 0, decisions: 1, qualityScore: null,
@@ -62,10 +62,10 @@ def main():
                             if source == "label":
                                 assert page.locator(".mistake-label + .lesson-link").count() == 1
                             if source:
-                                link = page.get_by_role("link", name="去看這一課：有威脅，先看現物")
+                                link = page.get_by_role("link", name="去看這一課：三家都聽牌了，先打安全牌")
                                 assert link.get_attribute("href") == "#/lessons/respect-threat"
                                 link.click()
-                                page.get_by_role("heading", name="有威脅，先看現物", exact=True).wait_for()
+                                page.get_by_role("heading", name="三家都聽牌了，先打安全牌", exact=True).wait_for()
                                 assert page.get_by_text("你的副露", exact=True).count() == 0
                                 assert page.locator(".lesson-tiles").nth(0).locator(".tile").count() == 17
                                 assert page.locator(".lesson-river").count() == 4
@@ -81,16 +81,16 @@ def main():
                         # Deep links survive a reload, including the attacking
                         # lesson's non-declared rivers and the efficiency table.
                         page.goto(f"{url}/#/lessons/keep-attacking")
-                        page.get_by_role("heading", name="別為安心拆好聽", exact=True).wait_for()
+                        page.get_by_role("heading", name="聽牌了，別為了怕放槍就下車", exact=True).wait_for()
                         page.reload()
-                        page.get_by_role("heading", name="別為安心拆好聽", exact=True).wait_for()
+                        page.get_by_role("heading", name="聽牌了，別為了怕放槍就下車", exact=True).wait_for()
                         assert page.locator(".lesson-river .note").filter(has_text="未宣告").count() == 3
                         assert page.locator(".lesson-points p").count() == 3
                         assert page.locator(".evtable").count() == 0
                         assert not ukeire_calls
                         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                         page.goto(f"{url}/#/lessons/pair-vs-run")
-                        page.get_by_role("heading", name="別把順子鎖成雀頭", exact=True).wait_for()
+                        page.get_by_role("heading", name="對子太多，拆能湊順子的那一對", exact=True).wait_for()
                         page.locator(".evtable .best-row").wait_for()
                         assert "一萬" in page.locator(".evtable .best-row").inner_text()
                         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
