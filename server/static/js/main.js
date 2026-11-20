@@ -38,7 +38,7 @@ const MODES = [
   { hash: '#/quiz', chars: '單手', desc: '只考最關鍵的那一手。', statsKey: 'quiz' },
   { hash: '#/endgame', chars: '殘局', desc: '牌快摸完了，要衝還是要守。', statsKey: 'endgame' },
   { hash: '#/attack-defense', chars: '攻守', desc: '同一手牌，先選進攻，再選防守。', statsKey: 'attack-defense' },
-  { hash: '#/lessons', chars: '教學', desc: '牌效與攻守觀念，七堂短課。', statsKey: null },
+  { hash: '#/lessons', chars: '教學', desc: '牌效與攻守觀念，六堂短課。', statsKey: null },
 ];
 
 function statsLine(statsKey) {

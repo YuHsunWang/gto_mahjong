@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from taimahjong import lessons, mistake_label
-from taimahjong.danger import OpponentView, danger_score, fold_score, parse_river, tenpai_score
+from taimahjong.danger import OpponentView, fold_score, parse_river, tenpai_score
 from taimahjong.ev import EVRankEntry, remaining_draws
 from taimahjong.quiz import QuizGrade, QuizOpponent, QuizPosition, grade
 from taimahjong.shanten import shanten
@@ -117,19 +117,27 @@ def sdk(monkeypatch):
 @pytest.mark.parametrize(("label", "lesson_id"), [
     ("rushed_narrow_wait", "rush-vs-wide"),
     ("broke_wide_shape", "lone-terminal"),
-    ("ignored_danger", "respect-threat"),
     ("over_defensive", "keep-attacking"),
     ("wrong_pair_choice", "pair-vs-run"),
     ("no_concept_error", None),
 ])
 def test_every_label_has_its_approved_mapping_without_a_fallback(mistake, sdk, label, lesson_id):
-    assert set(lessons.LABEL_LESSONS) == set(mistake_label.LABELS)
+    assert set(lessons.LABEL_LESSONS) == set(mistake_label.LABELS) - {"ignored_danger"}
     matched = lessons.match_lesson(mistake, mistake_label.MistakeLabel(label, 0.9, {}))
     assert (None if matched is None else matched.lesson_id) == lesson_id
     if matched:
         assert matched.source == "label"
         assert matched.lesson_id in {l["id"] for l in lessons.LESSONS}
     assert sdk.calls == []
+
+
+def test_ignored_danger_has_no_lesson_so_it_falls_back_to_jev(mistake, sdk):
+    # Owner 2026-11-21: the declared-tenpai lesson was unrealistic and the
+    # engine found no clear undeclared fold position, so Jev picks instead.
+    sdk.reply.scores.update({"keep-attacking": 2.8})
+    matched = lessons.match_lesson(mistake, mistake_label.MistakeLabel("ignored_danger", 0.9, {}))
+    assert (matched.lesson_id, matched.source) == ("keep-attacking", "jev")
+    assert len(sdk.calls) == 1
 
 
 @pytest.mark.parametrize("score", [lessons.MIN_RELEVANCE, 2.9, lessons.MIN_RELEVANCE - 0.01])
@@ -212,17 +220,10 @@ def test_danger_lesson_answer_agrees_with_production_trainer_ranking(lesson):
     assert result.ranked[0].net_ev - result.ranked[1].net_ev > 0.3
     assert result.ranking_state == "clear"
     assert result.ev_delta == 0
-    alternative = "5p" if lesson["id"] == "respect-threat" else "3m"
-    comparison = grade(result.position, _tile(alternative))
+    comparison = grade(result.position, _tile("3m"))
     assert comparison.best.discard == result.best.discard
     assert comparison.ranking_state == "clear"
     assert comparison.ev_delta > 0.3
-    if lesson["id"] == "respect-threat":
-        # The safe answer must pay attack value for reduced loss, rather than
-        # merely avoid an exhausted wait as the old position did.
-        other = next(e for e in comparison.ranked if e.discard == _tile(alternative))
-        assert result.best.risk_ev < other.risk_ev
-        assert result.best.attack_ev < other.attack_ev
 
 
 def test_danger_positions_have_distinct_hands_and_real_attack_defense_tradeoffs():
@@ -236,28 +237,19 @@ def test_danger_positions_have_distinct_hands_and_real_attack_defense_tradeoffs(
         rows = discard_analysis(position.hand, 0, position.public_counts)
         assert rows[0].discard == _tile("5p")
         by_tile = {row.discard: row for row in rows}
-        if lesson["id"] == "respect-threat":
-            assert (rows[0].shanten_after, rows[0].total) == (0, 3)
-            assert rows[0].ukeire == {_tile("2s"): 0, _tile("5s"): 1, _tile("8s"): 2}
-            safe = by_tile[_tile("2s")]
-            assert (safe.shanten_after, safe.ukeire) == (0, {_tile("5p"): 2})
-            for opponent in position.opponents:
-                assert opponent.declared
-                post = list(position.hand)
-                post[_tile("2s")] -= 1
-                assert "declared_safe" in danger_score(
-                    _tile("2s"), opponent.view(), position.public_counts, post,
-                ).modifiers
-                post = list(position.hand)
-                post[_tile("5p")] -= 1
-                assert danger_score(_tile("5p"), opponent.view(), position.public_counts, post).score > 0
-        else:
-            assert (rows[0].shanten_after, rows[0].total) == (0, 9)
-            assert rows[0].ukeire == {_tile("1s"): 3, _tile("4s"): 3, _tile("7s"): 3}
-            assert by_tile[_tile("3m")].shanten_after == 1
-            for opponent in position.opponents:
-                assert not opponent.declared and not opponent.melds
-                assert _tile("3m") in {entry.tile for entry in opponent.river}
+        assert (rows[0].shanten_after, rows[0].total) == (0, 9)
+        assert rows[0].ukeire == {_tile("1s"): 3, _tile("4s"): 3, _tile("7s"): 3}
+        assert by_tile[_tile("3m")].shanten_after == 1
+        for opponent in position.opponents:
+            assert not opponent.melds
+            assert _tile("3m") in {entry.tile for entry in opponent.river}
+
+
+def test_no_lesson_is_built_on_a_declared_tenpai():
+    # Owner 2026-11-21: declaring tenpai is rare (usually 天聽/地聽), so a lesson
+    # resting on a declaration teaches a situation players almost never meet.
+    for lesson in lessons.LESSONS:
+        assert all(op.get("declared_at") is None for op in lesson.get("opponents", [])), lesson["id"]
 
 
 def test_catalog_and_all_efficiency_answers_are_corroborated_by_api():

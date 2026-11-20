@@ -47,9 +47,9 @@ def main():
                                 best: {discard: 22, net_ev: 3},
                                 chosen: {discard: 26, net_ev: 1},
                                 mistake_label: source === 'label'
-                                  ? {label: 'ignored_danger', confidence: .9} : null,
+                                  ? {label: 'over_defensive', confidence: .9} : null,
                                 matched_lesson: source
-                                  ? {id: 'respect-threat', source, title: '三家都聽牌了，先打安全牌'} : null,
+                                  ? {id: 'keep-attacking', source, title: '聽牌了，別為了怕放槍就下車'} : null,
                               };
                               const session = {
                                 hands: 0, decisions: 1, qualityScore: null,
@@ -62,14 +62,14 @@ def main():
                             if source == "label":
                                 assert page.locator(".mistake-label + .lesson-link").count() == 1
                             if source:
-                                link = page.get_by_role("link", name="去看這一課：三家都聽牌了，先打安全牌")
-                                assert link.get_attribute("href") == "#/lessons/respect-threat"
+                                link = page.get_by_role("link", name="去看這一課：聽牌了，別為了怕放槍就下車")
+                                assert link.get_attribute("href") == "#/lessons/keep-attacking"
                                 link.click()
-                                page.get_by_role("heading", name="三家都聽牌了，先打安全牌", exact=True).wait_for()
+                                page.get_by_role("heading", name="聽牌了，別為了怕放槍就下車", exact=True).wait_for()
                                 assert page.get_by_text("你的副露", exact=True).count() == 0
                                 assert page.locator(".lesson-tiles").nth(0).locator(".tile").count() == 17
                                 assert page.locator(".lesson-river").count() == 4
-                                assert page.locator(".lesson-river .note").filter(has_text="已宣告聽牌").count() == 3
+                                assert page.locator(".lesson-river .note").filter(has_text="未宣告").count() == 3
                                 assert page.locator(".evtable").count() == 0
                                 assert not ukeire_calls
                                 if width == 390:

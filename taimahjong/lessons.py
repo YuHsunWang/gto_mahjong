@@ -24,7 +24,7 @@ LESSONS = json.loads(
 LABEL_LESSONS: dict[str, str | None] = {
     "rushed_narrow_wait": "rush-vs-wide",
     "broke_wide_shape": "lone-terminal",
-    "ignored_danger": "respect-threat",
+    # ignored_danger has no lesson yet: a label missing here falls back to Jev.
     "over_defensive": "keep-attacking",
     "wrong_pair_choice": "pair-vs-run",
     "no_concept_error": None,
@@ -53,8 +53,8 @@ def match_lesson(grade: QuizGrade, label: MistakeLabel | None) -> LessonMatch | 
     """Use a known label or score every lesson in one bounded SDK request."""
     if not _is_labelable(grade):
         return None
-    if label is not None:
-        lesson_id = LABEL_LESSONS.get(label.label)
+    if label is not None and label.label in LABEL_LESSONS:
+        lesson_id = LABEL_LESSONS[label.label]
         return None if lesson_id is None else LessonMatch(lesson_id, "label", {})
     try:
         client = _client()
