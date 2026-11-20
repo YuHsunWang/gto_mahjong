@@ -14,17 +14,19 @@ phoneLayout.addEventListener('change', () => {
   }
 });
 
-function riverEl(river = [], { position = 'bottom', highlightLast = false } = {}) {
+function riverEl(river = [], { position = 'bottom', highlightLast = false, newFrom = Infinity } = {}) {
   const el = document.createElement('div');
   el.className = `river river--${position}`;
   el.setAttribute('aria-label', `${position === 'bottom' ? '自家' : SEAT_ROLES[position]}牌河`);
   river.forEach((entry, index) => {
     const classes = entry.origin ? [entry.origin] : [];
+    const isNew = index >= newFrom;
+    if (isNew) classes.push('replay-new');
     if (highlightLast && index === river.length - 1) classes.push('cut', 'landed');
     const tile = tileEl(entry.tile, { size: 'sm', classes });
     const ordinal = index + 1;
     tile.dataset.discardNumber = String(ordinal);
-    tile.setAttribute('aria-label', `第${ordinal}張棄牌，${faceText(entry.tile)}`);
+    tile.setAttribute('aria-label', `${isNew ? '新增，' : ''}第${ordinal}張棄牌，${faceText(entry.tile)}`);
     el.append(tile);
   });
   return el;
@@ -265,7 +267,7 @@ function wallBandEl(positionName, stacks) {
   return band;
 }
 
-function centerBox(position, { offeredTile = null } = {}) {
+function centerBox(position, { offeredTile = null, offeredTileChosen = false } = {}) {
   const box = document.createElement('div');
   box.className = 'center-box';
   const stats = document.createElement('div');
@@ -295,7 +297,7 @@ function centerBox(position, { offeredTile = null } = {}) {
     offered.className = 'offered';
     const label = document.createElement('span');
     label.textContent = '可鳴';
-    offered.append(label, tileEl(offeredTile, { size: 'sm', classes: ['drawn'] }));
+    offered.append(label, tileEl(offeredTile, { size: 'sm', classes: [offeredTileChosen ? 'cut' : 'drawn'] }));
     box.append(offered);
   }
   const noflower = document.createElement('div');
@@ -316,10 +318,10 @@ function coreEl(position, options) {
   const core = document.createElement('div');
   core.className = 'table-core';
   core.append(
-    riverEl(top?.river, { position: 'top' }),
-    riverEl(left?.river, { position: 'left' }),
+    riverEl(top?.river, { position: 'top', newFrom: options.newRiverFrom?.get(top?.seat) }),
+    riverEl(left?.river, { position: 'left', newFrom: options.newRiverFrom?.get(left?.seat) }),
     centerBox(position, options),
-    riverEl(right?.river, { position: 'right' }),
+    riverEl(right?.river, { position: 'right', newFrom: options.newRiverFrom?.get(right?.seat) }),
     riverEl(position.own_river, { position: 'bottom', highlightLast: options.ownRiverHighlight }),
   );
   return core;
@@ -361,7 +363,9 @@ function ownSeatEl(position, handOptions) {
 // handOptions configures the live hand embedded in the bottom band.
 export function feltEl(position, {
   offeredTile = null,
+  offeredTileChosen = false,
   ownRiverHighlight = false,
+  newRiverFrom = null,
   handOptions = {},
 } = {}) {
   const scroll = document.createElement('div');
@@ -388,7 +392,7 @@ export function feltEl(position, {
     wallBandEl('right', wallSides?.[1] ?? wallSides),
     wallBandEl('bottom', wallSides?.[2] ?? wallSides),
     wallBandEl('left', wallSides?.[3] ?? wallSides),
-    coreEl(position, { offeredTile, ownRiverHighlight }),
+    coreEl(position, { offeredTile, offeredTileChosen, ownRiverHighlight, newRiverFrom }),
   );
   scroll.append(felt);
   return scroll;
