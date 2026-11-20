@@ -2,7 +2,7 @@
 
 import { post, showError, randomSeed } from './api.js';
 import { feltEl, computingEl, faceText } from './table.js';
-import { reviewRailEl } from './feedback.js';
+import { reviewRailEl, tileScores } from './feedback.js';
 import { record, summary } from './stats.js';
 import { schemeToggle, schemeParams } from './scheme.js';
 
@@ -24,7 +24,7 @@ export function drillScreen(root, { apiBase, mode, title }) {
     const back = document.createElement('a');
     back.className = 'back';
     back.href = '#/';
-    back.textContent = '‹ 首頁';
+    back.textContent = '‹ 大廳';
     const heading = document.createElement('h1');
     heading.textContent = title;
     if (tag) {
@@ -171,6 +171,7 @@ export function drillScreen(root, { apiBase, mode, title }) {
             cut: chosenTile,
             modelLeader: state === 'clear' ? gradeResult.best.discard : null,
             indistinguishable,
+            scores: tileScores(gradeResult, chosenTile),
           },
         },
       }));

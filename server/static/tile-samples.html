@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <link rel="icon" href="data:,">
+  <title>桌與牌 · 四款樣本</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root { font-family: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif; color: #273741; background: #f7f7f4; }
+    body { margin: 0; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    .masthead { max-width: 1280px; margin: auto; padding: 40px 44px 28px; }
+    .eyebrow { font: 600 11px/1.5 system-ui, sans-serif; letter-spacing: .2em; text-transform: uppercase; color: #65737b; }
+    .heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-top: 12px; }
+    h1 { margin: 0; font-family: "Noto Serif TC", "PMingLiU", serif; font-weight: 500; font-size: clamp(27px, 4vw, 40px); letter-spacing: .08em; }
+    .intro { margin: 14px 0 0; color: #52616b; font-size: 13px; line-height: 1.9; }
+    .view-control { display: flex; flex-shrink: 0; gap: 4px; padding: 4px; border: 1px solid #d4dcdf; border-radius: 9px; }
+    button { padding: 9px 14px; border: 0; border-radius: 6px; background: transparent; font: inherit; font-size: 12px; color: #43545f; cursor: pointer; }
+    button[aria-pressed="true"] { color: white; background: #304753; }
+    button:focus-visible, a:focus-visible { outline: 3px solid #3377a2; outline-offset: 3px; }
+    .index { display: flex; gap: 22px; margin-top: 24px; }
+    .index a { color: #43545f; text-decoration: none; font-size: 12px; }
+    .index a:hover { text-decoration: underline; }
+    .samples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; padding: 0 24px 32px; max-width: 2000px; margin: auto; }
+    .samples.is-expanded { grid-template-columns: minmax(0, 1fr); max-width: 1280px; padding-inline: 0; gap: 28px; }
+    .sample { min-width: 0; overflow: hidden; background: var(--page); color: var(--ink); border: 1px solid var(--line); border-radius: 14px; padding: 26px 24px 22px; scroll-margin-top: 16px; }
+    .sample-header { display: flex; align-items: center; gap: 14px; max-width: 900px; margin: 0 auto 20px; }
+    .letter { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 50%; font: 400 23px Georgia, serif; }
+    h2 { font-family: "Noto Serif TC", "PMingLiU", serif; font-size: 23px; font-weight: 500; margin: 0; letter-spacing: .08em; }
+    h2 span { font: 400 12px system-ui, sans-serif; letter-spacing: .03em; margin-left: 9px; opacity: .8; }
+    .palette { display: flex; gap: 5px; margin-left: auto; }
+    .swatch { width: 16px; height: 16px; border-radius: 50%; border: 1px solid #0002; background: var(--swatch); }
+    .table-frame { container-type: inline-size; max-width: 900px; margin: auto; }
+    .table { position: relative; aspect-ratio: 900 / 550; border: 1.65cqw solid transparent; border-radius: 2.8cqw; background: var(--felt-surface) padding-box, linear-gradient(135deg, var(--rail-hi), var(--rail)) border-box; box-shadow: 0 1.2cqw 2.8cqw #182c3a14, inset 0 0 0 .15cqw #fff7, inset 0 .3cqw .8cqw #0001; }
+    .theme-B .table::before { content: ""; position: absolute; inset: 0; border-radius: 1cqw; pointer-events: none; opacity: .38; background: repeating-linear-gradient(0deg, #fff3 0 .11cqw, transparent .11cqw .45cqw), repeating-linear-gradient(90deg, #99816b18 0 .1cqw, transparent .1cqw .5cqw); }
+    .theme-D .table::before { content: ""; position: absolute; inset: 0; border-radius: 1cqw; pointer-events: none; opacity: .7; background-image: radial-gradient(circle at 12% 22%, #e3aaad .19cqw, transparent .26cqw), radial-gradient(circle at 78% 65%, #b9c9df .18cqw, transparent .26cqw), radial-gradient(circle at 40% 80%, #dacb80 .18cqw, transparent .26cqw), radial-gradient(circle at 65% 17%, #c5d7b0 .17cqw, transparent .25cqw); background-size: 13cqw 11cqw; }
+    .tile { display: block; min-width: 0; flex-shrink: 0; filter: drop-shadow(0 .28cqw .18cqw #15252e26); }
+    .tile svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .opponent { position: absolute; display: grid; gap: .1cqw; }
+    .opponent--top { top: 5%; left: 20%; width: 60%; grid-template-columns: repeat(16, minmax(0, 1fr)); }
+    .opponent--left, .opponent--right { top: 24%; width: 10.7%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .opponent--left { left: 3.3%; }
+    .opponent--right { right: 3.3%; }
+    .seat-label { position: absolute; font-size: 1.15cqw; letter-spacing: .18em; color: var(--table-ink); }
+    .seat-label--top { top: 18%; left: 46.6%; }
+    .seat-label--left { left: 5.7%; top: 18%; }
+    .seat-label--right { right: 5.7%; top: 18%; }
+    .river { position: absolute; top: 26%; left: 33%; width: 34%; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .2cqw; }
+    .table-mark { position: absolute; top: 57%; left: 36%; width: 28%; text-align: center; color: var(--table-ink); }
+    .table-mark strong { display: block; font-family: "Noto Serif TC", "PMingLiU", serif; font-weight: 400; font-size: 2cqw; letter-spacing: .36em; }
+    .table-mark small { display: block; font: 500 .85cqw system-ui, sans-serif; letter-spacing: .24em; margin-top: .6cqw; opacity: .8; }
+    .melds { position: absolute; display: flex; gap: 2.4cqw; bottom: 23%; left: 19%; }
+    .meld { display: flex; gap: .05cqw; position: relative; }
+    .meld .tile { width: 3.8cqw; }
+    .meld-label { position: absolute; font-size: 1cqw; color: var(--table-ink); right: -1.5cqw; bottom: .7cqw; }
+    .hand { position: absolute; display: flex; gap: .12cqw; width: 83%; left: 8.5%; bottom: 5.5%; justify-content: center; }
+    .hand .tile { width: 5.8%; }
+    .hand .tile:last-child { margin-left: .8cqw; }
+    .hand-label { bottom: 1.6%; left: 46%; }
+    .sample-note { max-width: 900px; margin: 17px auto 0; display: flex; justify-content: space-between; gap: 10px; font-size: 11px; line-height: 1.7; color: var(--muted); }
+    .face-sheet { max-width: 1060px; margin: 23px auto 0; border-top: 1px solid var(--line); padding-top: 16px; }
+    .sheet-heading { display: flex; justify-content: space-between; gap: 12px; font-size: 10px; letter-spacing: .14em; color: var(--muted); margin-bottom: 12px; }
+    .face-row { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 9px 4px; }
+    .face-item { min-width: 0; text-align: center; }
+    .face-item .tile { max-width: 68px; margin: auto; filter: drop-shadow(0 3px 2px #15252e1c); }
+    .face-name { display: block; font-size: 10px; color: var(--muted); margin-top: 7px; }
+    .is-expanded .sample { border-radius: 0; padding: 28px 40px; }
+    .is-expanded .face-row { grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 12px 8px; }
+    footer { text-align: center; font-size: 11px; color: #65737b; padding: 0 24px 32px; line-height: 1.8; }
+    @media (min-width: 2100px) { .samples:not(.is-expanded) { grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: none; } }
+    @media (max-width: 740px) {
+      .masthead { padding: 26px 20px 22px; }
+      .heading { align-items: start; flex-direction: column; gap: 18px; }
+      .samples { grid-template-columns: minmax(0, 1fr); padding-inline: 10px; }
+      .sample, .is-expanded .sample { padding: 22px 12px; }
+      h2 { font-size: 20px; } h2 span { font-size: 11px; }
+      .sample-note { flex-direction: column; gap: 2px; }
+      .is-expanded .face-row { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+      .sheet-heading { letter-spacing: .04em; }
+    }
+    @media print { .masthead, footer { display: none; } .samples { display: block; } .sample { break-inside: avoid; margin-bottom: 20px; } }
+  </style>
+  <script type="module" src="./js/tile-samples.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="eyebrow">Taiwanese Mahjong · Material studies · Round 03</div>
+    <div class="heading">
+      <h1>一桌，四種表情。</h1>
+      <div class="view-control" aria-label="樣本顯示方式">
+        <button type="button" data-view="compare" aria-pressed="true">並排比較</button>
+        <button type="button" data-view="expanded" aria-pressed="false">放大檢視</button>
+      </div>
+    </div>
+    <p class="intro">同一副牌、同一個視角，看看哪一桌最合眼緣。<br>四款桌面 · 完整 34 種牌面、8 張花牌與牌背</p>
+    <nav class="index" aria-label="四款樣本"><a href="#sample-A">A 瓷白</a><a href="#sample-B">B 茶室</a><a href="#sample-C">C 夜藍</a><a href="#sample-D">D 聯名風</a></nav>
+  </header>
+  <main class="samples" id="samples" aria-label="桌面與牌面樣本"></main>
+  <noscript>請啟用 JavaScript，以查看四款桌面與 SVG 牌面。</noscript>
+  <footer>台灣十六張麻將 · 原創 SVG 牌面習作<br>花牌與明牌另作展示，桌上配置供視覺比較。</footer>
+</body>
+</html>

@@ -62,6 +62,7 @@ from taimahjong.midgame_corpus import MidgameCase, sample_case
 from taimahjong.midgame_exit import case_observation
 from taimahjong.quiz import (
     EV_EFFECT_SIZE_MIN,
+    GOOD_DELTA,
     QuizGrade,
     QuizPosition,
     explain,
@@ -172,12 +173,23 @@ def _meld_detail_payload(meld) -> dict[str, Any]:
     }
 
 
-def _kong_detail_payload(kong) -> dict[str, Any]:
+def _kong_detail_payload(kong, hide_concealed: bool = False) -> dict[str, Any]:
     tile, concealed = kong_tiles(kong)
+    if concealed and hide_concealed:
+        # An opponent's concealed-kong tile is hidden information (#128).
+        return {
+            "tile": None, "concealed": True, "kong_type": "concealed",
+            "called_tile": None, "called_from_seat": None,
+            "called_from_discard_number": None,
+        }
     detail = kong if isinstance(kong, DeclaredKong) else None
     return {
         "tile": tile,
         "concealed": concealed,
+        "kong_type": (
+            ("concealed" if concealed else "open") if detail is None else detail.kong_type
+        ),
+        "called_tile": tile if detail is not None and detail.called_from_seat is not None else None,
         "called_from_seat": None if detail is None else detail.called_from_seat,
         "called_from_discard_number": (
             None if detail is None else detail.called_from_discard_number
@@ -208,6 +220,9 @@ def _position_payload(position: QuizPosition) -> dict[str, Any]:
                 "melds": [list(meld_tiles(meld)) for meld in opponent.melds],
                 "meld_details": [
                     _meld_detail_payload(meld) for meld in opponent.melds
+                ],
+                "kong_details": [
+                    _kong_detail_payload(kong, hide_concealed=True) for kong in opponent.kongs
                 ],
                 "declared": opponent.declared,
                 "declared_at": opponent.declared_at,
@@ -296,6 +311,12 @@ def _grade_payload(result: QuizGrade) -> dict[str, Any]:
     lesson = match_lesson(result, label)
     return {
         "verdict": result.verdict,
+        # The scheme-scaled cut-offs behind `verdict`, so the UI bands the other
+        # discards exactly as verdict_for_delta would.
+        "verdict_thresholds": {
+            "good": scaled_threshold(GOOD_DELTA, result.scheme),
+            "inaccuracy": scaled_threshold(1.0, result.scheme),
+        },
         "marginal": result.marginal,
         "ranking_uncertain": result.ranking_uncertain,
         "ranking_state": result.ranking_state,
@@ -474,7 +495,7 @@ def _attack_defense_payload(case: MidgameCase) -> dict[str, Any]:
     for offset in (1, 2, 3):
         seat = (observation.seat + offset) % 4
         player = case.state.players[seat]
-        kongs = [_kong_detail_payload(kong) for kong in player.kongs]
+        kongs = [_kong_detail_payload(kong, hide_concealed=True) for kong in player.kongs]
         melds = [list(meld_tiles(meld)) for meld in player.melds]
         details = [_meld_detail_payload(meld) for meld in player.melds]
         for kong in kongs:

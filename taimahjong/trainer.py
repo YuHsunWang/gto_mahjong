@@ -313,10 +313,10 @@ class TrainerOutcome:
             return "流局"
         if self.human_won:
             return "自摸胡牌！" if self.outcome == "tsumo" else "胡牌！"
-        if self.robbed_kong:
-            return "被搶槓…"
         if self.human_dealt_in:
-            return "放槍了…"
+            # On a robbed kong the kong maker is the discarder, so this is
+            # only the human's own kong, never another player's.
+            return "被搶槓…" if self.robbed_kong else "放槍了…"
         who = "自摸" if self.outcome == "tsumo" else "被別家胡"
         return f"對手{who}（座位 {self.winner}）"
 

@@ -3,6 +3,7 @@
 import { post, showError, randomSeed } from './api.js';
 import { feltEl, computingEl, faceText } from './table.js';
 import { record, summary } from './stats.js';
+import { withCoach } from './sparrow-coach.js';
 
 const MODE = 'attack-defense';
 const STATS_SCHEME = 'drill'; // No payout-dependent grading in this mode.
@@ -112,7 +113,7 @@ export function attackDefenseScreen(root) {
     for (const [key, label] of [['attack', '攻擊牌'], ['defense', '防守牌']]) {
       const tap = result[key];
       const line = `${tap.correct ? '✓' : '✗'} ${label}：${faceText(tap.tile)}`;
-      rail.append(textEl('p', line + (tap.correct ? '' : `；正確牌：${tap.correct_tiles.map(faceText).join('、')}`)));
+      rail.append(withCoach(textEl('p', line + (tap.correct ? '' : `；正確牌：${tap.correct_tiles.map(faceText).join('、')}`)), tap.correct ? 'best' : 'mistake'));
     }
     rail.append(
       textEl('p', `攻擊進張數：你選的 ${result.attack.ukeire} 張／最佳攻擊牌 ${result.attack.best_ukeire} 張`),
@@ -123,7 +124,7 @@ export function attackDefenseScreen(root) {
       rail.append(textEl('p', `這張攻守都對：${result.shared_tiles.map(faceText).join('、')}`));
     }
     rail.append(
-      textEl('h3', result.recommendation.verdict),
+      withCoach(textEl('h3', result.recommendation.verdict)),
       textEl('p', `這個局面建議打：${faceText(result.recommendation.tile)}`),
       textEl('p', '出牌建議依四家全攻的牌局研究；風險模型來自內建機器人，未經真人牌局校準。'),
     );
@@ -132,7 +133,7 @@ export function attackDefenseScreen(root) {
 
   function render() {
     const header = textEl('div', '', 'topbar');
-    const back = textEl('a', '‹ 首頁', 'back');
+    const back = textEl('a', '‹ 大廳', 'back');
     back.href = '#/';
     header.append(back, textEl('h1', '攻守練習'));
     root.replaceChildren(header);
@@ -146,6 +147,7 @@ export function attackDefenseScreen(root) {
     const felt = feltEl(position, {
       handOptions: { onDiscard: choosing ? pick : null },
     });
+    felt.classList.add('attack-defense-table');
     // This drill always uses one click per choice, independent of discard
     // confirmation settings. Capture before the shared hand's discard handler.
     if (choosing) {

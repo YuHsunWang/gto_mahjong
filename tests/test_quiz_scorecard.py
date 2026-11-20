@@ -86,8 +86,53 @@ assert.equal(summary(mode, '3-1').best, 5);
 assert.equal(summary(mode, '3-1').loss, 3);
 """
     result = subprocess.run(
-        ["node", "--experimental-default-type=module", "--input-type=module",
+        ["node", "--input-type=module",
          "-e", script, stats_url, mode],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_hand_review_counts_one_hand_like_the_stored_totals():
+    """The hand score must agree with the review rows the player reads.
+
+    A row is shown unranked only for a pick inside the unresolved top pair; any
+    other pick keeps its verdict colour even when the top pair is unresolved,
+    so it must count toward the hand's quality score by that verdict.
+    """
+    stats_url = (Path(__file__).resolve().parents[1] / "server/static/js/stats.js").as_uri()
+    script = """
+import assert from 'node:assert/strict';
+const stored = new Map();
+globalThis.localStorage = {
+  getItem: key => stored.get(key) ?? null,
+  setItem: (key, value) => stored.set(key, value),
+};
+const { record, summary, handSummary } = await import(process.argv[1]);
+const pair = { top_discard: 0, runner_up_discard: 1 };
+const hand = [
+  { verdict: 'best', ev_loss: 0, ranking_state: 'clear', chosen: { discard: 0 }, top1_vs_top2: pair },
+  { verdict: 'good', ev_loss: 0.2, ranking_state: 'clear', chosen: { discard: 3 }, top1_vs_top2: pair },
+  { verdict: 'mistake', ev_loss: 1.5, ranking_state: 'clear', chosen: { discard: 2 }, top1_vs_top2: pair },
+  // Tied top-pair pick: unresolved, no loss charged.
+  { verdict: 'good', ev_loss: 0.3, ranking_state: 'uncertain', chosen: { discard: 1 }, top1_vs_top2: pair },
+  { kind: 'call', verdict: 'inaccuracy', ev_loss: 0.6, ranking_state: 'clear' },
+  // Unresolved top pair, but the pick is outside it: still a plain mistake.
+  { verdict: 'mistake', ev_loss: 1.5, ranking_state: 'uncertain', chosen: { discard: 2 }, top1_vs_top2: pair },
+];
+hand.forEach(grade => record('trainer', grade, '3-1'));
+const one = handSummary(hand);
+assert.deepEqual(one.counts, { best: 1, good: 1, inaccuracy: 1, mistake: 2 });
+assert.equal(one.unresolved, 1);
+assert.equal(one.separable, 5);
+assert.equal(one.qualityScore, 40);
+assert.equal(one.decisions, 6);
+assert.equal(one.loss, summary('trainer', '3-1').loss); // same tie rule for loss
+assert.equal(Math.round(one.loss * 100), 380);
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module",
+         "-e", script, stats_url],
         capture_output=True, text=True, timeout=10,
     )
     assert result.returncode == 0, result.stderr

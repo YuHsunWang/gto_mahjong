@@ -195,7 +195,7 @@ def test_cautious_avoids_feeding_the_dealer(monkeypatch):
     danger = {one_m: {0: 8.0, 2: 1.0}, nine_m: {0: 1.0, 2: 9.0}}
     # Every other candidate is made maximally dangerous so the fold choice is a
     # clean contest between 1m and 9m.
-    monkeypatch.setattr(selfplay, "_danger_for", lambda opponent, tile, post, players: danger.get(tile, {}).get(opponent, 100.0))
+    monkeypatch.setattr(selfplay, "_danger_for", lambda opponent, tile, post, players, viewer: danger.get(tile, {}).get(opponent, 100.0))
 
     players = [Player("attack") for _ in range(4)]
     players[1].policy = "cautious"
@@ -761,5 +761,7 @@ def test_declared_player_may_concealed_kong():
     # used to crash the danger model as "declaration after a called meld".
     play_game(4057081917825351542, ("attack",) * 4, kong_policy="concealed_added")
     with pytest.raises(ValueError, match="called meld"):
-        OpponentView([0], [(14, 14, 14), (5, 5, 5)], 0, concealed_kongs=1).validate()
-    OpponentView([0], [(14, 14, 14)], 0, concealed_kongs=1).validate()
+        OpponentView([0], [(5, 5, 5)], 0, concealed_kongs=1).validate()
+    OpponentView([0], [], 0, concealed_kongs=1).validate()
+    # A Taiwanese hand has five sets; all five may be concealed kongs.
+    assert OpponentView([], [], concealed_kongs=5).set_count == 5

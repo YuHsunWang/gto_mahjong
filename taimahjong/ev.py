@@ -30,6 +30,7 @@ from .danger import (
     danger_score,
     deal_in_weight,
     fold_score,
+    kong_tiles,
     meld_tiles,
     tenpai_score,
 )
@@ -500,14 +501,13 @@ def deal_in_ev(
 ) -> float:
     """Approximate expected chip-unit loss for one discard against one opponent.
 
-    The deal-in probability is taken from calibration exactly as
-    ``_calibrated_ron`` takes it, with no opponent-state multiplier on top. The
-    table is fitted against ``danger_score`` alone, which carries no tenpai
-    signal, so its rows are already marginal over the opponent's tenpai state;
-    scaling them again double-counts it. It also matters that this function and
-    the rollout agree: the fold policy picks its discard here but is *scored* by
-    the terminal rollout, so a different risk model in the two places has the
-    defense optimising something it is not graded on.
+    The deal-in probability is taken from calibration with no opponent-state
+    multiplier on top. The table is fitted against ``danger_score`` alone, so
+    its rows are already marginal over the opponent's tenpai state; scaling
+    them again double-counts it. This public-information fold heuristic has no
+    sampled opponent hand, so it retains the marginal approximation even for
+    declared opponents. ``_calibrated_ron`` instead resolves declared claims
+    physically from each sampled hand when scoring the terminal rollout.
 
     The uncalibrated fallback is the exception. ``DEAL_IN_FALLBACK_RATE`` scaled
     by raw danger contains no opponent-state information at all, so there the
@@ -1031,7 +1031,7 @@ def _sampled_tenpai_rate(
     turn = opponent.lookup_turn
     if opponent.declared_at is None and calibration is not None:
         rate = calibration.tenpai_probability(
-            len(opponent.melds), turn, _trailing_tsumogiri_run(opponent.river),
+            opponent.set_count, turn, _trailing_tsumogiri_run(opponent.river),
         )
         if rate is not None:
             return rate
@@ -1069,16 +1069,33 @@ def _sample_production_world(
         4 - hand[tile] - seen[tile]
         for tile in range(34)
     ]
+    # #128: an opponent's concealed-kong tile is hidden information, so each
+    # world draws one from the kinds whose four copies are all still unseen.
+    # Its own RNG leaves worlds without concealed kongs unchanged.
+    kong_rng = random.Random(f"concealed-kong:{world_seed}")
+    seen = list(seen)  # this world's sampled kong tiles become seen below
+    for seat, view in enumerate(seat_views):
+        if seat == acting_seat or view is None:
+            continue
+        for _ in range(view.concealed_kongs):
+            kinds = [tile for tile in range(34) if remaining[tile] == 4]
+            if not kinds:
+                raise ValueError("visible state leaves no tile kind for a concealed kong")
+            tile = kong_rng.choice(kinds)
+            remaining[tile] = 0
+            seen[tile] += 4
+            players[seat].kongs.append((tile, True))
     rng = random.Random(world_seed)
     opponent_ordinal = 0
     for seat, player in enumerate(players):
         if seat == acting_seat:
             continue
         view = seat_views[seat]
+        sets = len(player.melds) + len(player.kongs)
         concealed = (
             view.hand_count
             if view is not None and view.hand_count > 0
-            else 16 - 3 * len(player.melds)
+            else 16 - 3 * sets
         )
         if concealed < 0 or concealed > sum(remaining):
             raise ValueError("visible state leaves too few tiles for opponent hands")
@@ -1093,7 +1110,7 @@ def _sample_production_world(
         )
         sampled = (
             _construct_tenpai_hand(
-                remaining, concealed, len(player.melds), rng,
+                remaining, concealed, sets, rng,
             )
             if target_tenpai
             else None
@@ -1121,7 +1138,7 @@ def _sample_production_world(
                 )
                 if target is not None:
                     sampled = _construct_shanten_hand(
-                        remaining, concealed, len(player.melds), target, rng,
+                        remaining, concealed, sets, target, rng,
                     )
         if sampled is None:
             sampled = _draw_pool_tiles(remaining, concealed, rng)
@@ -1302,15 +1319,16 @@ def _calibrated_ron(
         tuple[tuple[int, ...], int] | None,
     ],
 ):
-    """Price each opponent's RON on a discard at the table's marginal rate.
+    """Price declared RON physically and undeclared RON at marginal rates.
 
     The deal-in table counts every discard against every opponent, tenpai or
-    not, so its rate already integrates over hidden hands.  It is applied to
-    every opponent regardless of the sampled hand: gating it on "the sampled
-    hand can win" multiplied it by that chance a second time and priced
-    deal-in risk 80-100x too low.  The sampled hand only decides how much the
-    ron is worth -- the hand itself when it waits on the discard, else the
-    world's precomputed value hand.
+    not, so its rate already integrates over hidden hands. For undeclared
+    opponents, gating it on "the sampled hand can win" multiplied it by that
+    chance a second time and priced deal-in risk 80-100x too low. The sampled
+    hand only decides how much their ron is worth -- the hand itself when it
+    waits on the discard, else the world's precomputed value hand. Declared
+    opponents instead claim with certainty exactly when their sampled hand
+    completes on the discard, valued by that completed hand.
     """
     from .rollout import CalibratedRonClaim
     from .selfplay import _public_counts, _view
@@ -1337,7 +1355,9 @@ def _calibrated_ron(
         # A new players sequence starts a fresh trial and rebuilds the state.
         if players is not trial_players:
             trial_players = players
-            public_counts = list(_public_counts(list(players)))
+            # Concealed kongs are hidden from everyone here; the discarder's
+            # own are added back below, matching self-play's viewer (#128).
+            public_counts = list(_public_counts(list(players), viewer=-1))
             public_views = [_view(player, seat) for seat, player in enumerate(players)]
             river_lengths = [len(player.river) for player in players]
         else:
@@ -1347,7 +1367,15 @@ def _calibrated_ron(
                     public_views[seat].river.append(entry)
                 public_views[seat].discard_count = player.discards
                 river_lengths[seat] = len(player.river)
-        public = tuple(public_counts)
+        own_hidden = [kong_tiles(kong) for kong in players[discarder].kongs]
+        if any(concealed for _, concealed in own_hidden):
+            seen = list(public_counts)
+            for kong_tile, concealed in own_hidden:
+                if concealed:
+                    seen[kong_tile] += 4
+            public = tuple(seen)
+        else:
+            public = tuple(public_counts)
         # Calibration rows were recorded from each discarder against every
         # other seat, with that discarder's post-discard hand as the private
         # tile blockers.  Reproduce those semantics here for every seat.  Using
@@ -1370,7 +1398,12 @@ def _calibrated_ron(
                 and "declared_safe" in assessment.modifiers
             ):
                 continue
-            probability = probability_for_score(assessment.score)
+            # Declared claims are physical. If claims sum above one,
+            # _winner_distribution's proportional normalization is acceptable.
+            probability = (
+                1.0 if opponent.declared_at is not None
+                else probability_for_score(assessment.score)
+            )
             if not probability:
                 continue
             completed = player.hand.copy()
@@ -1379,6 +1412,8 @@ def _calibrated_ron(
                 tuple(completed), len(player.melds) + len(player.kongs),
             ) == -1:
                 value_hand = (tuple(completed), tile)
+            elif opponent.declared_at is not None:
+                continue
             else:
                 value_hand = ron_value_hands[seat]
                 if value_hand is None:

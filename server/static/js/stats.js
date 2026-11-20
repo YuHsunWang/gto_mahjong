@@ -35,11 +35,32 @@ function bucket(data, mode, schemeId) {
   return data[mode][schemeId];
 }
 
-function pairedChoiceIsUnresolved(grade) {
-  if ((grade.ranking_state || 'clear') === 'clear' || !grade.top1_vs_top2 || !grade.chosen) return false;
-  const chosen = grade.chosen.discard;
-  return chosen === grade.top1_vs_top2.top_discard
-    || chosen === grade.top1_vs_top2.runner_up_discard;
+// The one rule for "this pick is unranked": the ranking is not clear and the
+// player's own choice is one of the actions the model cannot tell apart. A
+// discard grade names that pair in top1_vs_top2; a call or kong grade lists
+// the option indices (null = pass) in indistinguishable_indices.
+export function choiceIsUnresolved(grade) {
+  if (!grade || (grade.ranking_state || 'clear') === 'clear') return false;
+  if (grade.kind === 'call' || grade.kind === 'kong') {
+    return (grade.indistinguishable_indices || []).includes(grade.choice);
+  }
+  const gap = grade.top1_vs_top2;
+  const chosen = grade.chosen?.discard;
+  return Boolean(gap) && chosen !== undefined
+    && (chosen === gap.top_discard || chosen === gap.runner_up_discard);
+}
+
+function gradeEvent(grade) {
+  const tied = choiceIsUnresolved(grade);
+  const loss = tied ? 0 : Number(grade.ev_loss) || 0;
+  return {
+    type: 'grade',
+    t: Date.now(),
+    v: grade.verdict,
+    r: grade.ranking_state || 'clear',
+    l: Math.round(Math.max(0, loss) * 100) / 100,
+    b: grade.verdict === 'best' || tied ? 1 : 0,
+  };
 }
 
 // Accepts the full grade payload. The legacy scalar form remains valid for old
@@ -52,20 +73,9 @@ export function record(mode, gradeOrVerdict, evLossOrScheme, explicitSchemeId = 
     ranking_state: 'clear',
   };
   const schemeId = fullGrade ? (evLossOrScheme || currentScheme().key) : explicitSchemeId;
-  const rankingState = grade.ranking_state || 'clear';
-  const tied = pairedChoiceIsUnresolved(grade);
-  const loss = tied ? 0 : Number(grade.ev_loss) || 0;
-  const event = {
-    type: 'grade',
-    t: Date.now(),
-    v: grade.verdict,
-    r: rankingState,
-    l: Math.round(Math.max(0, loss) * 100) / 100,
-    b: grade.verdict === 'best' || tied ? 1 : 0,
-  };
   const data = load();
   const events = bucket(data, mode, schemeId);
-  events.push(event);
+  events.push(gradeEvent(grade));
   if (events.length > CAP) data[mode][schemeId] = events.slice(-CAP);
   save(data);
 }
@@ -88,7 +98,22 @@ function isGrade(event) {
 }
 
 export function summary(mode, schemeId = currentScheme().key) {
-  const events = eventsFor(mode, schemeId);
+  return summarize(eventsFor(mode, schemeId));
+}
+
+// One finished hand's grade payloads. Each row of the hand review shows a
+// pick as unranked only when it sits in the unresolved top pair, so only those
+// leave the hand's quality score; every other pick counts by its verdict.
+// ponytail: the stored totals above still drop every unresolved ranking (the
+// docs/frontend-redesign.md §5 rule); issue #118 decides whether they follow.
+export function handSummary(grades) {
+  return summarize(grades.map((grade) => ({
+    ...gradeEvent(grade),
+    r: choiceIsUnresolved(grade) ? grade.ranking_state : 'clear',
+  })));
+}
+
+function summarize(events) {
   const grades = events.filter(isGrade);
   const counts = { best: 0, good: 0, inaccuracy: 0, mistake: 0 };
   let unresolved = 0;
@@ -123,37 +148,6 @@ export function summary(mode, schemeId = currentScheme().key) {
   };
 }
 
-// Rolling quality rate over separable, category-aware grade events.
-export function accuracySeries(mode, windowSize = 10, span = 60, schemeId = currentScheme().key) {
-  const events = eventsFor(mode, schemeId)
-    .filter((event) => isGrade(event) && (!event.r || event.r === 'clear') && VERDICTS.includes(event.v))
-    .slice(-span);
-  if (events.length < 2) return [];
-  return events.map((_event, index) => {
-    const window = events.slice(Math.max(0, index - windowSize + 1), index + 1);
-    return window.filter((event) => event.v === 'best' || event.v === 'good').length / window.length;
-  });
-}
-
 export function hasLegacyStats() {
   return localStorage.getItem(LEGACY_KEY) !== null;
-}
-
-export function sparklineEl(points, width = 96, height = 26) {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('width', width);
-  svg.setAttribute('height', height);
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  if (points.length < 2) return svg;
-  const step = width / (points.length - 1);
-  const path = points
-    .map((value, index) => `${index ? 'L' : 'M'}${(index * step).toFixed(1)},${(height - 3 - value * (height - 6)).toFixed(1)}`)
-    .join(' ');
-  const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  line.setAttribute('d', path);
-  line.setAttribute('fill', 'none');
-  line.setAttribute('stroke', 'var(--gold)');
-  line.setAttribute('stroke-width', '1.5');
-  svg.append(line);
-  return svg;
 }

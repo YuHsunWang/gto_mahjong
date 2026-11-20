@@ -4,18 +4,29 @@ import { tileBackEl, tileEl, countsToTiles, faceText } from './tiles.js';
 
 const WINDS = ['東', '南', '西', '北'];
 const SEAT_ROLES = { top: '對家', right: '下家', left: '上家' };
+const phoneLayout = matchMedia('(max-width: 700px), screen and (max-width: 1000px) and (max-height: 560px) and (orientation: landscape)');
 
-function riverEl(river = [], { position = 'bottom', highlightLast = false } = {}) {
+phoneLayout.addEventListener('change', () => {
+  for (const identity of document.querySelectorAll('.seat-identity--opponent')) {
+    if (phoneLayout.matches) identity.tabIndex = 0;
+    else identity.removeAttribute('tabindex');
+    identity.classList.remove('seat-identity--pressed');
+  }
+});
+
+function riverEl(river = [], { position = 'bottom', highlightLast = false, newFrom = Infinity } = {}) {
   const el = document.createElement('div');
   el.className = `river river--${position}`;
   el.setAttribute('aria-label', `${position === 'bottom' ? '自家' : SEAT_ROLES[position]}牌河`);
   river.forEach((entry, index) => {
     const classes = entry.origin ? [entry.origin] : [];
+    const isNew = index >= newFrom;
+    if (isNew) classes.push('replay-new');
     if (highlightLast && index === river.length - 1) classes.push('cut', 'landed');
     const tile = tileEl(entry.tile, { size: 'sm', classes });
     const ordinal = index + 1;
     tile.dataset.discardNumber = String(ordinal);
-    tile.setAttribute('aria-label', `第${ordinal}張棄牌，${faceText(entry.tile)}`);
+    tile.setAttribute('aria-label', `${isNew ? '新增，' : ''}第${ordinal}張棄牌，${faceText(entry.tile)}`);
     el.append(tile);
   });
   return el;
@@ -38,7 +49,7 @@ function provenanceArrow(ownerSeat, sourceSeat, viewerSeat) {
 }
 
 function provenanceEl(detail, ownerSeat, viewerSeat) {
-  if (!detail || detail.called_from_seat === null || detail.called_from_discard_number === null) return null;
+  if (!detail || !Number.isInteger(detail.called_from_seat) || !Number.isInteger(detail.called_from_discard_number)) return null;
   const sourceSeat = detail.called_from_seat;
   const number = detail.called_from_discard_number;
   const accessible = `${WINDS[sourceSeat]}家第${number}張棄牌所鳴`;
@@ -58,7 +69,31 @@ function meldGroupEl(tiles, detail, ownerSeat, viewerSeat, className) {
   group.className = className;
   const provenance = provenanceEl(detail, ownerSeat, viewerSeat);
   if (provenance) group.append(provenance);
-  tiles.forEach((tile) => group.append(tileEl(tile, { size: 'sm' })));
+  const source = detail?.called_from_seat;
+  const knownSource = Number.isInteger(source) && source !== ownerSeat;
+  const delta = knownSource ? (source - ownerSeat + 4) % 4 : null;
+  // In the owner's view: upstream = left, opposite = middle, downstream = right.
+  const isKong = tiles.length === 4;
+  const added = isKong && detail?.kong_type === 'added' && knownSource;
+  const concealed = isKong && detail?.concealed;
+  const calledSlot = knownSource && !concealed ? ({3: 0, 2: 1, 1: added ? 2 : tiles.length - 1}[delta]) : -1;
+  const ordered = [...tiles];
+  if (calledSlot >= 0) {
+    const calledIndex = ordered.indexOf(detail.called_tile ?? detail.tile);
+    if (calledIndex >= 0) ordered.splice(calledIndex, 1);
+    ordered.splice(calledSlot, 0, detail.called_tile ?? detail.tile);
+  }
+  if (added) ordered.pop();
+  group.dataset.kongType = isKong ? (detail?.kong_type || (concealed ? 'concealed' : 'open')) : '';
+  ordered.forEach((tile, index) => {
+    const slot = document.createElement('span');
+    const called = index === calledSlot;
+    slot.className = `meld-slot${called ? ' meld-slot--called' : ''}${called && added ? ' meld-slot--stacked' : ''}`;
+    const faceDown = concealed && (ownerSeat !== viewerSeat || index === 0 || index === ordered.length - 1);
+    slot.append(faceDown ? tileBackEl({size: 'sm'}) : tileEl(tile, {size: 'sm'}));
+    if (called && added) slot.append(tileEl(tile, {size: 'sm', classes: ['added-kong-tile']}));
+    group.append(slot);
+  });
   return group;
 }
 
@@ -88,26 +123,51 @@ function identityEl(seat, {
     dealer.textContent = streak ? `莊 · 連${streak}` : '莊';
     identity.append(dealer);
   }
+  const details = you ? identity : document.createElement('span');
   if (Number.isInteger(handCount)) {
     const count = document.createElement('span');
     count.textContent = `暗手 ${handCount}`;
-    identity.append(count);
+    details.append(count);
   }
   if (exposedTileCount) {
     const count = document.createElement('span');
     count.textContent = `明牌 ${exposedTileCount} 張`;
-    identity.append(count);
+    details.append(count);
   }
-  if (declared) {
-    const lamp = document.createElement('span');
+  const lamp = declared ? document.createElement('span') : null;
+  if (lamp) {
     lamp.className = 'declared';
     lamp.textContent = '宣告';
     identity.append(lamp);
   }
-  const scoreEl = document.createElement('span');
-  scoreEl.className = 'seat-score';
-  scoreEl.textContent = score === null || score === undefined ? '分數 —' : `分數 ${score}`;
-  identity.append(scoreEl);
+  if (Number.isFinite(score)) {
+    const scoreEl = document.createElement('span');
+    scoreEl.className = 'seat-score';
+    scoreEl.textContent = `分數 ${score}`;
+    details.append(scoreEl);
+  }
+  if (!you && details.hasChildNodes()) {
+    details.className = 'seat-details';
+    identity.insertBefore(details, lamp);
+    identity.classList.add('seat-identity--opponent');
+    if (phoneLayout.matches) identity.tabIndex = 0;
+    const labels = [...identity.childNodes].flatMap(node => node === details ? [...details.children] : [node]);
+    identity.setAttribute('role', 'group');
+    identity.setAttribute('aria-label', labels.map(node => node.textContent.trim()).join('，'));
+    identity.addEventListener('pointerdown', event => {
+      if (!phoneLayout.matches || !event.isPrimary || event.button !== 0) return;
+      event.preventDefault();
+      // Let a finger sliding off the tag trigger pointerleave.
+      // Touch gives implicit capture to the hit child (wind, chip, lamp), not identity.
+      const { target } = event;
+      if (target.hasPointerCapture?.(event.pointerId)) target.releasePointerCapture(event.pointerId);
+      identity.classList.add('seat-identity--pressed');
+    });
+    for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
+      identity.addEventListener(type, () => identity.classList.remove('seat-identity--pressed'));
+    }
+    identity.addEventListener('contextmenu', event => event.preventDefault());
+  }
   return identity;
 }
 
@@ -134,7 +194,19 @@ function opponentSeatEl(positionName, opponent, viewerSeat, seatScores) {
     section.append(identityEl(0, { role: SEAT_ROLES[positionName] }));
     return section;
   }
-  const meldTileCount = (opponent.meld_details || opponent.melds || [])
+  let melds = opponent.melds || [];
+  let details = opponent.meld_details || [];
+  const kongs = opponent.kong_details || [];
+  // Quiz/trainer retain legacy danger triplets for open kongs only (an
+  // opponent's concealed kong has no triplet and a null tile, #128); the
+  // additive kong list supplies display metadata. Attack/defense already
+  // includes four-tile kong details.
+  if (kongs.length && !details.some(detail => detail.kind === 'kong')) {
+    const keep = melds.length - kongs.filter(kong => !kong.concealed).length;
+    melds = melds.slice(0, keep).concat(kongs.map(kong => Array(4).fill(kong.tile)));
+    details = details.slice(0, keep).concat(kongs.map(kong => ({...kong, tiles: Array(4).fill(kong.tile)})));
+  }
+  const meldTileCount = (details.length ? details : melds)
     .reduce((sum, meld) => sum + (meld.tiles || meld).length, 0);
   section.dataset.seat = String(opponent.seat);
   section.append(identityEl(opponent.seat, {
@@ -148,8 +220,8 @@ function opponentSeatEl(positionName, opponent, viewerSeat, seatScores) {
   }));
   const orientation = positionName === 'top' ? 'portrait' : 'landscape';
   section.append(concealedHandEl(opponent.hand_count, orientation));
-  if (opponent.melds?.length) {
-    section.append(meldsEl(opponent.melds, opponent.meld_details, opponent.seat, viewerSeat));
+  if (melds.length) {
+    section.append(meldsEl(melds, details, opponent.seat, viewerSeat));
   }
   return section;
 }
@@ -195,7 +267,7 @@ function wallBandEl(positionName, stacks) {
   return band;
 }
 
-function centerBox(position, { offeredTile = null } = {}) {
+function centerBox(position, { offeredTile = null, offeredTileChosen = false } = {}) {
   const box = document.createElement('div');
   box.className = 'center-box';
   const stats = document.createElement('div');
@@ -225,7 +297,7 @@ function centerBox(position, { offeredTile = null } = {}) {
     offered.className = 'offered';
     const label = document.createElement('span');
     label.textContent = '可鳴';
-    offered.append(label, tileEl(offeredTile, { size: 'sm', classes: ['drawn'] }));
+    offered.append(label, tileEl(offeredTile, { size: 'sm', classes: [offeredTileChosen ? 'cut' : 'drawn'] }));
     box.append(offered);
   }
   const noflower = document.createElement('div');
@@ -246,10 +318,10 @@ function coreEl(position, options) {
   const core = document.createElement('div');
   core.className = 'table-core';
   core.append(
-    riverEl(top?.river, { position: 'top' }),
-    riverEl(left?.river, { position: 'left' }),
+    riverEl(top?.river, { position: 'top', newFrom: options.newRiverFrom?.get(top?.seat) }),
+    riverEl(left?.river, { position: 'left', newFrom: options.newRiverFrom?.get(left?.seat) }),
     centerBox(position, options),
-    riverEl(right?.river, { position: 'right' }),
+    riverEl(right?.river, { position: 'right', newFrom: options.newRiverFrom?.get(right?.seat) }),
     riverEl(position.own_river, { position: 'bottom', highlightLast: options.ownRiverHighlight }),
   );
   return core;
@@ -291,7 +363,9 @@ function ownSeatEl(position, handOptions) {
 // handOptions configures the live hand embedded in the bottom band.
 export function feltEl(position, {
   offeredTile = null,
+  offeredTileChosen = false,
   ownRiverHighlight = false,
+  newRiverFrom = null,
   handOptions = {},
 } = {}) {
   const scroll = document.createElement('div');
@@ -301,7 +375,9 @@ export function feltEl(position, {
   scroll.tabIndex = 0;
 
   const felt = document.createElement('div');
-  felt.className = 'felt';
+  // Score badges need headroom above the hand; see .felt--scored.
+  const scored = Object.keys(handOptions.marks?.scores || {}).length > 0;
+  felt.className = `felt${scored ? ' felt--scored' : ''}`;
   const [right, top, left] = position.opponents || [];
   felt.append(
     opponentSeatEl('top', top, position.seat, position.seat_scores),
@@ -316,14 +392,15 @@ export function feltEl(position, {
     wallBandEl('right', wallSides?.[1] ?? wallSides),
     wallBandEl('bottom', wallSides?.[2] ?? wallSides),
     wallBandEl('left', wallSides?.[3] ?? wallSides),
-    coreEl(position, { offeredTile, ownRiverHighlight }),
+    coreEl(position, { offeredTile, offeredTileChosen, ownRiverHighlight, newRiverFrom }),
   );
   scroll.append(felt);
   return scroll;
 }
 
-// The live or standalone hand. marks supports cut, modelLeader and an array of
-// indistinguishable tile indices; only one physical copy gets each marker.
+// The live or standalone hand. marks supports cut, modelLeader, an array of
+// indistinguishable tile indices, and scores ({ tile: { text, band, mine } });
+// only one physical copy gets each marker.
 export function handEl(handCounts, {
   drawnTile = null,
   onDiscard = null,
@@ -348,6 +425,8 @@ export function handEl(handCounts, {
   let leaderMarked = false;
   const indistinguishable = new Set(marks.indistinguishable || []);
   const indistinguishableMarked = new Set();
+  const scores = marks.scores || {};
+  const scored = new Set();
   const oneTap = localStorage.getItem('mj-onetap') === '1';
 
   tiles.forEach((tile, index) => {
@@ -375,6 +454,22 @@ export function handEl(handCounts, {
     }
     const el = tileEl(tile, { size: 'lg', classes, as: onDiscard ? 'button' : 'div' });
     el.dataset.tile = String(tile);
+    const score = scores[tile];
+    if (score && !scored.has(tile)) {
+      scored.add(tile);
+      row.classList.add('has-scores');
+      const badge = document.createElement('span');
+      badge.className = `tile-score ${score.band}`;
+      badge.textContent = score.text;
+      el.append(badge);
+      if (score.mine) {
+        const mine = document.createElement('span');
+        mine.className = 'tile-mine';
+        mine.textContent = '我';
+        el.append(mine);
+      }
+      el.setAttribute('aria-label', `${faceText(tile)} ${score.text}${score.mine ? ' 我' : ''}`);
+    }
     if (onDiscard) {
       el.addEventListener('click', () => {
         if (oneTap || lifted === el) {

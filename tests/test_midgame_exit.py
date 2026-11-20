@@ -39,6 +39,15 @@ def test_legacy_corpus_golden_output():
     # Captured on this branch before adding stratification, including full
     # states, selected indices, original payoffs, and seed draw order.
     data = [case_document(case) for case in build_corpus(6, 1)]
+    # Compare the historical game state without the additive display metadata.
+    # Full kong metadata is checked independently in test_meld_provenance.
+    for case in data:
+        for player in case["state"]["players"]:
+            for kong in player["kongs"]:
+                if isinstance(kong, dict):
+                    if kong.pop("kong_type", None) == "added":
+                        kong["called_from_seat"] = None
+                        kong["called_from_discard_number"] = None
     assert hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest() == "f2feb1658cbbad5c6a20a0f41a110ff81494ccc1cb7b2bc961d15df6a0d6234f"
 
 
@@ -219,7 +228,7 @@ def test_features_match_public_fold_scores_and_efficiency(cases):
         assert features["safest_danger"] == danger[safe] == min(danger.values())
         assert features["attack_danger_rank"] == 1 + sum(value < danger[attack] for value in danger.values())
         assert features["max_opponent_tenpai_score"] == max(tenpai_score(opponent).score for _, opponent in obs.opponents)
-        assert features["opponent_melds"] == sum(len(opponent.melds) for _, opponent in obs.opponents)
+        assert features["opponent_melds"] == sum(opponent.set_count for _, opponent in obs.opponents)
         assert features["wall_remaining"] == len(case.state.wall)
         assert features["stage"] == case.stage
         assert features["attack_is_drawn"] == (attack == obs.drawn_tile)

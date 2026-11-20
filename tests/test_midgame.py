@@ -13,7 +13,7 @@ import pytest
 spec = importlib.util.spec_from_file_location("midgame_deviation_check", Path(__file__).resolve().parents[1] / "scripts" / "midgame_deviation_check.py")
 cli = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cli)
-from taimahjong.danger import RiverEntry, rank_discards
+from taimahjong.danger import DeclaredKong, RiverEntry, rank_discards
 from taimahjong.midgame_corpus import (
     MidgameCase, build_corpus, case_document, case_from_document, sample_case, stage_for,
 )
@@ -31,6 +31,10 @@ ATTACK = ("attack",) * 4
 MIXED = ("attack", "cautious", "attack", "cautious")
 
 def _stable(value):
+    # The historical game golden excludes the newly retained pon provenance.
+    # The complete metadata is asserted separately in test_meld_provenance.
+    if isinstance(value, DeclaredKong) and value.kong_type == "added":
+        return replace(value, called_from_seat=None, called_from_discard_number=None)
     # Python 3.12 changed float sum() rounding, so danger scores differ in the last bit by version.
     if isinstance(value, float):
         return round(value, 9)

@@ -23,11 +23,18 @@ def main():
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             try:
-                for width, height in ((320, 568), (375, 812), (390, 844), (844, 390)):
+                for width, height in ((844, 390), (740, 360), (667, 375)):
                     assert check_page(browser, url, width, height, "attack-defense")
+                shot = browser.new_page(viewport={"width": 1280, "height": 900})
+                shot.add_init_script('Math.random = () => 0;')
+                shot.goto(url + '/#/attack-defense')
+                shot.locator('.felt').wait_for()
+                shot.evaluate('scrollTo(0, 0)')
+                shot.screenshot(path=str(ROOT / '.shots/r9-A-attack-defense-1280.png'), full_page=True)
+                shot.close()
                 # Intersecting sets, disjoint sets, and a non-first attack tie.
                 for game, selection, attack, defense in ((1, 2, 33, 33), (3, 4, 29, 26), (5, 6, 14, 1)):
-                    context = browser.new_context(viewport={"width": 390, "height": 844})
+                    context = browser.new_context(viewport={"width": 844, "height": 390})
                     try:
                         page = context.new_page()
                         errors = []
@@ -42,6 +49,9 @@ def main():
                         page.goto(f"{url}/#/attack-defense")
                         tiles = page.locator(".seat--bottom .handrow button.tile")
                         tiles.first.wait_for()
+                        bars = page.locator('.river .tile.tsumogiri, .river .tile.tedashi')
+                        assert bars.count() > 0
+                        assert bars.evaluate_all("tiles => tiles.every(tile => getComputedStyle(tile, '::after').content === '\"\"')")
                         count = tiles.count()
                         page.locator(
                             f'.seat--bottom .handrow button.tile[data-tile="{attack}"]',
@@ -67,14 +77,15 @@ def main():
                         assert not errors, errors
                         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                         page.evaluate("localStorage.setItem('mj-scheme', '5-2')")
-                        page.get_by_role("link", name="‹ 首頁").click()
-                        card = page.locator('a.card[href="#/attack-defense"]')
+                        page.get_by_role("link", name="‹ 大廳").click()
+                        card = page.locator('.lobby a[href="#/attack-defense"]')
                         assert "已答 2 次選牌" in card.inner_text()
                         print(f"seeds={game}/{selection}: PASS two taps, grading, overlap, recommendation, isolated stats", flush=True)
                     finally:
                         context.close()
             finally:
                 browser.close()
+        print("Attack-defense: PASS (3 landscape viewports; origin bars; two-tap grading)", flush=True)
         return 0
     finally:
         process.terminate()

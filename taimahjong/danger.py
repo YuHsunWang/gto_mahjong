@@ -7,7 +7,7 @@ probability of a deal-in.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from math import ceil, sqrt
 
@@ -143,7 +143,13 @@ class DeclaredKong:
     called_from_seat: int | None = None
     called_from_discard_number: int | None = None
 
+    kong_type: str | None = field(default=None, repr=False)
+
     def __post_init__(self) -> None:
+        if self.kong_type is None:
+            object.__setattr__(self, "kong_type", "concealed" if self.concealed else "open")
+        if self.kong_type not in ("open", "added", "concealed") or (self.kong_type == "concealed") != self.concealed:
+            raise ValueError("kong_type must agree with concealed flag")
         _validate_kong_tiles((self.tile, self.concealed))
         if self.called_from_seat is None and self.called_from_discard_number is None:
             return
@@ -229,9 +235,18 @@ class OpponentView:
     # Total discards made, including tiles subsequently called out of the river.
     # Older callers that only know the river retain a usable public estimate.
     discard_count: int | None = None
-    # How many of ``melds`` are concealed kongs shown as triplets. A concealed
+    # Concealed kongs held, NOT included in ``melds``: their tile is hidden
+    # information, so models only see that a set exists (#128). A concealed
     # kong is not a call, so it may coexist with a migi declaration.
     concealed_kongs: int = 0
+    # Display metadata only; numerical callers must not read it (it carries
+    # concealed-kong tiles; the API redacts them for opponents).
+    kongs: tuple[KongLike, ...] = ()
+
+    @property
+    def set_count(self) -> int:
+        """Declared sets: called melds plus hidden concealed kongs."""
+        return len(self.melds) + self.concealed_kongs
 
     def __post_init__(self) -> None:
         if self.discard_count is None:
@@ -255,9 +270,10 @@ class OpponentView:
         if (
             not isinstance(self.concealed_kongs, int)
             or isinstance(self.concealed_kongs, bool)
-            or not 0 <= self.concealed_kongs <= len(self.melds)
+            or not 0 <= self.concealed_kongs <= 5
         ):
-            raise ValueError("concealed_kongs must be an integer between 0 and the meld count")
+            # Taiwanese hands have five sets, so all five may be concealed kongs.
+            raise ValueError("concealed_kongs must be an integer from 0 through 5")
         if isinstance(self.river, list):
             self.river = [RiverEntry(entry) if _is_tile(entry) else entry for entry in self.river]
 
@@ -275,7 +291,7 @@ class OpponentView:
         if self.declared_at is not None:
             if self.declared_at >= len(self.river):
                 raise ValueError("declared_at must index a discard in the opponent river")
-            if len(self.melds) > self.concealed_kongs:
+            if self.melds:
                 raise ValueError("a migi declaration cannot follow a called meld")
         public = [0] * 34
         for entry in self.river:
@@ -692,7 +708,7 @@ def tenpai_score(opponent: OpponentView, turn: int | None = None) -> TenpaiAsses
     if opponent.declared_at is not None:
         return TenpaiAssessment(1.0, {"declared": True}, False)
 
-    meld_count = len(opponent.melds)
+    meld_count = opponent.set_count
     meld_base = TENPAI_BASE_BY_MELDS[min(meld_count, len(TENPAI_BASE_BY_MELDS) - 1)]
     turn_component = min(turn, TENPAI_TURN_CAP) * TENPAI_TURN_INCREMENT
     run = _trailing_tsumogiri_run(opponent.river)
