@@ -39,8 +39,7 @@ function tokenFor(decision, feedback) {
 function outcomeTitle(decision) {
   if (decision.outcome === 'draw') return '流局';
   if (decision.human_won) return decision.outcome === 'tsumo' ? '自摸' : '胡牌';
-  if (decision.robbed_kong) return '被搶槓';
-  if (decision.human_dealt_in) return '放槍';
+  if (decision.human_dealt_in) return decision.robbed_kong ? '被搶槓' : '放槍';
   return decision.outcome === 'tsumo' ? '對手自摸' : '別家胡牌';
 }
 
@@ -230,7 +229,7 @@ export function trainerScreen(root) {
     history.forEach(({ decision, feedback: grade }, index) => {
       // The verdict line the player saw decides the pill, so an unresolved
       // top-pair pick shows here exactly as it did live.
-      const seen = gradeVerdictEl(grade, '', grade.chosen_tile ?? null);
+      const seen = gradeVerdictEl(grade, '');
       const verdict = seen.classList[1];
       const unresolved = verdict === 'unresolved';
       const label = VERDICT_LABELS[grade.verdict] || grade.verdict;

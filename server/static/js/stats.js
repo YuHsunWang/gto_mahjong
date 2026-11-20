@@ -35,15 +35,23 @@ function bucket(data, mode, schemeId) {
   return data[mode][schemeId];
 }
 
-function pairedChoiceIsUnresolved(grade) {
-  if ((grade.ranking_state || 'clear') === 'clear' || !grade.top1_vs_top2 || !grade.chosen) return false;
-  const chosen = grade.chosen.discard;
-  return chosen === grade.top1_vs_top2.top_discard
-    || chosen === grade.top1_vs_top2.runner_up_discard;
+// The one rule for "this pick is unranked": the ranking is not clear and the
+// player's own choice is one of the actions the model cannot tell apart. A
+// discard grade names that pair in top1_vs_top2; a call or kong grade lists
+// the option indices (null = pass) in indistinguishable_indices.
+export function choiceIsUnresolved(grade) {
+  if (!grade || (grade.ranking_state || 'clear') === 'clear') return false;
+  if (grade.kind === 'call' || grade.kind === 'kong') {
+    return (grade.indistinguishable_indices || []).includes(grade.choice);
+  }
+  const gap = grade.top1_vs_top2;
+  const chosen = grade.chosen?.discard;
+  return Boolean(gap) && chosen !== undefined
+    && (chosen === gap.top_discard || chosen === gap.runner_up_discard);
 }
 
 function gradeEvent(grade) {
-  const tied = pairedChoiceIsUnresolved(grade);
+  const tied = choiceIsUnresolved(grade);
   const loss = tied ? 0 : Number(grade.ev_loss) || 0;
   return {
     type: 'grade',
@@ -101,7 +109,7 @@ export function summary(mode, schemeId = currentScheme().key) {
 export function handSummary(grades) {
   return summarize(grades.map((grade) => ({
     ...gradeEvent(grade),
-    r: pairedChoiceIsUnresolved(grade) ? grade.ranking_state : 'clear',
+    r: choiceIsUnresolved(grade) ? grade.ranking_state : 'clear',
   })));
 }
 

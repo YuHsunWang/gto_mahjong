@@ -2,6 +2,7 @@
 
 import { faceText, tileEl } from './tiles.js';
 import { withCoach } from './sparrow-coach.js';
+import { choiceIsUnresolved } from './stats.js';
 
 export const VERDICT_LABELS = {
   best: '模型領先',
@@ -70,10 +71,10 @@ export function verdictEl(verdict, marginal, evDelta, text, {
 
 // The verdict line for one graded decision; a pick inside an unresolved top
 // pair shows as unranked, the same way the live feedback does.
-export function gradeVerdictEl(grade, text, chosenTile = null) {
+export function gradeVerdictEl(grade, text) {
   return verdictEl(grade.verdict, grade.marginal, grade.ev_delta, text, {
     rankingState: grade.ranking_state || 'clear',
-    chosenInTopPair: chosenTile !== null && Boolean(topPairContains(grade, chosenTile)),
+    chosenInTopPair: choiceIsUnresolved(grade),
   });
 }
 
@@ -374,8 +375,7 @@ export function qualitySummaryEl(session, metadata, {
 
 function currentEvidenceEl(grade) {
   if (!grade?.chosen) return null;
-  const unresolvedTopPair = (grade.ranking_state || 'clear') !== 'clear'
-    && topPairContains(grade, grade.chosen.discard);
+  const unresolvedTopPair = choiceIsUnresolved(grade);
   const evidence = document.createElement('div');
   evidence.className = 'current-evidence';
   [
@@ -442,9 +442,9 @@ const BAND_LABELS = Object.fromEntries(
 
 // The rail's headline: a verdict seal, the choice, and the gap to the leader.
 // A pick inside an unresolved top pair gets ≈ and no number, as in verdictEl.
-function headlineEl(grade, text, chosenTile) {
+function headlineEl(grade, text) {
   const state = grade.ranking_state || 'clear';
-  const unresolved = state !== 'clear' && chosenTile !== null && Boolean(topPairContains(grade, chosenTile));
+  const unresolved = choiceIsUnresolved(grade);
   const el = document.createElement('div');
   el.className = `verdict verdict--seal ${unresolved ? 'unresolved' : grade.verdict}`;
   const seal = document.createElement('span');
@@ -540,7 +540,6 @@ export function reviewRailEl({
     current.append(headlineEl(
       grade,
       choiceText || (effectiveChosen === null ? '本次選擇' : `你打 ${faceText(effectiveChosen)}`),
-      effectiveChosen,
     ));
     const mistake = mistakeLabelEl(grade);
     if (mistake) current.append(mistake);
@@ -574,7 +573,7 @@ export function reviewRailEl({
   } else {
     const empty = document.createElement('p');
     empty.className = 'review-empty';
-    empty.textContent = '做出這一手的決定後，講評會出現在這裡。';
+    empty.textContent = '出牌後看講評。';
     rail.append(empty);
   }
 
