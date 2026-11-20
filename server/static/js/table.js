@@ -4,6 +4,15 @@ import { tileBackEl, tileEl, countsToTiles, faceText } from './tiles.js';
 
 const WINDS = ['東', '南', '西', '北'];
 const SEAT_ROLES = { top: '對家', right: '下家', left: '上家' };
+const phoneLayout = matchMedia('(max-width: 700px), screen and (max-width: 1000px) and (max-height: 560px) and (orientation: landscape)');
+
+phoneLayout.addEventListener('change', () => {
+  for (const identity of document.querySelectorAll('.seat-identity--opponent')) {
+    if (phoneLayout.matches) identity.tabIndex = 0;
+    else identity.removeAttribute('tabindex');
+    identity.classList.remove('seat-identity--pressed');
+  }
+});
 
 function riverEl(river = [], { position = 'bottom', highlightLast = false } = {}) {
   const el = document.createElement('div');
@@ -112,26 +121,49 @@ function identityEl(seat, {
     dealer.textContent = streak ? `莊 · 連${streak}` : '莊';
     identity.append(dealer);
   }
+  const details = you ? identity : document.createElement('span');
   if (Number.isInteger(handCount)) {
     const count = document.createElement('span');
     count.textContent = `暗手 ${handCount}`;
-    identity.append(count);
+    details.append(count);
   }
   if (exposedTileCount) {
     const count = document.createElement('span');
     count.textContent = `明牌 ${exposedTileCount} 張`;
-    identity.append(count);
+    details.append(count);
   }
-  if (declared) {
-    const lamp = document.createElement('span');
+  const lamp = declared ? document.createElement('span') : null;
+  if (lamp) {
     lamp.className = 'declared';
     lamp.textContent = '宣告';
     identity.append(lamp);
   }
-  const scoreEl = document.createElement('span');
-  scoreEl.className = 'seat-score';
-  scoreEl.textContent = score === null || score === undefined ? '分數 —' : `分數 ${score}`;
-  identity.append(scoreEl);
+  if (Number.isFinite(score)) {
+    const scoreEl = document.createElement('span');
+    scoreEl.className = 'seat-score';
+    scoreEl.textContent = `分數 ${score}`;
+    details.append(scoreEl);
+  }
+  if (!you && details.hasChildNodes()) {
+    details.className = 'seat-details';
+    identity.insertBefore(details, lamp);
+    identity.classList.add('seat-identity--opponent');
+    if (phoneLayout.matches) identity.tabIndex = 0;
+    const labels = [...identity.childNodes].flatMap(node => node === details ? [...details.children] : [node]);
+    identity.setAttribute('role', 'group');
+    identity.setAttribute('aria-label', labels.map(node => node.textContent.trim()).join('，'));
+    identity.addEventListener('pointerdown', event => {
+      if (!phoneLayout.matches || !event.isPrimary || event.button !== 0) return;
+      event.preventDefault();
+      // Let a finger sliding off the tag trigger pointerleave.
+      if (identity.hasPointerCapture(event.pointerId)) identity.releasePointerCapture(event.pointerId);
+      identity.classList.add('seat-identity--pressed');
+    });
+    for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
+      identity.addEventListener(type, () => identity.classList.remove('seat-identity--pressed'));
+    }
+    identity.addEventListener('contextmenu', event => event.preventDefault());
+  }
   return identity;
 }
 
