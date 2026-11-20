@@ -156,7 +156,9 @@ function identityEl(seat, {
       if (!phoneLayout.matches || !event.isPrimary || event.button !== 0) return;
       event.preventDefault();
       // Let a finger sliding off the tag trigger pointerleave.
-      if (identity.hasPointerCapture(event.pointerId)) identity.releasePointerCapture(event.pointerId);
+      // Touch gives implicit capture to the hit child (wind, chip, lamp), not identity.
+      const { target } = event;
+      if (target.hasPointerCapture?.(event.pointerId)) target.releasePointerCapture(event.pointerId);
       identity.classList.add('seat-identity--pressed');
     });
     for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
