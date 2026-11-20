@@ -659,6 +659,10 @@ def test_human_added_kong_can_be_robbed_and_skip_reaches_discard(monkeypatch):
     assert outcome.robbed_kong is True
     assert outcome.human_dealt_in is True
     assert outcome.headline == "被搶槓…"
+    # Another player's kong robbed (#125): the human paid nothing, so the
+    # headline must not blame them with 被搶槓.
+    from dataclasses import replace
+    assert replace(outcome, human_dealt_in=False).headline == "對手被別家胡（座位 1）"
 
 
 # --- M4: 連莊 state machine and dealer-aware trainer positions ---

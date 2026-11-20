@@ -67,7 +67,7 @@ COMPONENTS = """async () => {
   const results = [];
   for (const item of cases) {
     const grade = {verdict: item.verdict, marginal: true, ev_delta: .25, ranking_state: item.state,
-      top1_vs_top2: {top_discard: 1, runner_up_discard: 2}};
+      chosen: {discard: item.tile}, top1_vs_top2: {top_discard: 1, runner_up_discard: 2}};
     const text = '你打 二萬';
     const expected = item.state !== 'clear' && item.tile === 1 ? 'content'
       : ({best:'happy', good:'content', inaccuracy:'puzzled', mistake:'frown'}[item.verdict] || 'content');
@@ -84,7 +84,8 @@ COMPONENTS = """async () => {
     for (const [index, [node, old]] of variants.entries()) {
       if (node.textContent !== old.textContent) throw Error('feedback copy changed: ' + JSON.stringify(item));
       const face = node.querySelector('.coach-avatar').dataset.expression;
-      const effective = index === 3 ? ({best:'happy', good:'content', inaccuracy:'puzzled', mistake:'frown'}[item.verdict] || 'content') : expected;
+      // Every variant reads the pick from grade.chosen, as real payloads carry it.
+      const effective = expected;
       if (face !== effective) throw Error('wrong expression: ' + JSON.stringify({item,index,face,effective}));
       const art = node.querySelector('.coach-avatar');
       const paths = [...art.querySelectorAll('path')].map(path => path.getAttribute('d'));

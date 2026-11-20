@@ -31,11 +31,33 @@ LONG = 180000
 
 
 def _tied(grade):
-    """Pick inside an unresolved top pair: shown unranked, no loss charged."""
+    """Pick inside an unresolved top pair: shown unranked, no loss charged.
+
+    Mirrors choiceIsUnresolved in stats.js: a call or kong is tied when its
+    choice (None = pass) is among indistinguishable_indices."""
+    if grade.get("ranking_state", "clear") == "clear":
+        return False
+    if grade["kind"] in ("call", "kong"):
+        return grade["choice"] in grade.get("indistinguishable_indices", [])
     pair = grade.get("top1_vs_top2")
     chosen = grade.get("chosen_tile")
-    return (grade.get("ranking_state", "clear") != "clear" and pair is not None and chosen is not None
-            and chosen in (pair["top_discard"], pair["runner_up_discard"]))
+    return pair is not None and chosen is not None and chosen in (pair["top_discard"], pair["runner_up_discard"])
+
+
+# A call the model cannot rank against its runner-up must show ≈, never the
+# 模型領先 seal (#125). Seed 1 may not produce one, so feed the modules one.
+CALL_TIE = """async () => {
+  const { gradeVerdictEl } = await import('/js/feedback.js');
+  const { choiceIsUnresolved } = await import('/js/stats.js');
+  const base = { kind: 'call', verdict: 'best', marginal: false, ev_delta: 0, ev_loss: 0 };
+  const tied = { ...base, choice: null, ranking_state: 'uncertain', indistinguishable_indices: [0, null] };
+  const clear = { ...base, choice: 1, ranking_state: 'uncertain', indistinguishable_indices: [0, null] };
+  const read = (grade) => {
+    const el = gradeVerdictEl(grade, '');
+    return { cls: el.className, badge: el.querySelector('.badge').textContent, rule: choiceIsUnresolved(grade) };
+  };
+  return { tied: read(tied), clear: read(clear) };
+}"""
 
 
 VERDICT_LABELS = {"best": "模型領先", "good": "正確", "inaccuracy": "小失誤", "mistake": "失誤"}
@@ -185,6 +207,10 @@ def run(browser, url, shots):
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.add_init_script("localStorage.setItem('mj-onetap', '1'); localStorage.setItem('mj-scheme', '3-1');")
         page.goto(f"{url}/#/trainer")
+        call = page.evaluate(CALL_TIE)
+        assert call["tied"]["rule"] and "unresolved" in call["tied"]["cls"].split() \
+            and call["tied"]["badge"].startswith("≈") and "模型領先" not in call["tied"]["badge"], call
+        assert not call["clear"]["rule"] and "unresolved" not in call["clear"]["cls"].split(), call
         page.locator("#tr-seed").fill(str(SEED))
         page.get_by_role("button", name="開始新局").click()
         grades = play_hand(page)
