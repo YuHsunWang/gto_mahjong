@@ -224,6 +224,13 @@ def test_danger_lesson_answer_agrees_with_production_trainer_ranking(lesson):
     assert comparison.best.discard == result.best.discard
     assert comparison.ranking_state == "clear"
     assert comparison.ev_delta > 0.3
+    # The lesson text quotes these: ~13% tenpai each, ~72% vs ~15% win, ~7 pts
+    # per win, loss ~1 vs ~3 because breaking tenpai lengthens the exposure.
+    attack, broken = result.best, comparison.chosen
+    assert all(abs(op.tenpai_estimate - 0.13) < 0.01 for op in result.position.opponents)
+    assert abs(attack.p_win - 0.72) < 0.02 and abs(broken.p_win - 0.15) < 0.02
+    assert round(attack.mean_win_value) == 7
+    assert round(attack.risk_ev) == 1 and round(broken.risk_ev) == 3
 
 
 def test_danger_positions_have_distinct_hands_and_real_attack_defense_tradeoffs():

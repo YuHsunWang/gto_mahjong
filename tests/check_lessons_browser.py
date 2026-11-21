@@ -69,7 +69,7 @@ def main():
                                 assert page.get_by_text("你的副露", exact=True).count() == 0
                                 assert page.locator(".lesson-tiles").nth(0).locator(".tile").count() == 17
                                 assert page.locator(".lesson-river").count() == 4
-                                assert page.locator(".lesson-river .note").filter(has_text="未宣告").count() == 3
+                                assert page.locator(".lesson-river .note").filter(has_text="未報聽").count() == 3
                                 assert page.locator(".evtable").count() == 0
                                 assert not ukeire_calls
                                 if width == 390:
@@ -84,8 +84,8 @@ def main():
                         page.get_by_role("heading", name="聽牌了，別為了怕放槍就下車", exact=True).wait_for()
                         page.reload()
                         page.get_by_role("heading", name="聽牌了，別為了怕放槍就下車", exact=True).wait_for()
-                        assert page.locator(".lesson-river .note").filter(has_text="未宣告").count() == 3
-                        assert page.locator(".lesson-points p").count() == 3
+                        assert page.locator(".lesson-river .note").filter(has_text="未報聽").count() == 3
+                        assert page.locator(".lesson-points p").count() == 4
                         assert page.locator(".evtable").count() == 0
                         assert not ukeire_calls
                         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

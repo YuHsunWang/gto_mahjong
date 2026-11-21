@@ -136,7 +136,7 @@ function lessonScreen(root, lesson, backToList) {
       const label = document.createElement('div');
       label.className = 'note';
       label.textContent = opponent.seat === lesson.seat ? '你的牌河'
-        : `對手 ${opponent.seat}：${opponent.declared_at == null ? '未宣告' : `已宣告聽牌（第 ${opponent.declared_at + 1} 張棄牌）`}`;
+        : `對手 ${opponent.seat}：${opponent.declared_at == null ? '未報聽' : `已報聽（第 ${opponent.declared_at + 1} 張棄牌）`}`;
       river.append(label, tileRow(opponent.river));
       root.append(river);
     });
