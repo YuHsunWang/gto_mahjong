@@ -727,7 +727,7 @@ export function trainerScreen(root) {
       const notice = document.createElement('div');
       notice.className = 'note';
       notice.setAttribute('role', 'status');
-      notice.textContent = '已自動宣告聽牌（之後自動摸切）';
+      notice.textContent = '已自動報聽（之後自動摸切）';
       root.append(notice);
     }
     if (phase === 'acting') {

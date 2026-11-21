@@ -137,7 +137,7 @@ function identityEl(seat, {
   const lamp = declared ? document.createElement('span') : null;
   if (lamp) {
     lamp.className = 'declared';
-    lamp.textContent = '宣告';
+    lamp.textContent = '報聽';
     identity.append(lamp);
   }
   if (Number.isFinite(score)) {

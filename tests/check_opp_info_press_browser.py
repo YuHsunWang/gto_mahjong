@@ -58,7 +58,7 @@ def check(browser, url, width, height, phone):
             assert not any(item.is_visible() for item in items), f'{side} details visible after release'
 
         top = page.locator('.seat--top .seat-identity')
-        for label in ('莊 · 連2', '宣告'):
+        for label in ('莊 · 連2', '報聽'):
             assert top.get_by_text(label, exact=True).is_visible(), f'top tag lost {label}'
         if phone:
             details = top.locator('.seat-details')
