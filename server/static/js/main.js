@@ -38,7 +38,7 @@ const MODES = [
   { hash: '#/quiz', chars: '單手', desc: '只考最關鍵的那一手。', statsKey: 'quiz' },
   { hash: '#/endgame', chars: '殘局', desc: '牌快摸完了，要衝還是要守。', statsKey: 'endgame' },
   { hash: '#/attack-defense', chars: '攻守', desc: '同一手牌，先選進攻，再選防守。', statsKey: 'attack-defense' },
-  { hash: '#/lessons', chars: '教學', desc: '孤張、聽牌、吃碰取捨，四堂短課。', statsKey: null },
+  { hash: '#/lessons', chars: '教學', desc: '牌效與攻守觀念，六堂短課。', statsKey: null },
 ];
 
 function statsLine(statsKey) {
@@ -181,7 +181,9 @@ document.addEventListener('click', (event) => {
 }, true);
 
 function route() {
-  const screen = ROUTES[window.location.hash] || homeScreen;
+  const screen = window.location.hash.startsWith('#/lessons/')
+    ? (root) => lessonsScreen(root, window.location.hash.slice('#/lessons/'.length))
+    : ROUTES[window.location.hash] || homeScreen;
   app.classList.toggle('app--table', TABLE_ROUTES.includes(window.location.hash));
   app.classList.toggle('app--home', screen === homeScreen);
   if (!TABLE_ROUTES.includes(location.hash)) void exitTableFullscreen();

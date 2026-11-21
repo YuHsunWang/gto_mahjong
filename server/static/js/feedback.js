@@ -13,7 +13,7 @@ export const VERDICT_LABELS = {
 
 const FOLD_PRINCIPLES = {
   defensive_continuation_each_turn: '每巡都依當下公開資訊繼續防守',
-  genbutsu_first: '宣告對手現物優先',
+  genbutsu_first: '報聽對手現物優先',
   minimum_conditional_loss_each_turn: '每巡依新公開資訊重算條件損失',
   preserve_safe_inventory: '保留重複安全牌，供後續巡目使用',
 };
@@ -92,6 +92,18 @@ function mistakeLabelEl(grade) {
   return el;
 }
 
+function lessonLinkEl(grade) {
+  const lesson = grade?.matched_lesson;
+  if (!lesson) return null;
+  const el = document.createElement('div');
+  el.className = 'note lesson-link';
+  const link = document.createElement('a');
+  link.href = `#/lessons/${encodeURIComponent(lesson.id)}`;
+  link.textContent = `去看這一課：${lesson.title}`;
+  el.append(link);
+  return el;
+}
+
 function cell(text, tag = 'td') {
   const el = document.createElement(tag);
   el.textContent = text;
@@ -149,8 +161,8 @@ function defensePlanEl(entry) {
   const safe = document.createElement('div');
   const inventory = Array.isArray(plan.safe_inventory) ? plan.safe_inventory : [];
   safe.textContent = inventory.length
-    ? `已宣告對手的安全牌庫存：${inventory.map(faceText).join('、')}`
-    : '目前沒有可由宣告資訊確認的安全牌庫存。';
+    ? `已報聽對手的安全牌庫存：${inventory.map(faceText).join('、')}`
+    : '目前沒有可由報聽資訊確認的安全牌庫存。';
   box.append(title, list, safe);
   return box;
 }
@@ -167,9 +179,9 @@ function localizeExplain(explain) {
     .replace(/matches the best's (higher|lower) win-EV component\./g,
       (_, direction) => `胡牌預期得分與模型領先牌同樣較${direction === 'higher' ? '高' : '低'}。`)
     .replace(/SAFE\(declared\) vs Opponent (\d+) compared with the next-ranked choice\./g,
-      (_, seat) => `相較下一順位，對手 ${seat} 已宣告的資訊顯示這張牌安全。`)
+      (_, seat) => `相較下一順位，對手 ${seat} 已報聽的資訊顯示這張牌安全。`)
     .replace(/matches the best's SAFE\(declared\) read vs Opponent (\d+)\./g,
-      (_, seat) => `你打的牌也符合對手 ${seat} 已宣告的安全牌資訊。`)
+      (_, seat) => `你打的牌也符合對手 ${seat} 已報聽的安全牌資訊。`)
     .replace(/(higher|lower) expected loss vs Opponent (\d+) by ([\d.]+) tai than the next-ranked choice\./g,
       (_, direction, seat, amount) => `相較下一順位，對手 ${seat} 造成的預期損失${direction === 'higher' ? '多' : '少'} ${amount} 台。`)
     .replace(/matches the best's (higher|lower)-loss component vs Opponent (\d+)\./g,
@@ -179,7 +191,7 @@ function localizeExplain(explain) {
     .replace(/(higher|lower) win EV by ([\d.]+) tai\./g,
       (_, direction, amount) => `胡牌預期得分${direction === 'higher' ? '高' : '低'} ${amount} 台。`)
     .replace(/SAFE\(declared\) vs Opponent (\d+)\./g,
-      (_, seat) => `對手 ${seat} 已宣告的資訊顯示這張牌安全。`)
+      (_, seat) => `對手 ${seat} 已報聽的資訊顯示這張牌安全。`)
     .replace(/(higher|lower) expected loss vs Opponent (\d+) by ([\d.]+) tai\./g,
       (_, direction, seat, amount) => `對手 ${seat} 造成的預期損失${direction === 'higher' ? '多' : '少'} ${amount} 台。`);
 }
@@ -543,6 +555,8 @@ export function reviewRailEl({
     ));
     const mistake = mistakeLabelEl(grade);
     if (mistake) current.append(mistake);
+    const lesson = lessonLinkEl(grade);
+    if (lesson) current.append(lesson);
     rail.append(current);
     const banner = rankingBannerEl(grade);
     if (banner) rail.append(banner);

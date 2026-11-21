@@ -77,7 +77,7 @@ export function analyzeScreen(root) {
   form.append(field('手牌（17 張，例 123m45p…）', hand, 'an-hand'), previewStrip(hand));
   form.append(field('對手河（可用 * 摸切 / . 手切）', river, 'an-river'));
   form.append(field('對手副露（以 ; 分隔）', melds, 'an-melds'));
-  form.append(field('宣告位置（河的索引，可留白）', declared, 'an-declared'));
+  form.append(field('報聽位置（河的索引，可留白）', declared, 'an-declared'));
   form.append(field('其他可見牌', visible, 'an-visible'));
   const advanced = document.createElement('div');
   advanced.className = 'field-row';
@@ -158,7 +158,7 @@ export function scoreScreen(root) {
 
   const toggles = document.createElement('div');
   const flags = {};
-  [['self_draw', '自摸'], ['dealer', '莊家'], ['migi', '宣告聽牌（migi）'], ['heavenly', '天胡'], ['earthly', '地胡']].forEach(([key, label]) => {
+  [['self_draw', '自摸'], ['dealer', '莊家'], ['migi', '報聽（migi）'], ['heavenly', '天胡'], ['earthly', '地胡']].forEach(([key, label]) => {
     const wrap = document.createElement('label');
     wrap.className = 'check';
     const box = document.createElement('input');
