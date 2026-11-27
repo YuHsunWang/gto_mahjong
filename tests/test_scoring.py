@@ -53,6 +53,14 @@ def test_ron_completed_triplet_is_not_concealed():
     assert tsumo.total_tai == 7  # 門清 1 + 自摸 1 + 四暗刻 5
 
 
+def test_kind_used_up_by_own_kong_is_not_a_second_wait():
+    # 23m waits on 1m/4m, but a concealed 1m kong holds all four 1m, so 4m is
+    # the only tile that can complete the hand: that is a 獨聽 (+1).
+    hand = list(parse_tiles("234m111222333p44z"))
+    result = score_hand(hand, context=WinContext(_tile("4m")), kongs=[(_tile("1m"), True)])
+    assert dict(result.items).get("single wait (獨聽)") == 1
+
+
 def test_all_called_single_wait_ron():
     melds = [(0, 1, 2), (12, 13, 14), (24, 25, 26), (27, 27, 27), (31, 31, 31)]
     hand = parse_tiles("22z")

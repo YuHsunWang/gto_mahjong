@@ -728,7 +728,7 @@ def _settlement(
             migi_declared=players[winner].declared,
             kong_bloom=kong_bloom,
             robbed_kong=robbed_kong,
-            last_tile=wall_remaining == 0 and not kong_bloom and not robbed_kong,
+            last_tile=wall_remaining == 0 and not robbed_kong,
             rules=rules,
         ),
         tuple(players[winner].kongs),
@@ -985,13 +985,16 @@ def play_game(
                             kongs=tuple(players[robber].kongs), robbed_kong=True, kong_log=tuple(kong_log),
                         )
                 kong_log.append((current, kind_tile, concealed))
+                # 海底 on a bloom only when this kong's backfill took the last live tile.
+                bloom_wall = len(wall) - KONG_DEAD_WALL_BACKFILL_TILES if wall else None
                 drawn_tile = _declare_kong(player, kind_tile, concealed, dead, wall)
                 live_draw = False
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                     winning_hand = tuple(player.hand)
                     points, value = _settlement(
-                        "tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme, kong_bloom=True, rules=rules,
+                        "tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme, kong_bloom=True,
+                        wall_remaining=bloom_wall, rules=rules,
                     )
                     return GameResult(
                         events, "tsumo", current, None, actions, winning_hand, _declared(player), points, value,

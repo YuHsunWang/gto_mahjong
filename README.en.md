@@ -230,7 +230,9 @@ after that draw) each add 1 tai and are always enabled. 門清自摸 defaults to
 (門清 1 + 自摸 1); enabling `RulesConfig.menqing_self_draw_three` makes it 3 total.
 The score tool accepts CLI `--last-tile` and `--menqing-self-draw-three`, or
 `last_tile` and `menqing_self_draw_three` in `/api/score`. Live tiles exclude the
-14-tile dead wall; kong replacement draws do not qualify for 海底撈月.
+14-tile dead wall. A 槓上開花 also scores 海底撈月 only when the kong is declared
+with one live tile left and its backfill uses up that last tile; a kong declared
+after drawing the last live tile scores 槓上開花 only.
 
 A few documented house-rule calls:
 

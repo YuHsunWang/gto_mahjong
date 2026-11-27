@@ -234,10 +234,12 @@ def _decompositions(concealed: tuple[int, ...], sets_needed: int) -> list[tuple[
     return results
 
 
-def _winning_kinds(pre_win: list[int], melds_declared: int) -> list[int]:
+def _winning_kinds(pre_win: list[int], melds_declared: int, seen: list[int]) -> list[int]:
+    # ``seen`` counts the winner's own physical copies (hand, melds, kongs) before
+    # the win; a kind already held four times cannot be drawn as a fifth tile.
     kinds: list[int] = []
     for tile in range(34):
-        if pre_win[tile] == 4:
+        if seen[tile] >= 4:
             continue
         pre_win[tile] += 1
         if shanten(tuple(pre_win), melds_declared) == -1:
@@ -406,7 +408,9 @@ def score_hand(
 
     pre_win = list(checked)
     pre_win[context.winning_tile] -= 1
-    single_wait = len(_winning_kinds(pre_win, declared_sets)) == 1
+    seen = list(physical_counts)
+    seen[context.winning_tile] -= 1
+    single_wait = len(_winning_kinds(pre_win, declared_sets, seen)) == 1
 
     declared_tiles = [tile for kind, start in meld_sets for tile in ((start, start, start) if kind == "tri" else (start, start + 1, start + 2))]
     every_tile = [tile for tile in range(34) if checked[tile]] + declared_tiles + [tile for tile, _ in normalized_kongs]

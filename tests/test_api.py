@@ -333,6 +333,16 @@ def test_trainer_send_failure_does_not_commit_score_or_feedback(monkeypatch):
 
 
 
+@pytest.mark.parametrize("payload", [
+    {"opponents": [{"river": "2z", "dealer_streak": 2}]},
+    {"river": "2z", "dealer_streak": 2},
+])
+def test_ev_rank_rejects_dealer_streak_on_non_dealer_opponent(client, payload):
+    # A streak belongs to the dealer; silently zeroing it hid contradictory input.
+    response = client.post("/api/ev/rank", json={"hand": "123456789m123p123s11z", "sims": 1, **payload})
+    assert response.status_code == 422
+
+
 def test_ev_rank_endpoint_with_opponent(client):
     response = client.post("/api/ev/rank", json={
         "hand": "123m123p123s11122233z",

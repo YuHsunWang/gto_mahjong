@@ -32,6 +32,7 @@ from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
 from .scoring import DEFAULT_SCHEME, ScoreResult, ScoringScheme, WinContext
 from .selfplay import (
     DEALER_SEAT,
+    KONG_DEAD_WALL_BACKFILL_TILES,
     Player,
     RiverEntry,
     _apply_big_kong,
@@ -365,7 +366,7 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
                 migi_declared=winning_player.declared,
                 kong_bloom=kong_bloom,
                 robbed_kong=robbed_kong,
-                last_tile=wall_remaining == 0 and not kong_bloom and not robbed_kong,
+                last_tile=wall_remaining == 0 and not robbed_kong,
                 rules=rules,
             ),
             tuple(winning_player.kongs),
@@ -1050,19 +1051,22 @@ def play_trainer(
                                 migi_declared=players[human_seat].declared,
                             )
                             return
+                    # 海底 on a bloom only when this kong's backfill took the last live tile.
+                    bloom_wall = len(wall) - KONG_DEAD_WALL_BACKFILL_TILES if wall else None
                     drawn_tile = _declare_kong(player, option.tile, option.kind == "concealed", dead, wall)
                     live_draw = False
                     if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                         winning_hand = tuple(player.hand)
                         deltas, _ = _settlement(
                             "tsumo", current, None, players, winning_hand, drawn_tile,
-                            dealer_streak, scheme, kong_bloom=True, rules=rules,
+                            dealer_streak, scheme, kong_bloom=True,
+                            wall_remaining=bloom_wall, rules=rules,
                         )
                         yield _outcome(
                             "tsumo", current, None, human_seat, deltas, actions,
                             dealer_streak, rules=rules, winning_player=player,
                             winning_hand=winning_hand, winning_tile=drawn_tile,
-                            scheme=scheme, kong_bloom=True,
+                            scheme=scheme, kong_bloom=True, wall_remaining=bloom_wall,
                             migi_declared=players[human_seat].declared,
                         )
                         return

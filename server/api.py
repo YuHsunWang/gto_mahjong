@@ -879,7 +879,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
                 source.declared_at,
                 discard_count=source.discard_count,
                 is_dealer=source.is_dealer,
-                dealer_streak=source.dealer_streak if source.is_dealer else 0,
+                dealer_streak=source.dealer_streak,
             )
             opponent.validate()
             return opponent
@@ -890,6 +890,7 @@ def ev_rank_endpoint(request: EvRankRequest) -> dict[str, Any]:
             or request.declared_at is not None
             or request.discard_count is not None
             or request.is_dealer
+            or request.dealer_streak
         )
         if request.opponents and legacy_present:
             raise ValueError("use either legacy opponent fields or opponents, not both")
