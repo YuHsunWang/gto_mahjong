@@ -481,7 +481,8 @@ export function trainerScreen(root) {
     startButton.className = 'btn primary slab';
     startButton.textContent = '開始新局';
     startButton.addEventListener('click', () => {
-      start(Number(seedInput.value) || randomSeed(), (4 - dealer) % 4, streak);
+      const typed = seedInput.value.trim();
+      start(typed === '' ? randomSeed() : Number(typed), (4 - dealer) % 4, streak);
     });
     actions.append(stepper, startButton);
 

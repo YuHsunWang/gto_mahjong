@@ -47,6 +47,9 @@ POLICIES = ("attack", "cautious", "ev_aware")
 KONG_POLICIES = ("none", "concealed_added", "all")
 # 「一槓一」: replenish the retained tail with one live-wall tile per kong.
 KONG_DEAD_WALL_BACKFILL_TILES = 1
+# House rule (owner, 2026-11-27): with this many live tiles or fewer left, nobody
+# may chi/pon/大明槓 a discard. Self-drawn 暗槓/加槓 stay allowed.
+DISCARD_CALL_CUTOFF_LIVE_TILES = 4
 
 
 def generation_rules() -> dict[str, object]:
@@ -728,7 +731,7 @@ def _settlement(
             migi_declared=players[winner].declared,
             kong_bloom=kong_bloom,
             robbed_kong=robbed_kong,
-            last_tile=wall_remaining == 0 and not kong_bloom and not robbed_kong,
+            last_tile=wall_remaining == 0 and not robbed_kong,
             rules=rules,
         ),
         tuple(players[winner].kongs),
@@ -984,14 +987,22 @@ def play_game(
                             dealer_streak, _dealer_leg_premium("ron", robber, current, dealer_streak, config.scheme),
                             kongs=tuple(players[robber].kongs), robbed_kong=True, kong_log=tuple(kong_log),
                         )
+                if not wall:
+                    # House rule (owner, 2026-11-27): a kong after the last live draw
+                    # has nothing to backfill, so the hand ends as 流局.
+                    points, value = _settlement("draw", None, None, players, None, None, dealer_streak, config.scheme)
+                    return GameResult(events, "draw", None, None, actions, point_deltas=points, value_units=value, dealer_streak=dealer_streak, kong_log=tuple(kong_log))
                 kong_log.append((current, kind_tile, concealed))
+                # The backfill may take the last live tile; then the bloom is also 海底.
+                bloom_wall = len(wall) - KONG_DEAD_WALL_BACKFILL_TILES
                 drawn_tile = _declare_kong(player, kind_tile, concealed, dead, wall)
                 live_draw = False
                 _assert_conservation(players, wall, dead)
                 if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                     winning_hand = tuple(player.hand)
                     points, value = _settlement(
-                        "tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme, kong_bloom=True, rules=rules,
+                        "tsumo", current, None, players, winning_hand, drawn_tile, dealer_streak, config.scheme, kong_bloom=True,
+                        wall_remaining=bloom_wall, rules=rules,
                     )
                     return GameResult(
                         events, "tsumo", current, None, actions, winning_hand, _declared(player), points, value,
@@ -1099,7 +1110,8 @@ def play_game(
         # "all", before pon/chi; the caller draws a replacement and no 槓上開花
         # applies (fourth tile came from a discard). It advances the hand like a
         # pon but fixes a full set.
-        if dead and not player.declared:
+        calls_open = len(wall) > DISCARD_CALL_CUTOFF_LIVE_TILES
+        if dead and not player.declared and calls_open:
             big_caller = _big_kong_caller(players, current, tile, seat_kong)
             if big_caller is not None:
                 declared_kong = DeclaredKong(
@@ -1131,7 +1143,7 @@ def play_game(
         # A migi discard remains in the declared player's observable river;
         # calls on it are not modeled because its river index anchors the
         # declaration and later hard-safety read.
-        if not player.declared:
+        if not player.declared and calls_open:
             for offset in range(1, 4):
                 index = (current + offset) % 4
                 if not players[index].declared:

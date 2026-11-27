@@ -718,14 +718,65 @@ def test_play_game_passes_last_live_draw_to_settlement(monkeypatch):
     assert calls[0]['wall_remaining'] == 0
 
 
-@pytest.mark.parametrize('outcome, flags', [
-    ('tsumo', {'kong_bloom': True}), ('ron', {'robbed_kong': True}),
-])
-def test_empty_live_wall_does_not_make_kong_win_a_last_tile(outcome, flags):
+def test_robbed_kong_on_empty_live_wall_is_not_a_last_tile():
     players = [Player('attack') for _ in range(4)]
     hand = parse_tiles('111m456789p234s55789s')
-    args = (outcome, 1, 2 if outcome == 'ron' else None, players, hand, 19)
-    assert _settlement(*args, **flags, wall_remaining=0) == _settlement(*args, **flags)
+    args = ('ron', 1, 2, players, hand, 19)
+    assert _settlement(*args, robbed_kong=True, wall_remaining=0) == _settlement(*args, robbed_kong=True)
+
+
+def test_kong_after_last_live_draw_ends_the_hand_as_draw(monkeypatch):
+    # House rule (owner, 2026-11-27): a kong declared once the live wall is empty
+    # has nothing to backfill, so the hand is 流局 and no replacement is drawn.
+    backfill_walls = []
+
+    def fake_declare(player, tile, concealed, dead, wall):
+        backfill_walls.append(len(wall))
+        dead.pop(0)
+        if wall:
+            dead.append(wall.pop(0))
+        return tile
+
+    monkeypatch.setattr(selfplay, "_self_draw_kong_choice", lambda player, policy: (0, True))
+    monkeypatch.setattr(selfplay, "_declare_kong", fake_declare)
+    monkeypatch.setattr(selfplay, "_cached_shanten", lambda hand, melds: 1)
+    monkeypatch.setattr(selfplay, "_assert_conservation", lambda *args: None)
+    game = play_game(seed=7, kong_policy="all")
+    assert game.outcome == "draw"
+    assert backfill_walls and 0 not in backfill_walls
+
+
+def test_no_discard_calls_with_four_or_fewer_live_tiles(monkeypatch):
+    # House rule (owner, 2026-11-27): with <= 4 live tiles left nobody may
+    # chi/pon/大明槓 a discard. Spy on the call helpers and read the loop's wall.
+    import sys
+    seen = []
+
+    def spy(real):
+        def wrapped(*args, **kwargs):
+            seen.append(len(sys._getframe(1).f_locals["wall"]))
+            return real(*args, **kwargs)
+        return wrapped
+
+    monkeypatch.setattr(selfplay, "_best_call", spy(selfplay._best_call))
+    monkeypatch.setattr(selfplay, "_big_kong_caller", spy(selfplay._big_kong_caller))
+    outcomes = [play_game(seed, kong_policy="all").outcome for seed in range(1, 41)]
+    assert "draw" in outcomes  # some games really reached the end of the wall
+    assert seen and min(seen) > 4
+
+
+def test_kong_bloom_scores_last_tile_only_when_backfill_took_the_last_live_tile():
+    # House rule (owner, 2026-11-27): a kong declared with one live tile left uses
+    # that tile as backfill, so its bloom is also 海底 (+1). A kong declared after
+    # the last live draw has no backfill (wall_remaining=None): bloom only.
+    players = [Player('attack') for _ in range(4)]
+    hand = parse_tiles('111m456789p234s55789s')
+    args = ('tsumo', 1, None, players, hand, 19)
+    _, bloom_only = _settlement(*args, kong_bloom=True)
+    _, bloom_last = _settlement(*args, kong_bloom=True, wall_remaining=0)
+    _, bloom_mid = _settlement(*args, kong_bloom=True, wall_remaining=5)
+    assert bloom_last - bloom_only == 1
+    assert bloom_mid == bloom_only
 
 
 @pytest.mark.parametrize("shanten_after", [0, 1])

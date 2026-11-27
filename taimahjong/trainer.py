@@ -32,6 +32,8 @@ from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
 from .scoring import DEFAULT_SCHEME, ScoreResult, ScoringScheme, WinContext
 from .selfplay import (
     DEALER_SEAT,
+    DISCARD_CALL_CUTOFF_LIVE_TILES,
+    KONG_DEAD_WALL_BACKFILL_TILES,
     Player,
     RiverEntry,
     _apply_big_kong,
@@ -365,7 +367,7 @@ def _outcome(outcome: str, winner: int | None, discarder: int | None,
                 migi_declared=winning_player.declared,
                 kong_bloom=kong_bloom,
                 robbed_kong=robbed_kong,
-                last_tile=wall_remaining == 0 and not kong_bloom and not robbed_kong,
+                last_tile=wall_remaining == 0 and not robbed_kong,
                 rules=rules,
             ),
             tuple(winning_player.kongs),
@@ -1050,19 +1052,34 @@ def play_trainer(
                                 migi_declared=players[human_seat].declared,
                             )
                             return
+                    if not wall:
+                        # House rule (owner, 2026-11-27): a kong after the last live draw
+                        # has nothing to backfill, so the hand ends as 流局.
+                        deltas, _ = _settlement(
+                            "draw", None, None, players, None, None, dealer_streak, scheme,
+                        )
+                        yield _outcome(
+                            "draw", None, None, human_seat, deltas, actions,
+                            dealer_streak, rules=rules,
+                            migi_declared=players[human_seat].declared,
+                        )
+                        return
+                    # The backfill may take the last live tile; then the bloom is also 海底.
+                    bloom_wall = len(wall) - KONG_DEAD_WALL_BACKFILL_TILES
                     drawn_tile = _declare_kong(player, option.tile, option.kind == "concealed", dead, wall)
                     live_draw = False
                     if _cached_shanten(tuple(player.hand), _declared(player)) == -1:
                         winning_hand = tuple(player.hand)
                         deltas, _ = _settlement(
                             "tsumo", current, None, players, winning_hand, drawn_tile,
-                            dealer_streak, scheme, kong_bloom=True, rules=rules,
+                            dealer_streak, scheme, kong_bloom=True,
+                            wall_remaining=bloom_wall, rules=rules,
                         )
                         yield _outcome(
                             "tsumo", current, None, human_seat, deltas, actions,
                             dealer_streak, rules=rules, winning_player=player,
                             winning_hand=winning_hand, winning_tile=drawn_tile,
-                            scheme=scheme, kong_bloom=True,
+                            scheme=scheme, kong_bloom=True, wall_remaining=bloom_wall,
                             migi_declared=players[human_seat].declared,
                         )
                         return
@@ -1126,7 +1143,7 @@ def play_trainer(
         caller: int | None = None
         selected: tuple[tuple[int, int], tuple[int, int, int]] | None = None
         human_option: CallOption | None = None
-        if not player.declared:
+        if not player.declared and len(wall) > DISCARD_CALL_CUTOFF_LIVE_TILES:
             is_next = (current + 1) % 4 == human_seat
             human_calls = _human_call_options(
                 players[human_seat], tile, is_next, can_kong=bool(dead),

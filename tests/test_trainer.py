@@ -90,6 +90,24 @@ def _play(seed, pick, call_pick=lambda decision: None):
     return decisions, item
 
 
+def test_human_gets_no_discard_calls_with_four_or_fewer_live_tiles(monkeypatch):
+    # House rule (owner, 2026-11-27): the <= 4 live-tile cutoff also hides the
+    # human's chi/pon/大明槓 prompt; read the generator's wall when it asks.
+    import sys
+    import taimahjong.trainer as trainer_module
+    seen = []
+    real = trainer_module._human_call_options
+
+    def spy(*args, **kwargs):
+        seen.append(len(sys._getframe(1).f_locals["wall"]))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(trainer_module, "_human_call_options", spy)
+    outcomes = [_play(seed, _discard_drawn)[1].outcome for seed in range(1, 16)]
+    assert "draw" in outcomes
+    assert seen and min(seen) > 4
+
+
 def test_trainer_games_terminate_with_valid_outcomes():
     for seed in range(1, 16):
         decisions, outcome = _play(seed, _discard_drawn)  # passes all calls
