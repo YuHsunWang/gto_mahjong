@@ -1051,8 +1051,20 @@ def play_trainer(
                                 migi_declared=players[human_seat].declared,
                             )
                             return
-                    # 海底 on a bloom only when this kong's backfill took the last live tile.
-                    bloom_wall = len(wall) - KONG_DEAD_WALL_BACKFILL_TILES if wall else None
+                    if not wall:
+                        # House rule (owner, 2026-11-27): a kong after the last live draw
+                        # has nothing to backfill, so the hand ends as 流局.
+                        deltas, _ = _settlement(
+                            "draw", None, None, players, None, None, dealer_streak, scheme,
+                        )
+                        yield _outcome(
+                            "draw", None, None, human_seat, deltas, actions,
+                            dealer_streak, rules=rules,
+                            migi_declared=players[human_seat].declared,
+                        )
+                        return
+                    # The backfill may take the last live tile; then the bloom is also 海底.
+                    bloom_wall = len(wall) - KONG_DEAD_WALL_BACKFILL_TILES
                     drawn_tile = _declare_kong(player, option.tile, option.kind == "concealed", dead, wall)
                     live_draw = False
                     if _cached_shanten(tuple(player.hand), _declared(player)) == -1:

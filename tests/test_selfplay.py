@@ -725,6 +725,27 @@ def test_robbed_kong_on_empty_live_wall_is_not_a_last_tile():
     assert _settlement(*args, robbed_kong=True, wall_remaining=0) == _settlement(*args, robbed_kong=True)
 
 
+def test_kong_after_last_live_draw_ends_the_hand_as_draw(monkeypatch):
+    # House rule (owner, 2026-11-27): a kong declared once the live wall is empty
+    # has nothing to backfill, so the hand is 流局 and no replacement is drawn.
+    backfill_walls = []
+
+    def fake_declare(player, tile, concealed, dead, wall):
+        backfill_walls.append(len(wall))
+        dead.pop(0)
+        if wall:
+            dead.append(wall.pop(0))
+        return tile
+
+    monkeypatch.setattr(selfplay, "_self_draw_kong_choice", lambda player, policy: (0, True))
+    monkeypatch.setattr(selfplay, "_declare_kong", fake_declare)
+    monkeypatch.setattr(selfplay, "_cached_shanten", lambda hand, melds: 1)
+    monkeypatch.setattr(selfplay, "_assert_conservation", lambda *args: None)
+    game = play_game(seed=7, kong_policy="all")
+    assert game.outcome == "draw"
+    assert backfill_walls and 0 not in backfill_walls
+
+
 def test_kong_bloom_scores_last_tile_only_when_backfill_took_the_last_live_tile():
     # House rule (owner, 2026-11-27): a kong declared with one live tile left uses
     # that tile as backfill, so its bloom is also 海底 (+1). A kong declared after

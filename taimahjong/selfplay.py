@@ -984,9 +984,14 @@ def play_game(
                             dealer_streak, _dealer_leg_premium("ron", robber, current, dealer_streak, config.scheme),
                             kongs=tuple(players[robber].kongs), robbed_kong=True, kong_log=tuple(kong_log),
                         )
+                if not wall:
+                    # House rule (owner, 2026-11-27): a kong after the last live draw
+                    # has nothing to backfill, so the hand ends as 流局.
+                    points, value = _settlement("draw", None, None, players, None, None, dealer_streak, config.scheme)
+                    return GameResult(events, "draw", None, None, actions, point_deltas=points, value_units=value, dealer_streak=dealer_streak, kong_log=tuple(kong_log))
                 kong_log.append((current, kind_tile, concealed))
-                # 海底 on a bloom only when this kong's backfill took the last live tile.
-                bloom_wall = len(wall) - KONG_DEAD_WALL_BACKFILL_TILES if wall else None
+                # The backfill may take the last live tile; then the bloom is also 海底.
+                bloom_wall = len(wall) - KONG_DEAD_WALL_BACKFILL_TILES
                 drawn_tile = _declare_kong(player, kind_tile, concealed, dead, wall)
                 live_draw = False
                 _assert_conservation(players, wall, dead)

@@ -215,7 +215,7 @@ python3 -m taimahjong "123m123p123s11122233z" --danger --opp-river "456m789p" --
 海底撈月（最後一張活牌自摸）與河底撈魚（摸完最後一張活牌後的棄牌胡牌）各加 1 台，固定啟用。
 門清自摸預設共 2 台（門清 1＋自摸 1）；`RulesConfig.menqing_self_draw_three` 開啟時共 3 台。
 算台工具可用 CLI `--last-tile`、`--menqing-self-draw-three`，或 `/api/score` 的
-`last_tile`、`menqing_self_draw_three` 輸入這些條件。活牌不含 14 張死牌。槓上開花要算海底，只有一種情況：開槓時活牌剩 1 張，槓完補牌把這最後 1 張用掉，這時兩個都算；如果摸到最後一張活牌才開槓，就只算槓上開花。
+`last_tile`、`menqing_self_draw_three` 輸入這些條件。活牌不含 14 張死牌。槓上開花要算海底，只有一種情況：開槓時活牌剩 1 張，槓完補牌把這最後 1 張用掉，這時兩個都算；如果摸到最後一張活牌才開槓，已經沒有牌能補，這局直接流局。
 
 幾條有記錄的家規判斷：
 
