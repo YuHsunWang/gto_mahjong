@@ -32,6 +32,7 @@ from .quiz import EV_TOP_K, QuizPosition, _evaluation_seed, _position_from
 from .scoring import DEFAULT_SCHEME, ScoreResult, ScoringScheme, WinContext
 from .selfplay import (
     DEALER_SEAT,
+    DISCARD_CALL_CUTOFF_LIVE_TILES,
     KONG_DEAD_WALL_BACKFILL_TILES,
     Player,
     RiverEntry,
@@ -1142,7 +1143,7 @@ def play_trainer(
         caller: int | None = None
         selected: tuple[tuple[int, int], tuple[int, int, int]] | None = None
         human_option: CallOption | None = None
-        if not player.declared:
+        if not player.declared and len(wall) > DISCARD_CALL_CUTOFF_LIVE_TILES:
             is_next = (current + 1) % 4 == human_seat
             human_calls = _human_call_options(
                 players[human_seat], tile, is_next, can_kong=bool(dead),

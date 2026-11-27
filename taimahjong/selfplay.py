@@ -47,6 +47,9 @@ POLICIES = ("attack", "cautious", "ev_aware")
 KONG_POLICIES = ("none", "concealed_added", "all")
 # 「一槓一」: replenish the retained tail with one live-wall tile per kong.
 KONG_DEAD_WALL_BACKFILL_TILES = 1
+# House rule (owner, 2026-11-27): with this many live tiles or fewer left, nobody
+# may chi/pon/大明槓 a discard. Self-drawn 暗槓/加槓 stay allowed.
+DISCARD_CALL_CUTOFF_LIVE_TILES = 4
 
 
 def generation_rules() -> dict[str, object]:
@@ -1107,7 +1110,8 @@ def play_game(
         # "all", before pon/chi; the caller draws a replacement and no 槓上開花
         # applies (fourth tile came from a discard). It advances the hand like a
         # pon but fixes a full set.
-        if dead and not player.declared:
+        calls_open = len(wall) > DISCARD_CALL_CUTOFF_LIVE_TILES
+        if dead and not player.declared and calls_open:
             big_caller = _big_kong_caller(players, current, tile, seat_kong)
             if big_caller is not None:
                 declared_kong = DeclaredKong(
@@ -1139,7 +1143,7 @@ def play_game(
         # A migi discard remains in the declared player's observable river;
         # calls on it are not modeled because its river index anchors the
         # declaration and later hard-safety read.
-        if not player.declared:
+        if not player.declared and calls_open:
             for offset in range(1, 4):
                 index = (current + offset) % 4
                 if not players[index].declared:

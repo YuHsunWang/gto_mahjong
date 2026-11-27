@@ -233,7 +233,8 @@ The score tool accepts CLI `--last-tile` and `--menqing-self-draw-three`, or
 14-tile dead wall. A 槓上開花 also scores 海底撈月 only when the kong is declared
 with one live tile left and its backfill uses up that last tile; a self-drawn kong
 declared after drawing the last live tile has nothing to backfill and ends the
-hand as a draw (流局).
+hand as a draw (流局). With 4 or fewer live tiles left, nobody may chi, pon, or
+大明槓 a discard (ron is still allowed); self-drawn 暗槓/加槓 remain legal.
 
 A few documented house-rule calls:
 

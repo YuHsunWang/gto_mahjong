@@ -746,6 +746,25 @@ def test_kong_after_last_live_draw_ends_the_hand_as_draw(monkeypatch):
     assert backfill_walls and 0 not in backfill_walls
 
 
+def test_no_discard_calls_with_four_or_fewer_live_tiles(monkeypatch):
+    # House rule (owner, 2026-11-27): with <= 4 live tiles left nobody may
+    # chi/pon/大明槓 a discard. Spy on the call helpers and read the loop's wall.
+    import sys
+    seen = []
+
+    def spy(real):
+        def wrapped(*args, **kwargs):
+            seen.append(len(sys._getframe(1).f_locals["wall"]))
+            return real(*args, **kwargs)
+        return wrapped
+
+    monkeypatch.setattr(selfplay, "_best_call", spy(selfplay._best_call))
+    monkeypatch.setattr(selfplay, "_big_kong_caller", spy(selfplay._big_kong_caller))
+    outcomes = [play_game(seed, kong_policy="all").outcome for seed in range(1, 41)]
+    assert "draw" in outcomes  # some games really reached the end of the wall
+    assert seen and min(seen) > 4
+
+
 def test_kong_bloom_scores_last_tile_only_when_backfill_took_the_last_live_tile():
     # House rule (owner, 2026-11-27): a kong declared with one live tile left uses
     # that tile as backfill, so its bloom is also 海底 (+1). A kong declared after
